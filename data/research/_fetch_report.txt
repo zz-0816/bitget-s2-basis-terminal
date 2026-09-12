@@ -1,0 +1,2 @@
+OK   https://www.bitget.com/zh-CN/support/articles/12560603893944 -> D:\bitgetS2_factory_trading\data\research\fee_promo_extension.txt (2168 chars)
+OK   https://www.bitget.com/zh-CN/support/articles/12560603891318 -> D:\bitgetS2_factory_trading\data\research\fee_upgrade_vip.txt (3739 chars)

@@ -1,0 +1,55 @@
+[fee_promo_extension] 关于 rToken 现货手续费五折活动延期及扣费逻辑优化的公告｜Bitget Support Center
+[fee_promo_extension] Bitget App 交易“智”变 快捷买币 行情 交易 合约 理财 AI 广场 更多 Bitget / 帮助中心 / 维护/系统升级 / 现货维护 / 关于 rToken 现货手续费五折活动延期及扣费逻辑优化的公告 / 维护/系统升级 最新动态 新币上线 产品更新 交易比赛和活 动 下架资讯 安全专栏 机构服务 API交易 法币 维护/系统升级 资产维护 系统升级 现货维护 合约维护 关于 rToken 现货手续费五折活动延期及扣费逻辑优化的公告 2026-09-01 10:15 2 2541
+[fee_promo_extension] 为持续降低您的交易成本并优化交易体验，Bitget 决定将原定于 2026 年 8 月 31 日结束的 rToken（股票现货）全平台手续费五折活动予以延期 。
+[fee_promo_extension] 同时，我们对 rToken 买入交易的手续费扣除逻辑进行了全面升级。
+[fee_promo_extension] 一、 rToken 手续费五折活动延期
+[fee_promo_extension] 9 月份起，rToken 现货交易将继续享受手续费五折优惠（即基础费率维持在 Maker/Taker 0.05%）。
+[fee_promo_extension] 活动结束时间： 本次延期结束时间暂不确定。
+[fee_promo_extension] 后续如需恢复原费率或进行调整，我们将提前另行公告通知。
+[fee_promo_extension] 在此期间，您可以继续享受低成本的美股现货交易体验。
+[fee_promo_extension] 二、 rToken 买入交易手续费扣除逻辑优化
+[fee_promo_extension] 为保证用户在交易 rToken 时能获得更精准的持仓数量（避免因扣除手续费导致持仓出现零碎股），我们对买入交易的扣费逻辑进行了以下优化：
+[fee_promo_extension] 优化前（旧逻辑）： 买入 rToken 时，手续费直接从买入的 rToken 资产中扣除。
+[fee_promo_extension] 优化后（新逻辑）： 买入 rToken 时， 手续费将统一扣除 USDT 。
+[fee_promo_extension] 新逻辑举例说明： 当您下单买入价值 10,000 USDT 的 rNVDA 时，系统除了冻结 10,000 USDT 的委托资金外，还会 额外预先冻结 5 USDT（即预估的 0.05% 手续费） 。
+[fee_promo_extension] 卖出交易的手续费扣除逻辑保持不变（即从卖出所得的 USDT 中直接扣除）。
+[fee_upgrade_vip] 关于 Bitget 股票现货（rToken）费率全面升级及 VIP 阶梯费率上线的公告｜Bitget Support Center
+[fee_upgrade_vip] Bitget App 交易“智”变 快捷买币 行情 交易 合约 理财 AI 广场 更多 Bitget / 帮助中心 / 产品更新 / 现货 / 关于 Bitget 股票现货（rToken）费率全面升级及 VIP 阶梯费率上线的公告 / 产品更新 最新动态 新币上线 产品更新 股票合约 CFD 统一账户 现货 合约 杠杆 跟单 交易机器人 理财 质押借贷 Bitget Swap 交易比赛和活动 下架资讯 安全专栏 机构服务 API交易 法币 维护/系统升级 关于 Bitget 股票现货（rToken）费率全面升级及 VIP 阶梯费率上线的公告 2026-08-06 03:36 0 13745
+[fee_upgrade_vip] 为进一步提升您的股票现货（rToken）交易体验，降低交易成本，Bitget 将于 2026年8月6日 19:00（UTC+8） 对 rToken 费率结构进行全面升级，正式上线 VIP/ PRO 阶梯费率 及 BGB 抵扣优惠 。
+[fee_upgrade_vip] 本次升级后，不仅保留了正在进行中的 5 折优惠基准（即基础费率 0.05%），高等级 VIP 及 PRO 用户还将享受更低的专属折扣。
+[fee_upgrade_vip] 一、 最新 VIP 阶梯费率表
+[fee_upgrade_vip] 挂单 (Maker) / 吃单 (Taker) 及 StockRoute
+[fee_upgrade_vip] 使用 BGB 抵扣手续费 (-20%)
+[fee_upgrade_vip] 挂单 (Maker) / 吃单 (Taker) 及 StockRoute
+[fee_upgrade_vip] 0.05% / 0.05%
+[fee_upgrade_vip] 0.04% / 0.04%
+[fee_upgrade_vip] 0.05% / 0.05%
+[fee_upgrade_vip] 0.04% / 0.04%
+[fee_upgrade_vip] 0.05% / 0.05%
+[fee_upgrade_vip] 0.04% / 0.04%
+[fee_upgrade_vip] 0.05% / 0.05%
+[fee_upgrade_vip] 0.04% / 0.04%
+[fee_upgrade_vip] 0.04% / 0.05%
+[fee_upgrade_vip] 0.032% / 0.04%
+[fee_upgrade_vip] 0.03% / 0.04%
+[fee_upgrade_vip] 0.02% / 0.035%
+[fee_upgrade_vip] 0 / 0.03%
+[fee_upgrade_vip] * StockRoute 费率等同于 Taker 费率
+[fee_upgrade_vip] 二、 最新 PRO 阶梯费率表
+[fee_upgrade_vip] 挂单 (Maker) / 吃单 (Taker) 及 StockRoute
+[fee_upgrade_vip] 使用 BGB 抵扣手续费 (-20%)
+[fee_upgrade_vip] 挂单 (Maker) / 吃单 (Taker) 及 StockRoute
+[fee_upgrade_vip] 0.025% / 0.04%
+[fee_upgrade_vip] 0.02% / 0.03200%
+[fee_upgrade_vip] 0.02% / 0.0375%
+[fee_upgrade_vip] 0.01% / 0.0238%
+[fee_upgrade_vip] 0.01% / 0.0188%
+[fee_upgrade_vip] * StockRoute 费率等同于 Taker 费率
+[fee_upgrade_vip] 由于股票现货（rToken）底层直连真实美股市场，交易费率将根据 美股交易时段 发生不同的路由计费规则。
+[fee_upgrade_vip] 计费规则： 在此时段内， 所有订单均按“吃单（Taker）”费率标准进行计费 （不区分挂单/吃单）。
+[fee_upgrade_vip] 计费规则： 在此时段内， 系统将区分“挂单（Maker）”与“吃单（Taker）” ，并分别按照上方表格对应的费率标准计费。
+[fee_upgrade_vip] 3.VIP 五折活动说明： 2026年8月31日（UTC+8）截止的股票现货全平台VIP手续费5折活动，已计入至本次新版费率表，9月1日后优惠活动将另行通知。
+[fee_upgrade_vip] 4. 做市商费率特别说明： Bitget 流动性激励计划 下的做市商 maker 返佣仅在平台启用内部撮合机制期间生效，具体如下：
+[fee_upgrade_vip] 常规交易时段（非周末/节假日）： 在美股正常开盘的交易日，无论具体时间点是否处于开盘区间（24*5），均不适用 Bitget 流动性激励计划 下的 maker 返佣，系统将根据做市商用户当前的 VIP 或 PRO 等级，执行对应的 StockRoute 费率。
+[fee_upgrade_vip] 周末及节假日时段： 系统启用平台所内撮合，做市商用户将享受对应现货做市商等级的 maker 返佣。
+[fee_upgrade_vip] 如您对本次费率调整有任何疑问，请随时联系 24 小时在线客服。

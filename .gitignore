@@ -7,8 +7,14 @@ venv/
 
 # 采样器运行时状态
 data/spread/.sampler.lock
+data/spread/.sampler_universe.lock
 data/spread/_heartbeat.json
 data/spread/*.tmp
+
+# 运行期锁文件（不应入库）
+data/.kline_accumulator.lock
+data/manifest.json.tmp
+data/logs/
 
 # 历史回补数据（体积大，按需重新抓取）
 # 保留 data/spread/ 的当日样本作为数据样例；raw 全量不入库

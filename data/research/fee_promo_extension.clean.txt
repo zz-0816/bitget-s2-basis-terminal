@@ -1,0 +1,69 @@
+SOURCE: https://www.bitget.com/zh-CN/support/articles/12560603893944 
+ 
+关于 rToken 现货手续费五折活动延期及扣费逻辑优化的公告｜Bitget Support Center 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Bitget App 交易“智”变 快捷买币 行情 交易 合约 理财 AI 广场 更多 Bitget / 帮助中心 / 维护/系统升级 / 现货维护 / 关于 rToken 现货手续费五折活动延期及扣费逻辑优化的公告 / 维护/系统升级 最新动态 新币上线 产品更新 交易比赛和活 动 下架资讯 安全专栏 机构服务 API交易 法币 维护/系统升级 资产维护 系统升级 现货维护 合约维护 关于 rToken 现货手续费五折活动延期及扣费逻辑优化的公告 2026-09-01 10:15 2 2541 
+ 为持续降低您的交易成本并优化交易体验，Bitget 决定将原定于 2026 年 8 月 31 日结束的 rToken（股票现货）全平台手续费五折活动予以延期 。同时，我们对 rToken 买入交易的手续费扣除逻辑进行了全面升级。 
+ 具体安排如下： 
+ 
+ 
+ 一、 rToken 手续费五折活动延期 
+ 9 月份起，rToken 现货交易将继续享受手续费五折优惠（即基础费率维持在 Maker/Taker 0.05%）。 
+ 活动结束时间： 本次延期结束时间暂不确定。后续如需恢复原费率或进行调整，我们将提前另行公告通知。在此期间，您可以继续享受低成本的美股现货交易体验。 
+ 
+ 
+ 二、 rToken 买入交易手续费扣除逻辑优化 
+ 为保证用户在交易 rToken 时能获得更精准的持仓数量（避免因扣除手续费导致持仓出现零碎股），我们对买入交易的扣费逻辑进行了以下优化： 
+ 
+ 
+ 优化前（旧逻辑）： 买入 rToken 时，手续费直接从买入的 rToken 资产中扣除。例如：买入 2 股 rNVDA，实际到账数量将少于 2 股。 
+ 
+ 
+ 优化后（新逻辑）： 买入 rToken 时， 手续费将统一扣除 USDT 。 
+ 
+ 
+ 新逻辑举例说明： 当您下单买入价值 10,000 USDT 的 rNVDA 时，系统除了冻结 10,000 USDT 的委托资金外，还会 额外预先冻结 5 USDT（即预估的 0.05% 手续费） 。 
+ 
+ 
+ 订单撮合时，10,000 USDT 将全额用于买入 rNVDA，确保您获得足额的股票代币； 
+ 
+ 
+ 预留的 5 USDT 将根据最终的 实际成交金额 进行精确扣费，多退少补。 
+ 
+ 
+ 此项优化将使您的 rToken 账目持仓更加清晰直观。卖出交易的手续费扣除逻辑保持不变（即从卖出所得的 USDT 中直接扣除）。 
+ 感谢您对 Bitget 的支持！如您有任何疑问，请随时联系 24 小时在线客服。 
+ 加入 Bitget，全球最大的全景交易所（UEX） 立即注册 >>> 关注官方推特（X） >>> 加入官方华语社群 >>> 是否有帮助到您？ 是 否 分享 相关文章 Bitget 关于恢复 AVAIL-ERC20 提币的公告 关于调整现货交易对最小价格精度的公告 Bitget 将支持 Nesa（NES）合约置换 Bitget 将支持 USDGO (USDGO)-Morph 网络服务 Bitget 将支持 Ethereum（ETH）-Robinhood 网络服务 Bitget 已完成 BounceBit（BB）合约置换 Bitget 将支持 BounceBit（BB）合约置换 Bitget 已完成 Vanar Chain（VANRY）合约置换 Bitget 将支持 Vanar Chain（VANRY）合约置换 Bitget 已完成 Kite AI（KITE）合约置换 关于我们 关于我们 联系我们 海外华语社区 工作机会 Bitget 博客 Bitget Token (BGB) 公告中心 储备金证明 保护基金 Bitget UEX 友情链接 西甲合作伙伴 世界摩托车巡回赛合作 Blockchain4Youth Blockchain4Her 网站地图 产品 现货 合约 CFD 链上交易 股票 闪兑与大宗交易 杠杆 理财 现货跟单 合约跟单 机器人跟单 交易机器人 API Agent Hub TraderPro Web3 钱包 TradingView Bitget Swap Telegram 应用中心 Discord 应用中心 空投列表 买币 买 BTC 买 ETH 买 Doge 买 XRP 买 BGB 买 SHIB 加密货币行情 比特币价格 以太坊价格 Solana 价格走势图 计算器 比特币 ETF XRP 价格 ADA 价格 Solana 价格 Trump 价格 狗狗币价格 帮助 提交反馈 帮助中心 官方验证通道 “反欺诈”行动页 上币申请 VIP 服务 合伙人计划 机构服务 资产托管 下载数据 福利中心 好友邀请 费率表 报税 API 法律与风险披露 服务协议 执法请求 监管请求 合规 合规牌照 反洗钱政策 隐私政策 服务条款 风险提示 扫码下载App © 2026 Bitget
