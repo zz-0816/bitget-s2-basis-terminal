@@ -39,6 +39,14 @@ try:
 except ImportError:                                     # pragma: no cover
     ZoneInfo = None
 
+# 共享日历/路由口径（唯一实现）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common.market_calendar import (  # noqa: E402
+    session_of as _cal_session_of,
+    route_of as _cal_route_of,
+    ROUTE_LABEL,
+)
+
 # ---------------------------------------------------------------- 路径
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -84,27 +92,28 @@ def session_of(ts_utc):
     """
     返回 (session, is_closed)。
 
-    session:
-      closed   美股完全休市（隔夜 / 周末 / 假日）  ← 策略交易的窗口
-      premarket 04:00–09:30 ET
-      intraday  09:30–16:00 ET                     ← 窄点差基准
+    session（美东口径，决定"点差宽不宽"）：
+      closed     美股完全休市（隔夜 / 周末 / 假日）
+      premarket  04:00–09:30 ET
+      intraday   09:30–16:00 ET
       afterhours 16:00–20:00 ET
 
-    夏令时用 zoneinfo 自动处理，禁止硬编码 ±4/±5。
+    夏令时用共享日历模块（`common/market_calendar.py`）自动处理，禁止硬编码 ±4/±5。
+    ⚠️ 费率判定请用 `route_of()` —— 官方按"平台所内撮合窗口"（北京口径）
+       分两套计费规则，与美东历日相差约 4 小时。
     """
     if ts_utc.tzinfo is None:
         ts_utc = ts_utc.replace(tzinfo=dt.UTC)
-    et = ts_utc.astimezone(_ny())
-    if et.weekday() >= 5:                       # 周六 / 周日
-        return "closed", True
-    minutes = et.hour * 60 + et.minute
-    if 4 * 60 <= minutes < 9 * 60 + 30:
-        return "premarket", False
-    if 9 * 60 + 30 <= minutes < 16 * 60:
-        return "intraday", False
-    if 16 * 60 <= minutes < 20 * 60:
-        return "afterhours", False
-    return "closed", True                       # 20:00–04:00 隔夜
+    ms = int(ts_utc.timestamp() * 1000)
+    s = _cal_session_of(ms)
+    return s, (s == "closed")
+
+
+def route_of(ts_utc):
+    """平台路由：in_house（区分 maker/taker）/ stockroute（一律按 Taker）。"""
+    if ts_utc.tzinfo is None:
+        ts_utc = ts_utc.replace(tzinfo=dt.UTC)
+    return _cal_route_of(int(ts_utc.timestamp() * 1000))
 
 
 SESSION_LABEL = {
@@ -440,13 +449,28 @@ def build_data_status():
 
 # ---------------------------------------------------------------- 路由
 
-ROUTES = {
-    "/api/health": lambda: {
-        "ok": True, "server_time_utc": dt.datetime.now(dt.UTC).isoformat(),
-        "session": session_of(dt.datetime.now(dt.UTC))[0],
-        "session_label": SESSION_LABEL[session_of(dt.datetime.now(dt.UTC))[0]],
+def _health():
+    """健康状态 + 两个口径（session 决定点差宽窄；route 决定挂单能否省钱）。"""
+    now = dt.datetime.now(dt.UTC)
+    sess, closed = session_of(now)
+    rt = route_of(now)
+    return {
+        "ok": True,
+        "server_time_utc": now.isoformat(),
+        # ① 美股时段（点差宽窄）
+        "session": sess,
+        "session_label": SESSION_LABEL[sess],
+        "session_is_closed": closed,
+        # ② 平台路由（费率口径）—— 只有 in_house 时挂单才省点差
+        "route": rt,
+        "route_label": ROUTE_LABEL[rt],
+        "maker_benefit": (rt == "in_house"),
         "pairs": len(PAIRS), "tick_seconds": TICK_SECONDS,
-    },
+    }
+
+
+ROUTES = {
+    "/api/health": _health,
     "/api/overview": build_overview,
     "/api/timeline": build_timeline,
     "/api/session-compare": build_session_compare,
@@ -454,6 +478,8 @@ ROUTES = {
     "/api/meta": lambda: {
         "pairs": [{"base": s[1:].replace("USDT", ""), "spot": s, "perp": p} for s, p in PAIRS],
         "session_labels": SESSION_LABEL,
+        "route_labels": ROUTE_LABEL,
+        "basis_convention": "(永续/现货 - 1) x 10000, 正 = 永续升水",
     },
 }
 

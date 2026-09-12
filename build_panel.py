@@ -27,12 +27,21 @@ import os
 import statistics
 import sys
 
+# 共享的日历/路由口径（唯一实现，勿在本文件另写）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common.market_calendar import (  # noqa: E402
+    session_of as _cal_session_of,
+    route_of as _cal_route_of,
+    is_in_house as _cal_is_in_house,
+)
+
 try:
     from zoneinfo import ZoneInfo
 except ImportError:  # pragma: no cover
     ZoneInfo = None
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = BASE
 RAW = os.path.join(BASE, "data", "raw")
 OUT_DIR = os.path.join(BASE, "data", "panel")
 UNIVERSE = os.path.join(BASE, "data", "universe.csv")
@@ -89,19 +98,19 @@ def read_bars(gran, symbol):
 
 
 def session_of(ts_ms):
-    """美东时段判定（zoneinfo，自动处理夏令时）。"""
-    tz = ZoneInfo("America/New_York") if ZoneInfo else dt.timezone(dt.timedelta(hours=-4))
-    et = dt.datetime.fromtimestamp(ts_ms / 1000, dt.UTC).astimezone(tz)
-    if et.weekday() >= 5:
-        return "closed"
-    m = et.hour * 60 + et.minute
-    if 4 * 60 <= m < 9 * 60 + 30:
-        return "premarket"
-    if 9 * 60 + 30 <= m < 16 * 60:
-        return "intraday"
-    if 16 * 60 <= m < 20 * 60:
-        return "afterhours"
-    return "closed"
+    """
+    美股时段（美东口径）—— 委托给唯一实现 `common/market_calendar.py`。
+    本模块不再自己判定，避免口径漂移（历史上这里与 server/app.py 各写过一份）。
+
+    ⚠️ 费率判定请用 `route_of()`：官方按「平台所内撮合窗口」（北京口径，
+       周六 08:00 → 周一 08:00）分两套计费规则，与美东历日**相差约 4 小时**。
+    """
+    return _cal_session_of(ts_ms)
+
+
+def route_of(ts_ms):
+    """平台路由：in_house（区分 maker/taker）/ stockroute（一律按 Taker）。"""
+    return _cal_route_of(ts_ms)
 
 
 def load_launch_map():
@@ -153,6 +162,44 @@ def gran_ms(gran):
     return {"1min": 60_000, "5min": 300_000, "15min": 900_000,
             "30min": 1_800_000, "1h": 3_600_000, "4h": 14_400_000,
             "1day": 86_400_000}.get(gran, 3_600_000)
+
+
+def load_spread_snapshot():
+    """
+    从采样文件读每个配对的点差快照（中位），用于面板的 B_taker / B_maker 列。
+
+    ⚠️ 重要局限：采样只覆盖最近的数据，**不是逐时点的真实点差**。
+    因此 B_taker / B_maker 是"用快照点差外推"的研究级近似；
+    真正的逐笔成本必须由 B 用 `data/spread/` 的逐分钟样本重算。
+    返回 {(spot_symbol): 中位点差bp, (perp_symbol): 中位点差bp}
+    """
+    import collections
+    import glob
+    acc = collections.defaultdict(list)
+    for path in glob.glob(os.path.join(BASE_DIR, "data", "spread", "*.csv")):
+        try:
+            with open(path, newline="", encoding="utf-8") as fh:
+                for r in csv.DictReader(fh):
+                    sym = r.get("symbol")
+                    try:
+                        bp = float(r.get("spread_bp") or "")
+                    except (TypeError, ValueError):
+                        continue
+                    if sym and 0 < bp < 5000:
+                        acc[sym].append(bp)
+        except OSError:
+            continue
+    return {s: round(statistics.median(v), 4) for s, v in acc.items() if v}
+
+
+def load_fee_assumptions():
+    """
+    手续费假设（来自官方公告，见 docs/09）：
+      * rToken 现货：Maker/Taker 均 **0.05% = 5 bp**（五折活动，2026-09-01 公告延续）
+      * 美股永续：maker 2 bp / taker **6 bp**（合约接口实测 makerFeeRate/takerFeeRate）
+    单位 bp。
+    """
+    return {"spot_fee_bp": 5.0, "perp_fee_bp": 6.0, "spot_maker_fee_bp": 5.0}
 
 
 def build(gran, pairs, max_gap_bars, sanity_bp=2000):
@@ -308,22 +355,44 @@ def main(argv=None):
     # 日线粒度下，bar 开盘时刻恒为 16:00Z，"session" 只可能是 closed(周末)。
     # 因此日线用 weekend/weekday 标注，**时段结论只能取自 1h 面板**。
     is_daily = args.gran in ("1day",)
+
+    # === 计算 B_mid / B_taker / B_maker 三列（乙侧第 3 项）===
+    #   B_mid   = 中间价对中间价 = basis_bp 本身
+    #   B_maker = 现货腿在 bid 成交（赚半幅现货点差）+ 永续腿按中间价
+    #   B_taker = 两腿都吃单（各付半幅点差）
+    #   点差用采样快照的**中位**近似（见 load_spread_snapshot 的局限说明）
+    spread_snap = load_spread_snapshot()
+    fees = load_fee_assumptions()
+    n_snap = sum(1 for s, _p, _l in pairs if s in spread_snap)
+    print("点差快照命中 %d/%d 个配对（未命中的 B_maker/B_taker 留空）" % (n_snap, len(pairs)))
+
     os.makedirs(OUT_DIR, exist_ok=True)
     out = os.path.join(OUT_DIR, "%s_%dpairs.csv" % (args.gran, len(pairs)))
     with open(out, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["ts_ms", "ts_utc", "date_cn", "spot_symbol", "perp_symbol",
-                    "spot_close", "perp_close", "basis_bp", "spot_lag_bars",
-                    "session", "bar_label", "pair_quality"])
+                    "spot_close", "perp_close", "basis_bp",
+                    "B_mid_bp", "B_taker_bp", "B_maker_bp",
+                    "spot_spread_med_bp", "route", "maker_benefit",
+                    "spot_lag_bars", "session", "bar_label", "pair_quality"])
         for ts, s, p, sc, pc, b, lag, sess in rows:
             utc = dt.datetime.fromtimestamp(ts / 1000, dt.UTC)
-            if is_daily:
-                bar_label = WEEKDAY_LABEL[utc.weekday() >= 5]
+            bar_label = WEEKDAY_LABEL[utc.weekday() >= 5] if is_daily else sess
+            route = route_of(ts)
+            sp_bp = spread_snap.get(s)
+            b_mid = b
+            if b == "" or sp_bp is None:
+                b_mk = b_tk = ""
             else:
-                bar_label = sess
+                half = sp_bp / 2.0
+                b_mk = round(b + half, 4)          # 现货腿挂 bid：多赚半幅点差
+                b_tk = round(b - half, 4)          # 现货腿吃单：少赚半幅点差
             w.writerow([ts, utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
                         (utc + dt.timedelta(hours=8)).strftime("%Y-%m-%d"),
-                        s, p, sc, pc, b, lag, sess, bar_label, verdict.get(p, "ok")])
+                        s, p, sc, pc, b, b_mid, b_tk, b_mk,
+                        sp_bp if sp_bp is not None else "",
+                        route, "yes" if route == "in_house" else "no",
+                        lag, sess, bar_label, verdict.get(p, "ok")])
 
     n_ok = sum(1 for v in verdict.values() if v == "ok")
     print("已写入 %s（%d 行）" % (out, len(rows)))
