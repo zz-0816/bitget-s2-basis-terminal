@@ -50,6 +50,10 @@ Bitget 上同一个标的（如 TSLA）同时存在于**两个场所**：rToken 
 
 ---
 
+## 任务清单
+
+见 **[docs/TASKS.md](docs/TASKS.md)** —— 含 A/B 分工、硬门禁、每日运维三件事。
+
 ## 快速开始
 
 ```powershell
