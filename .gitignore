@@ -33,3 +33,8 @@ secrets.json
 # 涓存椂鎻愪氦淇℃伅
 *.tmp.txt
 MSG.tmp.txt
+
+# 临时提交信息文件（我反复手滑）
+MSGFILE.txt
+MSG*.txt
+COMMIT_MSG*.tmp*
