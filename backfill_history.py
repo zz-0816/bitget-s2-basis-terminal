@@ -111,8 +111,36 @@ def http_json(url, timeout=30):
 
 
 def venue_of(symbol):
-    """R 开头的 rToken 现货 vs 其余视为永续。"""
+    """
+    判定符号属于哪个场所。
+
+    ⚠️ 不能用「以 R 开头」来猜——实测有永续就叫 RAMUSDT / RDDTUSDT / RDWUSDT /
+    RGTIUSDT / RIOUSDT / RKLBUSDT / ROKUSDT（首字母 R 的股票代码），
+    猜错会被发到错误的端点并返回 400。
+
+    因此改用**显式映射**：core 配对表 + universe.csv 同时提供
+    spot_symbol 与 perp_symbol 两列，据此建立权威映射。
+    """
+    global _VENUE_MAP
+    if not _VENUE_MAP:
+        _VENUE_MAP = {}
+        for spot_sym, perp_sym in PAIRS:
+            _VENUE_MAP[spot_sym] = "spot"
+            _VENUE_MAP[perp_sym] = "perp"
+        if os.path.exists(UNIVERSE_CSV):
+            with open(UNIVERSE_CSV, newline="", encoding="utf-8") as fh:
+                for r in csv.DictReader(fh):
+                    if r.get("spot_symbol"):
+                        _VENUE_MAP[r["spot_symbol"]] = "spot"
+                    if r.get("perp_symbol"):
+                        _VENUE_MAP[r["perp_symbol"]] = "perp"
+    if symbol in _VENUE_MAP:
+        return _VENUE_MAP[symbol]
+    # 回退：未登记的符号按命名惯例推断（可能不准，仅作兜底）
     return "spot" if symbol.startswith("R") else "perp"
+
+
+_VENUE_MAP = {}
 
 
 def fetch_page(symbol, gran, limit, end_ms):
