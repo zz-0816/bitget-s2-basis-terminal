@@ -31,3 +31,7 @@ Thumbs.db
 .env
 *.key
 secrets.json
+
+# 临时提交信息
+*.tmp.txt
+MSG.tmp.txt
