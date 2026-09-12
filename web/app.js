@@ -27,9 +27,8 @@ async function loadHealth() {
   const lab = $('session-label');
   lab.textContent = h.session_label;
   lab.className = 'sess-label ' + (closed ? 'closed' : 'open');
-  $('session-time').textContent =
-    'UTC ' + h.server_time_utc.slice(11, 19) + ' · 北京时间 ' +
-    new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  // 时间显示交给独立时钟（tickClock，每秒一次），不依赖健康检查的 30 秒节奏
+  CLOCK_OFFSET_MS = new Date(h.server_time_utc).getTime() - Date.now();
   $('live-dot').className = 'dot on';
 
   $('window-title').textContent = closed
@@ -40,6 +39,22 @@ async function loadHealth() {
     : '美股开市中，现货点差处于全天最窄区间——这是计算「休市窗口放大倍数」的基准值。策略的实际建仓窗口在每个交易日的 20:00 ET 之后及整个周末。';
   $('footer-meta').textContent =
     '刷新间隔 ' + REFRESH_MS / 1000 + 's · 行情缓存 ' + h.tick_seconds + 's · 配对 ' + h.pairs + ' 组';
+}
+
+/* ---------------- 时钟（每秒走字，独立于网络请求） ----------------
+   之前时间只在健康检查时写一次（30 秒才刷），看起来像"卡住了"。
+   改为纯前端每秒自增：不产生任何服务端请求，也不受网络抖动影响。 */
+
+let CLOCK_OFFSET_MS = 0;
+
+function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+function tickClock() {
+  const now = new Date(Date.now() + CLOCK_OFFSET_MS);
+  const utc = pad(now.getUTCHours()) + ':' + pad(now.getUTCMinutes()) + ':' + pad(now.getUTCSeconds());
+  const local = pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+  const el = $('session-time');
+  if (el) el.textContent = 'UTC ' + utc + ' · 北京时间 ' + local;
 }
 
 /* ---------------- 配对表 ---------------- */
@@ -294,6 +309,8 @@ async function boot() {
   await loadHealth();
   await refresh();
   await loadTimeline();
+  tickClock();
+  setInterval(tickClock, 1000);            // 时钟每秒走字（纯前端）
   setInterval(refresh, REFRESH_MS);
   setInterval(loadTimeline, REFRESH_MS * 3);
   setInterval(loadHealth, 30000);
