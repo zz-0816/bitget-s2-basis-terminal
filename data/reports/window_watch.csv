@@ -1,0 +1,2 @@
+ts_utc,ts_cn,route,session,event,hours_to_open,hours_to_close,core_rows,core_rounds,core_last_utc,universe_rows,universe_rounds,universe_last_utc,orderbook_rows,orderbook_rounds,orderbook_last_utc,note
+2026-09-12T19:19:04Z,2026-09-13 03:19:04,in_house,closed,,0.0,28.68,11620,581,2026-09-12T19:18:06Z,37173,761,2026-09-12T19:18:47Z,43690,230,2026-09-12T19:18:56Z,
