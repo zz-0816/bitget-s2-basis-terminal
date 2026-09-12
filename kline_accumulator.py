@@ -52,7 +52,20 @@ GRAN_MAP = {
 }
 DEFAULT_GRANS = ["1m", "5m", "1h", "1D"]
 MAX_LIMIT = 1000                      # 实测上限；1500 报错
-RETENTION_DAYS = {"1m": 13, "5m": 60, "15m": 120, "30m": 180, "1h": 1200, "4h": 2000, "1D": 5000}
+
+# 各粒度的回补回溯窗口（天）。
+# ⚠️ 不能无脑放大：永续合约 2026-02-02 才上市，更早的"历史"属于符号复用的
+#    其他资产（与 build_panel 的上市时间过滤同一问题）。窗口取"够用且不引入脏数据"。
+#    实测教训：1h 设 1200 天、1D 设 5000 天时，一次补齐抓到 1.85M 根、数据目录涨到 ~1GB。
+RETENTION_DAYS = {
+    "1m": 13,      # 平台硬上限约 13.9 天
+    "5m": 30,
+    "15m": 45,
+    "30m": 60,
+    "1h": 180,
+    "4h": 400,
+    "1D": 400,
+}
 
 CORE_PAIRS = [
     ("RTSLAUSDT", "TSLAUSDT"), ("RNVDAUSDT", "NVDAUSDT"), ("RAAPLUSDT", "AAPLUSDT"),
@@ -363,22 +376,39 @@ def run(grans, symbols, full, sleep, verbose, workers=8):
     return 0
 
 
-def verify(grans, symbols):
-    """完整性审计：报告每个文件的行数、跨度、缺口；不做抓取。"""
+def verify(grans, symbols, prune=False):
+    """完整性审计；prune=True 时顺带删除超出各粒度回溯窗口的陈旧行。
+
+    为什么要 prune：早期把 1h 窗口设成 1200 天、1D 设成 5000 天，抓进了
+    **永续上市之前**的数据 —— 那时交易对符号指向的是别的资产（与 build_panel
+    的上市前过滤同一问题）。留着既占空间又可能被误用。
+    """
     print("=" * 88)
-    print("K 线完整性审计")
+    print("K 线完整性审计%s" % ("（含清理窗口外陈旧行）" if prune else ""))
     print("=" * 88)
     print("%-14s %-5s %8s %8s %-17s %-17s %7s" %
           ("symbol", "gran", "rows", "gaps", "first_utc", "last_utc", "lag_min"))
     print("-" * 88)
     now = time.time()
+    pruned_total = 0
     for gran in grans:
         _, _, minutes = GRAN_MAP[gran]
         step = minutes * 60 * 1000
+        retention = RETENTION_DAYS.get(gran, 30)
+        floor = int((now - retention * 86400) * 1000)
         for symbol, _venue in symbols:
             rows = read_existing(gran, symbol)
             if not rows:
                 continue
+            if prune:
+                keep = {t: r for t, r in rows.items() if t >= floor}
+                dropped = len(rows) - len(keep)
+                if dropped:
+                    save(gran, symbol, keep)
+                    pruned_total += dropped
+                    rows = keep
+                    if not rows:
+                        continue
             ts = sorted(rows)
             gaps = 0
             for a, b in zip(ts, ts[1:]):
@@ -390,6 +420,9 @@ def verify(grans, symbols):
                    dt.datetime.fromtimestamp(ts[0] / 1000, dt.UTC).strftime("%Y-%m-%d %H:%M"),
                    dt.datetime.fromtimestamp(ts[-1] / 1000, dt.UTC).strftime("%Y-%m-%d %H:%M"),
                    lag))
+    if prune:
+        print("-" * 88)
+        print("已清理 %d 行超出回溯窗口的陈旧数据" % pruned_total)
     return 0
 
 
@@ -399,6 +432,8 @@ def main(argv=None):
     ap.add_argument("--symbols", default=None, help="逗号分隔；默认全部（core + universe）")
     ap.add_argument("--full", action="store_true", help="忽略 manifest 全量重扫")
     ap.add_argument("--verify", action="store_true", help="只审计不抓取")
+    ap.add_argument("--prune", action="store_true",
+                    help="配合 --verify：删除超出各粒度回溯窗口的陈旧行（清理早期抓过的上市前数据）")
     ap.add_argument("--sleep", type=float, default=0.15)
     ap.add_argument("--workers", type=int, default=8, help="并发线程数（默认 8）")
     ap.add_argument("--verbose", action="store_true")
@@ -418,7 +453,7 @@ def main(argv=None):
         symbols = all_syms
 
     if args.verify:
-        return verify(grans, symbols)
+        return verify(grans, symbols, prune=args.prune)
     return run(grans, symbols, args.full, args.sleep, args.verbose, args.workers)
 
 
