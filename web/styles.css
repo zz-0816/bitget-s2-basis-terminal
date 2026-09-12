@@ -1,0 +1,168 @@
+/* Basis Terminal —— rToken 现货 vs 美股永续
+   设计取向：监控台，不是营销页。信息密度优先，配色克制。 */
+
+:root {
+  --bg: #0b0e14;
+  --panel: #131722;
+  --panel-2: #1a1f2e;
+  --line: #242b3d;
+  --text: #e6e9ef;
+  --muted: #8b93a7;
+  --dim: #5c6478;
+  --accent: #4c8dff;
+  --pos: #26a69a;
+  --neg: #ef5350;
+  --warn: #ffb74d;
+  --closed: #2a2f45;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 顶栏 ---------- */
+.top {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding: 14px 22px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 10;
+}
+.brand { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.brand h1 { margin: 0; font-size: 17px; letter-spacing: .3px; }
+.brand .sub { color: var(--muted); font-size: 12.5px; }
+.dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--dim); display: inline-block;
+}
+.dot.on { background: var(--pos); box-shadow: 0 0 8px var(--pos); }
+.dot.err { background: var(--neg); }
+
+.session-box { display: flex; align-items: center; gap: 12px; font-size: 12.5px; }
+.sess-label {
+  padding: 4px 11px; border-radius: 999px;
+  background: var(--closed); border: 1px solid var(--line); font-weight: 600;
+}
+.sess-label.closed { color: var(--warn); border-color: #4a3c22; background: #241d10; }
+.sess-label.open { color: var(--pos); border-color: #1d4741; background: #10241f; }
+.sess-time { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ---------- 布局 ---------- */
+main { padding: 18px 22px 40px; max-width: 1360px; margin: 0 auto; }
+.panel {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 16px 18px; margin-bottom: 16px;
+}
+.panel h2 {
+  margin: 0 0 12px; font-size: 14.5px; font-weight: 600;
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+}
+.hint { color: var(--dim); font-size: 12px; font-weight: 400; }
+.grid2 { display: grid; grid-template-columns: 1.15fr .85fr; gap: 16px; }
+@media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } }
+
+/* ---------- 主题陈述 ---------- */
+.thesis { display: grid; grid-template-columns: 1fr auto; gap: 22px; align-items: center; }
+@media (max-width: 860px) { .thesis { grid-template-columns: 1fr; } }
+.thesis-kicker {
+  color: var(--accent); font-size: 11.5px; font-weight: 700;
+  letter-spacing: 1.4px; text-transform: uppercase;
+}
+.thesis-title { font-size: 21px; font-weight: 650; margin: 5px 0 7px; }
+.thesis-body { margin: 0; color: var(--muted); font-size: 13.5px; max-width: 62ch; }
+.thesis-side {
+  display: grid; grid-template-columns: repeat(2, minmax(112px, 1fr));
+  gap: 10px; min-width: 250px;
+}
+.metric {
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 8px; padding: 9px 12px; display: flex; flex-direction: column;
+}
+.m-v { font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.m-k { color: var(--dim); font-size: 11px; margin-top: 2px; }
+
+/* ---------- 表格 ---------- */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { padding: 8px 10px; text-align: right; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+thead th {
+  color: var(--dim); font-size: 11.5px; font-weight: 600;
+  border-bottom: 1px solid var(--line); text-transform: none;
+}
+tbody tr { border-bottom: 1px solid rgba(36, 43, 61, .5); }
+tbody tr:hover { background: var(--panel-2); }
+tbody tr.best { background: rgba(76, 141, 255, .07); }
+td.sep, th.sep { border-left: 1px solid var(--line); }
+.empty { text-align: center; color: var(--dim); padding: 22px; }
+.base-name { font-weight: 600; }
+.tag {
+  font-size: 11px; padding: 2px 7px; border-radius: 4px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+}
+.tag.hot { color: var(--warn); border-color: #4a3c22; }
+.tag.thin { color: var(--neg); border-color: #4a2622; }
+.pos { color: var(--pos); }
+.neg { color: var(--neg); }
+.mono-dim { color: var(--dim); }
+
+/* ---------- 图表 ---------- */
+.chart-toolbar { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 10px; }
+.chip {
+  padding: 3px 11px; border-radius: 999px; cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--line);
+  color: var(--muted); font-size: 12px; user-select: none;
+}
+.chip:hover { color: var(--text); border-color: #3a4256; }
+.chip.active { background: rgba(76, 141, 255, .16); border-color: var(--accent); color: #cfe0ff; }
+#chart {
+  width: 100%; height: 320px; display: block;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+}
+.legend { display: flex; gap: 18px; margin-top: 9px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.line-basis { background: var(--accent); }
+.line-spread { background: var(--warn); }
+.band-closed { background: var(--closed); height: 11px; width: 11px; border-radius: 3px; border: 1px solid var(--line); }
+
+/* ---------- 状态 ---------- */
+.status-body { display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.stat-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid rgba(36,43,61,.5); }
+.stat-row:last-child { border-bottom: 0; }
+.stat-k { color: var(--muted); }
+.stat-v { font-variant-numeric: tabular-nums; text-align: right; }
+.badge-ok { color: var(--pos); }
+.badge-warn { color: var(--warn); }
+.badge-bad { color: var(--neg); }
+
+/* ---------- 交易结构 ---------- */
+.structure { display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap; }
+.leg {
+  flex: 1 1 200px; background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 9px; padding: 12px 14px; border-top: 3px solid var(--line);
+}
+.leg.long { border-top-color: var(--pos); }
+.leg.short { border-top-color: var(--neg); }
+.leg.result { border-top-color: var(--accent); }
+.leg-tag { color: var(--dim); font-size: 11px; font-weight: 700; letter-spacing: .7px; }
+.leg-name { font-size: 15.5px; font-weight: 650; margin: 4px 0 5px; }
+.leg-detail { color: var(--muted); font-size: 12.5px; }
+.leg-arrow { align-self: center; color: var(--dim); font-size: 20px; padding: 0 3px; }
+
+/* ---------- 脚注 ---------- */
+.foot { color: var(--dim); font-size: 12px; margin: 10px 0 0; line-height: 1.65; }
+.foot strong { color: var(--muted); }
+.foot.warn {
+  border-left: 3px solid var(--warn); padding: 8px 0 8px 12px;
+  background: rgba(255, 183, 77, .05); margin-top: 14px;
+}
+.bottom {
+  padding: 14px 22px; border-top: 1px solid var(--line);
+  color: var(--dim); font-size: 12px; text-align: center;
+}

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Basis Terminal · rToken 现货 vs 美股永续</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="dot" id="live-dot"></span>
+    <h1>Basis Terminal</h1>
+    <span class="sub">rToken 现货 &nbsp;vs&nbsp; 美股永续 · 跨场所价差监控</span>
+  </div>
+  <div class="session-box" id="session-box">
+    <span class="sess-label" id="session-label">读取中…</span>
+    <span class="sess-time" id="session-time"></span>
+  </div>
+</header>
+
+<main>
+  <!-- 1. 主题陈述：休市窗口 = 策略交易窗口 -->
+  <section class="panel thesis">
+    <div class="thesis-main">
+      <div class="thesis-kicker">策略窗口</div>
+      <div class="thesis-title" id="window-title">—</div>
+      <p class="thesis-body" id="window-body">—</p>
+    </div>
+    <div class="thesis-side">
+      <div class="metric"><span class="m-v" id="m-pairs">—</span><span class="m-k">监控配对</span></div>
+      <div class="metric"><span class="m-v" id="m-basis">—</span><span class="m-k">基差中位 (bp)</span></div>
+      <div class="metric"><span class="m-v" id="m-spot">—</span><span class="m-k">现货点差中位 (bp)</span></div>
+      <div class="metric"><span class="m-v" id="m-perp">—</span><span class="m-k">永续点差中位 (bp)</span></div>
+    </div>
+  </section>
+
+  <!-- 2. 核心证据：同一标的、两个场所、点差差 100 倍 -->
+  <section class="panel">
+    <h2>同一标的，两个场所 <span class="hint">点差 = 交易成本；基差 = 交易机会</span></h2>
+    <div class="table-wrap">
+      <table id="pairs-table">
+        <thead>
+          <tr>
+            <th>标的</th>
+            <th>现货 mid</th>
+            <th class="sep">现货点差 (bp)</th>
+            <th>永续 mid</th>
+            <th class="sep">永续点差 (bp)</th>
+            <th class="sep">基差 (bp)</th>
+            <th>方向</th>
+            <th class="sep">永续顶部深度 (USD)</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="8" class="empty">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <p class="foot">
+      基差 = (现货 mid / 永续 mid − 1) × 10000。 <strong>基差为负 = 永续更贵 → 交易方向为「多现货 / 空永续」。</strong>
+      永续支持做空与杠杆，因此不受「rToken 无法做空」的限制。
+      <br />
+      <strong>容量才是真正的瓶颈：</strong>现货 24h 量常达永续的数百至数万倍，且永续顶部盘口深度可能只有数百美元。
+      标注「深度不足」的标的，即使基差再大也<strong>无法承载有意义的下单规模</strong>。
+    </p>
+  </section>
+
+  <!-- 3. 时间序列 -->
+  <section class="panel">
+    <h2>基差与点差时序 <span class="hint" id="chart-hint">—</span></h2>
+    <div class="chart-toolbar" id="chart-toolbar"></div>
+    <svg id="chart" viewBox="0 0 1000 320" preserveAspectRatio="none" role="img"
+         aria-label="基差与现货点差时间序列"></svg>
+    <div class="legend">
+      <span><i class="swatch line-basis"></i>基差 (bp)</span>
+      <span><i class="swatch line-spread"></i>现货点差 (bp)</span>
+      <span><i class="swatch band-closed"></i>休市窗口</span>
+    </div>
+  </section>
+
+  <div class="grid2">
+    <!-- 4. 分时段点差：休市放大了多少 -->
+    <section class="panel">
+      <h2>分时段点差 <span class="hint">休市 vs 盘中</span></h2>
+      <div class="table-wrap">
+        <table id="session-table">
+          <thead>
+            <tr><th>标的</th><th>休市</th><th>盘前</th><th>盘中</th><th>盘后</th><th class="sep">倍数</th></tr>
+          </thead>
+          <tbody><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+        </table>
+      </div>
+      <p class="foot">
+        「倍数」= 休市点差中位 ÷ 盘中点差中位。 <strong>这个倍数就是策略在休市窗口的收益来源。</strong>
+        盘中样本需等美股开盘后累积（当前若为休市时段，盘中列为空属正常）。
+      </p>
+    </section>
+
+    <!-- 5. 数据状态：诚实标注局限 -->
+    <section class="panel">
+      <h2>数据状态 <span class="hint">诚实标注局限</span></h2>
+      <div id="status-body" class="status-body">加载中…</div>
+    </section>
+  </div>
+
+  <!-- 6. 交易结构说明 -->
+  <section class="panel">
+    <h2>交易结构</h2>
+    <div class="structure">
+      <div class="leg long">
+        <div class="leg-tag">腿 1 · 做多</div>
+        <div class="leg-name">rToken 现货</div>
+        <div class="leg-detail">bid 侧挂单（maker）—— <strong>赚</strong>点差而非付点差</div>
+      </div>
+      <div class="leg-arrow">＋</div>
+      <div class="leg short">
+        <div class="leg-tag">腿 2 · 做空</div>
+        <div class="leg-name">美股永续</div>
+        <div class="leg-detail">即时对冲方向风险 —— 付 6 bp taker 费，换方向中性</div>
+      </div>
+      <div class="leg-arrow">＝</div>
+      <div class="leg result">
+        <div class="leg-tag">收益</div>
+        <div class="leg-name">点差 + 基差收敛</div>
+        <div class="leg-detail">风险：逆向选择 + 点差在开盘瞬间塌缩</div>
+      </div>
+    </div>
+    <p class="foot warn">
+      ⚠️ 本项目是<strong>做市型价差捕获</strong>，<strong>不是无风险套利</strong>：
+      散户无法做 mint/redeem。本页面为参赛作品展示，<strong>非投资建议</strong>；代币 ≠ 股权。
+    </p>
+  </section>
+</main>
+
+<footer class="bottom">
+  <span id="footer-meta">—</span>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

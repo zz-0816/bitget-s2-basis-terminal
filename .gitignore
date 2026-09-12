@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# 采样器运行时状态
+data/spread/.sampler.lock
+data/spread/_heartbeat.json
+data/spread/*.tmp
+
+# 历史回补数据（体积大，按需重新抓取）
+# 保留 data/spread/ 的当日样本作为数据样例；raw 全量不入库
+data/raw/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# 环境与密钥（禁止提交）
+.env
+*.key
+secrets.json
