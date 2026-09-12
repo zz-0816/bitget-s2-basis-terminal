@@ -141,6 +141,23 @@ def date_cn(now_utc):
     return (now_utc + dt.timedelta(hours=8)).strftime("%Y-%m-%d")
 
 
+def base_of(symbol):
+    """
+    从交易对符号取出 base（标的代码）。
+
+    ⚠️ 不能用 symbol.rstrip("USDT").lstrip("R")：
+    str.rstrip/rstrip 的参数是**字符集合**而非后缀，会把集合 {U,S,D,T} 里的字符
+    从右侧全部剥掉。实测 RHOODUSDT -> "HOO"（因为 D 在集合里被吃掉）。
+    必须用显式的后缀/前缀切片。
+    """
+    s = symbol
+    if s.endswith("USDT"):
+        s = s[:-4]
+    if s.startswith("R"):
+        s = s[1:]
+    return s
+
+
 def csv_path(day):
     return os.path.join(DATA_DIR, "%s.csv" % day)
 
@@ -233,7 +250,7 @@ def sample_once(now_utc=None):
                 continue
             rows.append([
                 ts_iso, ts_ms, day, rec["symbol"], rec["venue"],
-                rec["symbol"].rstrip("USDT").lstrip("R"),
+                base_of(rec["symbol"]),
                 rec["bid"], rec["ask"], rec["mid"], round(rec["spread_bp"], 4),
                 rec["bid_sz"], rec["ask_sz"], rec["last"], rec["usdt_vol_24h"],
             ])
@@ -282,7 +299,7 @@ def run(interval, duration=None, once=False):
                 s_mid, p_mid = spot[spot_sym][8], perp[perp_sym][8]
                 if s_mid and p_mid:
                     basis_note += "  %s %+.1fbp" % (
-                        spot_sym.rstrip("USDT").lstrip("R"), (s_mid / p_mid - 1) * 10000)
+                        base_of(spot_sym), (s_mid / p_mid - 1) * 10000)
 
         print("[%s] #%d 行 %d 错误 %d |%s"
               % (dt.datetime.now().strftime("%H:%M:%S"), cycles, len(rows), errors, basis_note))
