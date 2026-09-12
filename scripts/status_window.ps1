@@ -136,8 +136,10 @@ function Render {
             $shown = 0
             foreach ($b in $spot.Keys) {
                 if ($perp.ContainsKey($b) -and $perp[$b] -gt 0 -and $shown -lt 6) {
-                    $basis = ($spot[$b] / $perp[$b] - 1) * 10000
-                    Write-Host ("  {0,-8} 现货={1,10:N4}  永续={2,10:N4}  基差={3,8:N2} bp" -f $b, $spot[$b], $perp[$b], $basis)
+                    # 基差 = (永续/现货 - 1) x 10000，正 = 永续升水（标准期货口径）
+                    $basis = ($perp[$b] / $spot[$b] - 1) * 10000
+                    $side = if ($basis -gt 0) { "多现货/空永续" } else { "空现货/多永续" }
+                    Write-Host ("  {0,-8} 现货={1,10:N4}  永续={2,10:N4}  基差={3,8:N2} bp  ({4})" -f $b, $spot[$b], $perp[$b], $basis, $side)
                     $shown++
                 }
             }

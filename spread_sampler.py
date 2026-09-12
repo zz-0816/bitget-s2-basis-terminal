@@ -141,6 +141,13 @@ def date_cn(now_utc):
     return (now_utc + dt.timedelta(hours=8)).strftime("%Y-%m-%d")
 
 
+def basis_bp(spot_price, perp_price):
+    """基差（bps）= (永续/现货 − 1) × 10000，正 = 永续升水（标准期货口径）。"""
+    if not spot_price or not perp_price:
+        return None
+    return (perp_price / spot_price - 1.0) * 10000.0
+
+
 def base_of(symbol):
     """
     从交易对符号取出 base（标的代码）。
@@ -299,7 +306,7 @@ def run(interval, duration=None, once=False):
                 s_mid, p_mid = spot[spot_sym][8], perp[perp_sym][8]
                 if s_mid and p_mid:
                     basis_note += "  %s %+.1fbp" % (
-                        base_of(spot_sym), (s_mid / p_mid - 1) * 10000)
+                        base_of(spot_sym), basis_bp(s_mid, p_mid))
 
         print("[%s] #%d 行 %d 错误 %d |%s"
               % (dt.datetime.now().strftime("%H:%M:%S"), cycles, len(rows), errors, basis_note))

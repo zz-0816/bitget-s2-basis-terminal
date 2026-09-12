@@ -114,6 +114,29 @@ SESSION_LABEL = {
     "afterhours": "盘后",
 }
 
+# ---- 基差符号约定（标准期货口径，全项目唯一）----
+#   basis = (永续 / 现货 − 1) × 10000 ；**正 = 永续升水**
+#   basis>0 ⇒ 现货便宜 ⇒ 做多现货 / 做空永续
+BASIS_SIGN = +1.0
+
+
+def basis_bp(spot_price, perp_price):
+    """基差（bps），正 = 永续升水。"""
+    if not spot_price or not perp_price:
+        return None
+    return BASIS_SIGN * (perp_price / spot_price - 1.0) * 10000.0
+
+
+def basis_side(basis):
+    """由基差给出交易方向。"""
+    if basis is None:
+        return None
+    if basis > 0:
+        return "多现货 / 空永续"
+    if basis < 0:
+        return "空现货 / 多永续"
+    return "—"
+
 
 # ---------------------------------------------------------------- HTTP
 
@@ -276,7 +299,9 @@ def build_overview():
             "spot_spread_by_session": {},
         }
         if s_live and p_live and s_live["mid"] and p_live["mid"]:
-            entry["basis_bp"] = round((s_live["mid"] / p_live["mid"] - 1) * 10000, 2)
+            entry["basis_bp"] = round(basis_bp(s_live["mid"], p_live["mid"]), 2)
+            entry["basis_side"] = basis_side(entry["basis_bp"])
+            entry["basis_convention"] = "(永续/现货 − 1)，正 = 永续升水"
         entry["session_now"] = session_of(dt.datetime.now(dt.UTC))[0]
         for sess in ("closed", "premarket", "intraday", "afterhours"):
             st = stats(per_session.get((spot_sym, sess)))
@@ -329,7 +354,7 @@ def build_timeline(max_points=300):
             if s:
                 point["spread"][base] = round(s["spread_bp"], 2)
             if s and p and s["mid"] and p["mid"]:
-                point["basis"][base] = round((s["mid"] / p["mid"] - 1) * 10000, 2)
+                point["basis"][base] = round(basis_bp(s["mid"], p["mid"]), 2)
         if point["basis"]:
             series.append(point)
     if len(series) > max_points:

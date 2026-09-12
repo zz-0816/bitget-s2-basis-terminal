@@ -45,6 +45,32 @@ CORE_PAIRS = [
 ]
 
 SESSION_LABEL = {"closed": "休市", "premarket": "盘前", "intraday": "盘中", "afterhours": "盘后"}
+WEEKDAY_LABEL = {True: "weekend", False: "weekday"}
+
+# ---- 基差符号约定（全项目唯一口径，勿在别处另立）----
+#   标准期货口径：basis = (永续 / 现货 − 1) × 10000
+#   **正 = 永续升水**（比现货贵）；负 = 永续贴水
+#   经济含义：basis>0 ⇒ 现货便宜 ⇒ 做多现货 / 做空永续
+#   换算：本约定 = −(现货/永续 − 1)，与旧约定互为相反数
+BASIS_SIGN = +1.0
+
+
+def basis_bp(spot_price, perp_price):
+    """基差（bps）。正 = 永续升水。禁止在别处直接写内联公式。"""
+    if not spot_price or not perp_price:
+        return None
+    return BASIS_SIGN * (perp_price / spot_price - 1.0) * 10000.0
+
+
+def basis_side(basis):
+    """由基差给出交易方向。"""
+    if basis is None:
+        return None
+    if basis > 0:      # 永续贵 → 买便宜的现货、卖贵的永续
+        return "long_spot_short_perp"
+    if basis < 0:      # 现货贵 → 反向
+        return "short_spot_long_perp"
+    return "flat"
 
 
 def read_bars(gran, symbol):
@@ -130,12 +156,22 @@ def gran_ms(gran):
 
 
 def build(gran, pairs, max_gap_bars, sanity_bp=2000):
+    """
+    返回 (rows, stats, missing_pairs, gate_hits)
+
+    gate_hits: {perp_symbol: 触发合理性闸门的行数}
+      —— 这是**数据可信度**的信号（同标的跨场所基差不可能超 2000bp，
+         超了就说明现货符号挂的不是这个标的）。
+      注意与"现货过旧被弃"区分：后者只是**稀疏**（当天没成交），不是脏数据，
+      因此不计入 pair_quality，只由行级 spot_lag_bars / 空基差体现。
+    """
     step = gran_ms(gran)
     rows = []
     stats = {"aligned": 0, "no_spot": 0, "stale_spot": 0,
              "pre_launch_dropped": 0, "insane": 0}
     missing_pairs = []
-    suspect_pairs = []
+    gate_hits = {}
+    usable = {}
 
     for spot_sym, perp_sym, launch in pairs:
         sp = read_bars(gran, spot_sym)
@@ -173,23 +209,23 @@ def build(gran, pairs, max_gap_bars, sanity_bp=2000):
                 rows.append((ts, spot_sym, perp_sym, "", pp[ts], "", "", session_of(ts)))
                 continue
             s_close, p_close = sp[s_ts], pp[ts]
-            basis = (s_close / p_close - 1) * 10000 if p_close else ""
+            basis = basis_bp(s_close, p_close)
             # 合理性闸门：同标的跨场所基差不可能超过 sanity_bp
-            if basis != "" and abs(basis) > sanity_bp:
+            if basis is not None and abs(basis) > sanity_bp:
                 pair_insane += 1
                 stats["insane"] += 1
                 rows.append((ts, spot_sym, perp_sym, round(s_close, 6),
                              round(p_close, 6), "", int((ts - s_ts) // step), session_of(ts)))
                 continue
+            # 通过闸门、且成功对齐的行 = 可用于质量判定的样本
+            usable[perp_sym] = usable.get(perp_sym, 0) + 1
             stats["aligned"] += 1
             rows.append((ts, spot_sym, perp_sym, round(s_close, 6),
-                         round(p_close, 6), round(basis, 4) if basis != "" else "",
+                         round(p_close, 6), round(basis, 4) if basis is not None else "",
                          int((ts - s_ts) // step), session_of(ts)))
         if pair_insane:
-            suspect_pairs.append((perp_sym, pair_insane, pre, round(
-                100.0 * pair_insane / max(1, pair_insane + sum(
-                    1 for x in rows if x[2] == perp_sym and x[5] != "")), 2)))
-    return rows, stats, missing_pairs, suspect_pairs
+            gate_hits[perp_sym] = pair_insane
+    return rows, stats, missing_pairs, gate_hits, usable
 
 
 def report(rows):
@@ -232,11 +268,19 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="基差面板构建")
     ap.add_argument("--gran", default="1h")
     ap.add_argument("--pairs", type=int, default=10, help="使用前 N 个配对（0=全部）")
-    ap.add_argument("--max-gap", type=int, default=3, help="现货最大允许滞后 bar 数")
+    ap.add_argument("--max-gap", type=int, default=None,
+                    help="现货最大允许滞后 bar 数。默认：日线 0（严禁跨日拼接），其他粒度 1。"
+                         "实测日线用 3 会让 13.2%% 的行混入标的多日涨跌幅，"
+                         "把 |基差|>300bp 的极端值从 1.4%% 抬到 11.6%%，且 |bp|>300 的行里 52.5%% 来自这些行")
     ap.add_argument("--sanity-bp", type=float, default=2000.0,
                     help="基差合理性上限(bp)，超过则判为脏数据并剔除")
     ap.add_argument("--report", action="store_true")
     args = ap.parse_args(argv)
+
+    # 默认滞后容忍度：日线必须 0（现货常整天无成交，一旦回落就是跨日拼接），
+    # 其他粒度 1 bar。理由见 --max-gap 帮助文本。
+    if args.max_gap is None:
+        args.max_gap = 0 if args.gran == "1day" else 1
 
     if args.pairs <= 10:
         launch_map = load_launch_map()
@@ -247,45 +291,55 @@ def main(argv=None):
     print("构建面板 gran=%s 配对=%d 最大滞后=%d bar 合理性上限=%.0fbp（%d 个配对有上市时间过滤）"
           % (args.gran, len(pairs), args.max_gap, args.sanity_bp, n_launch))
 
-    rows, stats, missing, suspect = build(args.gran, pairs, args.max_gap, args.sanity_bp)
+    rows, stats, missing, gate_hits, usable = build(args.gran, pairs, args.max_gap, args.sanity_bp)
 
-    # === 配对级质量标记 ===
-    # 若某配对超过 10% 的行触发合理性闸门，则整体标记为不可信
-    # （实测 CLUSDT：145 行里 113 行异常，属符号挂错标的，必须排除）
-    per_pair_total, per_pair_bad = {}, {}
-    for ts, s, p, sc, pc, b, lag, sess in rows:
-        per_pair_total[p] = per_pair_total.get(p, 0) + 1
-        if b == "":
-            per_pair_bad[p] = per_pair_bad.get(p, 0) + 1
+    # === 配对级质量标记（只看数据可信度，不看稀疏度）===
+    #   sanity_rate = 触发合理性闸门的行 / (触发 + 成功对齐的行)
+    #   只衡量"现货符号是否挂错标的"这类**脏数据**；
+    #   "当天没成交导致现货过旧"属**稀疏**，不计入，由行级空基差体现。
+    #   实测 CLUSDT 的 sanity_rate 极高（符号关联到非对应标的），必须排除。
     verdict = {}
-    for p, tot in per_pair_total.items():
-        bad = per_pair_bad.get(p, 0)
-        ratio = bad / tot if tot else 0
-        verdict[p] = "ok" if ratio <= 0.10 else "suspect"
+    for p in set(list(gate_hits) + list(usable)):
+        good = usable.get(p, 0)
+        bad = gate_hits.get(p, 0)
+        rate = bad / (bad + good) if (bad + good) else 0.0
+        verdict[p] = "ok" if rate <= 0.10 else "suspect"
 
+    # 日线粒度下，bar 开盘时刻恒为 16:00Z，"session" 只可能是 closed(周末)。
+    # 因此日线用 weekend/weekday 标注，**时段结论只能取自 1h 面板**。
+    is_daily = args.gran in ("1day",)
     os.makedirs(OUT_DIR, exist_ok=True)
     out = os.path.join(OUT_DIR, "%s_%dpairs.csv" % (args.gran, len(pairs)))
     with open(out, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["ts_ms", "ts_utc", "date_cn", "spot_symbol", "perp_symbol",
                     "spot_close", "perp_close", "basis_bp", "spot_lag_bars",
-                    "session", "pair_quality"])
+                    "session", "bar_label", "pair_quality"])
         for ts, s, p, sc, pc, b, lag, sess in rows:
             utc = dt.datetime.fromtimestamp(ts / 1000, dt.UTC)
+            if is_daily:
+                bar_label = WEEKDAY_LABEL[utc.weekday() >= 5]
+            else:
+                bar_label = sess
             w.writerow([ts, utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
                         (utc + dt.timedelta(hours=8)).strftime("%Y-%m-%d"),
-                        s, p, sc, pc, b, lag, sess, verdict.get(p, "ok")])
+                        s, p, sc, pc, b, lag, sess, bar_label, verdict.get(p, "ok")])
 
     n_ok = sum(1 for v in verdict.values() if v == "ok")
     print("已写入 %s（%d 行）" % (out, len(rows)))
+    print("基差口径: (永续/现货 - 1) x 10000, 正 = 永续升水")
     print("对齐成功 %d / 无现货 %d / 现货过旧被弃 %d"
           % (stats["aligned"], stats["no_spot"], stats["stale_spot"]))
     print("剔除的上市前历史 %d 根（同名旧资产，必须丢弃）" % stats["pre_launch_dropped"])
     print("触发合理性闸门并剔除 %d 行" % stats["insane"])
-    print("配对质量：可信 %d / 可疑 %d" % (n_ok, len(verdict) - n_ok))
+    n_lag = sum(1 for r in rows if isinstance(r[6], int) and r[6] > 0)
+    print("现货滞后>0 的行 %d（%.1f%%）—— 用 --max-gap 0 可全部剔除"
+          % (n_lag, 100.0 * n_lag / max(1, len(rows))))
+    print("配对质量：可信 %d / 可疑 %d（判定依据：合理性闸门触发率 >10%%）"
+          % (n_ok, len(verdict) - n_ok))
     bad_pairs = sorted([p for p, v in verdict.items() if v == "suspect"])
     if bad_pairs:
-        print("  可疑配对（>10%% 行异常，建议分析时排除）: %s" % ", ".join(bad_pairs[:15]))
+        print("  可疑配对（建议分析时排除）: %s" % ", ".join(bad_pairs[:15]))
     if missing:
         print("缺数据的配对 %d 个: %s" % (len(missing), missing[:5]))
 

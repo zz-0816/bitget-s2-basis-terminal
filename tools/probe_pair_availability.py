@@ -43,7 +43,8 @@ for sp, fp in CAND:
     fmid = (fb+fa)/2 if f_ok and (fb+fa) else 0
     sbp = (sa-sb)/smid*10000 if smid else 0
     fbp = (fa-fb)/fmid*10000 if fmid else 0
-    basis = (smid/fmid-1)*10000 if smid and fmid else 0
+    # 基差 = (永续/现货 − 1) × 10000，正 = 永续升水（标准期货口径）
+    basis = (fmid/smid-1)*10000 if smid and fmid else 0
     vol = float(spot[sp]["usdtVolume"]) if s_ok else 0
     print(f"{sp:<12}{'Y' if s_ok else 'N':<5}{fp:<12}{'Y' if f_ok else 'N':<5}"
           f"{sbp:>9.2f}{fbp:>9.2f}{basis:>10.2f}  {vol:>16,.0f}")

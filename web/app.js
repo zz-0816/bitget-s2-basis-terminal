@@ -89,7 +89,7 @@ function renderPairs(rows) {
       '<td class="sep">' + fmt(pBp) + '</td>' +
       '<td class="sep ' + cls(basis) + '"><strong>' + fmt(basis) + '</strong></td>' +
       '<td>' + (basis === null ? '—'
-        : '<span class="tag">' + (basis < 0 ? '多现货 / 空永续' : '空现货 / 多永续') + '</span>') + '</td>' +
+        : '<span class="tag">' + (basis > 0 ? '多现货 / 空永续' : '空现货 / 多永续') + '</span>') + '</td>' +
       '<td>' + (r.capacity ? fmt(r.capacity.perp_top_depth_usd, 0) : '—') + '</td>' +
       '</tr>';
   }).join('');
