@@ -52,6 +52,23 @@ PAIRS = [
 ]
 ALL_SYMBOLS = [s for pair in PAIRS for s in pair]
 
+UNIVERSE_CSV = os.path.join(BASE, "data", "universe.csv")
+
+
+def symbols_from_universe():
+    """从 data/universe.csv 读取「有现货」的配对，返回两侧符号列表。"""
+    if not os.path.exists(UNIVERSE_CSV):
+        print("[FATAL] 缺少 %s；请先运行: python tools\\list_rwa_universe.py --write"
+              % UNIVERSE_CSV, file=sys.stderr)
+        return []
+    out = []
+    with open(UNIVERSE_CSV, newline="", encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            if str(r.get("has_spot", "")).lower() in ("true", "1", "yes"):
+                out.append(r["spot_symbol"])
+                out.append(r["perp_symbol"])
+    return out
+
 # 统一粒度名 -> (现货写法, 永续写法, 分钟数)
 GRAN_MAP = {
     "1min":  ("1min",  "1m",  1),
@@ -250,17 +267,25 @@ def main(argv=None):
     ap.add_argument("--sleep", type=float, default=0.25, help="翻页间隔秒")
     ap.add_argument("--matrix", action="store_true",
                     help="按推荐矩阵回补：1day/400 + 1h/120 + 1min/10")
+    ap.add_argument("--from-universe", action="store_true",
+                    help="从 data/universe.csv 取全部有现货的配对（213 组）")
     args = ap.parse_args(argv)
 
     if args.coverage:
         coverage_report()
         return 0
 
-    symbols = ([s.strip() for s in args.symbols.split(",") if s.strip()]
-               if args.symbols else ALL_SYMBOLS)
+    if args.from_universe and not args.symbols:
+        symbols = symbols_from_universe()
+        if not symbols:
+            return 2
+        print("[universe] 载入 %d 个符号（%d 组配对）" % (len(symbols), len(symbols) // 2))
+    else:
+        symbols = ([s.strip() for s in args.symbols.split(",") if s.strip()]
+                   if args.symbols else ALL_SYMBOLS)
     unknown = [s for s in symbols if s not in ALL_SYMBOLS]
     if unknown:
-        print("[warn] 未在配对表内的标的（仍会尝试）: %s" % ", ".join(unknown))
+        print("[info] 非核心清单符号 %d 个（来自 universe，将直接尝试）" % len(unknown))
 
     # 推荐矩阵：日线满足 >=60 天合规；小时线供分析；分钟线供微观结构
     jobs = ([("1day", 400), ("1h", 120), ("1min", 10)] if args.matrix
