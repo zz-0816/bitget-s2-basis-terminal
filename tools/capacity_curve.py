@@ -46,6 +46,14 @@ OUT_DIR = os.path.join(BASE, "data", "derived")
 
 DEFAULT_SLIPS = [1.0, 2.0, 5.0, 10.0, 25.0]
 
+# ---- 已确证"死报价"的 base（价格完全冻结，样本不可用）----
+# 判据与证据见 `tools/audit_samples.py` 的 audit_liveness()：
+#   2026-09-13 实测 `RSOXLUSDT` 现货在 15 小时内 bid/ask 固定为 122.27/122.28
+#   （价格跨度 0.0bp），且交易所返回的 `usdtVolume` 亦为逐字节相同的陈旧值。
+#   该类样本的"点差 0.82bp"是**假便宜**，会把容量曲线拉向乐观，必须排除。
+# 复跑核对：python tools/audit_samples.py
+DEAD_BASES = {"SOXL"}
+
 
 def load_snapshots(paths):
     """
@@ -123,6 +131,18 @@ def main(argv=None):
         return 2
 
     snaps = load_snapshots(paths)
+    # 排除已确证的死报价（见 DEAD_BASES 注释）
+    if DEAD_BASES:
+        n_before = len({k[0] for ts in snaps for k in snaps[ts]})
+        for ts in list(snaps.keys()):
+            for k in list(snaps[ts].keys()):
+                if k[0] in DEAD_BASES:
+                    del snaps[ts][k]
+            if not snaps[ts]:
+                del snaps[ts]
+        n_after = len({k[0] for ts in snaps for k in snaps[ts]})
+        print("已排除死报价 %s（配对数 %d -> %d）" % (sorted(DEAD_BASES), n_before, n_after))
+
     print("=" * 88)
     print("容量曲线（venue=%s）—— 最多能吃下多少 USD 而不超过给定滑点" % args.venue)
     print("=" * 88)
