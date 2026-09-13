@@ -61,3 +61,5 @@ MSG_DECOMP.txt
 data/spread/*.csv
 !data/spread/gz/
 MSG_ARCH.txt
+
+PERFMSG.txt

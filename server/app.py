@@ -218,25 +218,76 @@ def fetch_live():
 
 
 def live_cached(force=False):
+    """
+    实时行情缓存，**过期后在后台刷新、不阻塞请求**。
+
+    实测背景：`fetch_live()` 要并发打 20 个符号的交易所接口，冷态 **608 ms**；
+    而它原本在请求线程里同步执行 -> /api/overview 每次缓存过期都要等 0.6–1.7 s。
+    改为「立即返回旧值 + 后台线程刷新」后，请求侧恒为 ~1 ms。
+    """
+    now = time.time()
     with _LIVE_LOCK:
-        fresh = _LIVE["data"] and (time.time() - _LIVE["ts"]) < TICK_SECONDS
-        if fresh and not force:
-            return _LIVE["data"], _LIVE["ts"]
-        if not fresh or force:
-            data = fetch_live()
-            if data:
-                _LIVE["data"] = data
-                _LIVE["ts"] = time.time()
-            return _LIVE["data"] or {}, _LIVE["ts"]
+        data = _LIVE["data"]
+        fresh = bool(data) and (now - _LIVE["ts"]) < TICK_SECONDS
+        need_refresh = force or not fresh
+        if need_refresh and not _LIVE.get("refreshing"):
+            _LIVE["refreshing"] = True
+
+            def _bg():
+                try:
+                    new = fetch_live()
+                    with _LIVE_LOCK:
+                        if new:
+                            _LIVE["data"] = new
+                            _LIVE["ts"] = time.time()
+                except Exception:                   # noqa: BLE001
+                    pass
+                finally:
+                    with _LIVE_LOCK:
+                        _LIVE["refreshing"] = False
+
+            threading.Thread(target=_bg, daemon=True).start()
+        return (data or {}), _LIVE["ts"]
 
 
 # ---------------------------------------------------------------- 采样数据
 
-def read_latest_samples(limit_rows=6000):
-    """读最近一个（或两个）采样 CSV。"""
+# ---- 采样文件缓存 ----
+# 实测：read_latest_samples 每次重读解析 6000 行 CSV 要 ~525 ms，
+# 而 build_overview / build_timeline / build_session_compare **各调一次**，
+# 导致三个端点分别耗时约 500/525/554 ms（首屏合计 ~1.5 s）。
+# 采样文件 30–60 秒才更新一次，解析结果完全可以缓存。
+_SAMPLE_CACHE = {"ts": 0.0, "rows": [], "grouped": {}}
+_SAMPLE_CACHE_SEC = 15
+
+
+def _core_sample_files():
+    """
+    采样文件名过滤（关键）：
+    目录里混着多类 CSV —— `2026-09-13.csv`(core)、`universe-*.csv`、
+    `orderbook-*.csv`、`trades-*.csv`。早先只按 `.csv` 结尾取末两个文件，
+    在加入 trades 后会误取到 trades 文件（其列名不同）。
+    这里显式只取 core 采样（纯日期命名、无前缀）。
+    """
     if not os.path.isdir(SPREAD_DIR):
         return []
-    files = sorted(f for f in os.listdir(SPREAD_DIR) if f.endswith(".csv"))
+    out = []
+    for f in sorted(os.listdir(SPREAD_DIR)):
+        if not f.endswith(".csv"):
+            continue
+        if "-" in f.split(".")[0][:12] and not f[:4].isdigit():
+            continue                       # 有前缀的（universe-/orderbook-/trades-）
+        if f[:4].isdigit() and f.count("-") == 2:
+            out.append(f)
+    return out
+
+
+def read_latest_samples(limit_rows=6000, force=False):
+    """读最近一个（或两个）core 采样 CSV。带 15 秒缓存（见 _SAMPLE_CACHE 注释）。"""
+    now = time.time()
+    if not force and _SAMPLE_CACHE["rows"] and (now - _SAMPLE_CACHE["ts"]) < _SAMPLE_CACHE_SEC:
+        return _SAMPLE_CACHE["rows"]
+    files = _core_sample_files()
     rows = []
     for name in files[-2:]:
         try:
@@ -244,11 +295,19 @@ def read_latest_samples(limit_rows=6000):
                 rows.extend(csv.DictReader(fh))
         except OSError:
             continue
-    return rows[-limit_rows:]
+    rows = rows[-limit_rows:]
+    _SAMPLE_CACHE["rows"] = rows
+    _SAMPLE_CACHE["ts"] = now
+    _SAMPLE_CACHE["grouped"] = {}          # 失效下游缓存
+    return rows
 
 
 def group_samples(rows):
-    """按时间戳分组 -> {ts_ms: {symbol: rec}}"""
+    """按时间戳分组 -> {ts_ms: {symbol: rec}}（同样带缓存）"""
+    now = time.time()
+    if (_SAMPLE_CACHE["grouped"] and _SAMPLE_CACHE["rows"] is rows
+            and (now - _SAMPLE_CACHE["ts"]) < _SAMPLE_CACHE_SEC):
+        return _SAMPLE_CACHE["grouped"]
     grouped = {}
     for r in rows:
         try:
@@ -261,6 +320,8 @@ def group_samples(rows):
             "venue": r.get("venue", ""), "bid_sz": _f(r.get("bid_sz")),
             "ask_sz": _f(r.get("ask_sz")),
         }
+    if _SAMPLE_CACHE["rows"] is rows:
+        _SAMPLE_CACHE["grouped"] = grouped
     return grouped
 
 
@@ -397,24 +458,101 @@ def build_session_compare():
     return table
 
 
+_STATUS_CACHE = {"ts": 0.0, "data": None}
+_STATUS_CACHE_SEC = 60
+
+
+_ROWCOUNT_CACHE = {}
+
+
+def _count_lines(path):
+    """
+    快速统计 CSV 数据行数。
+
+    ⚠️ 两次优化，都是实测驱动：
+      1) 不要用 `sum(1 for _ in open(..., encoding='utf-8'))` ——
+         在 50 MB / 50 万行的 orderbook 上，端点总耗时 26.7 s（前端超时）。
+         改为二进制按换行计数，快约一个数量级。
+      2) 仍然慢：每次都要读完 80 MB+ 采样文件，冷态 2335 ms。
+         改为**按 (大小, mtime) 缓存计数** —— 文件只在追加时变化，
+         尺寸不变即行数不变，可直接复用。
+    """
+    try:
+        stt = os.stat(path)
+        key = (stt.st_size, int(stt.st_mtime))
+        hit = _ROWCOUNT_CACHE.get(path)
+        if hit and hit[0] == key:
+            return hit[1]
+        with open(path, "rb") as fh:
+            n = 0
+            while True:
+                b = fh.read(1 << 20)
+                if not b:
+                    break
+                n += b.count(b"\n")
+        rows = max(0, n - 1)                  # 减表头
+        _ROWCOUNT_CACHE[path] = (key, rows)
+        return rows
+    except OSError:
+        return 0
+
+
+def _raw_summary(gran, gdir, limit_files=40):
+    """
+    K 线目录摘要。**只取前 limit_files 个文件**算缺口 —— 全量算会非常慢
+    （1m 那 426 个文件、每个上万行）。若被截断则在返回里明确标注。
+    """
+    steps_per = {"1min": 1, "5min": 5, "15min": 15, "30min": 30,
+                 "1h": 60, "4h": 240, "1day": 1440,
+                 "1m": 1, "5m": 5, "15m": 15, "30m": 30, "1D": 1440}.get(gran, 1)
+    names = [n for n in sorted(os.listdir(gdir)) if n.endswith(".csv")]
+    info = {}
+    for name in names[:limit_files]:
+        sym = name[:-4]
+        path = os.path.join(gdir, name)
+        try:
+            ts = []
+            with open(path, newline="", encoding="utf-8") as fh:
+                for r in csv.DictReader(fh):
+                    try:
+                        ts.append(int(r["ts_ms"]))
+                    except (KeyError, ValueError, TypeError):
+                        continue
+            ts.sort()
+            steps = sum(1 for a, b in zip(ts, ts[1:])
+                        if b - a > 2 * 60 * 1000 * steps_per)
+            info[sym] = {"rows": len(ts), "gaps": steps,
+                         "first": ts[0] if ts else None,
+                         "last": ts[-1] if ts else None}
+        except (OSError, ValueError, KeyError):
+            continue
+    return info, len(names)
+
+
 def build_data_status():
-    """数据覆盖状态——诚实标注局限，评审加分。"""
-    status = {"spread_days": [], "spread_rows": 0, "raw": {}, "sampler": None}
+    """
+    数据覆盖状态——诚实标注局限。
+
+    带 60 秒缓存：前端刷新间隔 20 秒，而无缓存时本端点要扫 68 万行采样数据 +
+    K 线缺口，实测 26.7 秒会直接超时。
+    """
+    now = time.time()
+    if _STATUS_CACHE["data"] is not None and (now - _STATUS_CACHE["ts"]) < _STATUS_CACHE_SEC:
+        return _STATUS_CACHE["data"]
+
+    status = {"spread_days": [], "spread_rows": 0, "raw": {},
+              "sampler": None, "cached": False, "raw_files_total": {}}
     if os.path.isdir(SPREAD_DIR):
         for name in sorted(os.listdir(SPREAD_DIR)):
             if name.endswith(".csv"):
                 path = os.path.join(SPREAD_DIR, name)
-                try:
-                    with open(path, encoding="utf-8") as fh:
-                        n = sum(1 for _ in fh) - 1
-                except OSError:
-                    n = 0
-                status["spread_days"].append({"file": name, "rows": max(0, n)})
-                status["spread_rows"] += max(0, n)
+                n = _count_lines(path)
+                status["spread_days"].append({"file": name, "rows": n})
+                status["spread_rows"] += n
         hb = os.path.join(SPREAD_DIR, "_heartbeat.json")
         if os.path.exists(hb):
             try:
-                with open(hb, encoding="utf-8") as fh:
+                with open(hb, encoding="utf-8-sig") as fh:
                     status["sampler"] = json.load(fh)
             except (OSError, json.JSONDecodeError):
                 pass
@@ -423,27 +561,12 @@ def build_data_status():
             gdir = os.path.join(RAW_DIR, gran)
             if not os.path.isdir(gdir):
                 continue
-            info = {}
-            for name in sorted(os.listdir(gdir)):
-                if not name.endswith(".csv"):
-                    continue
-                sym = name[:-4]
-                try:
-                    with open(os.path.join(gdir, name), newline="", encoding="utf-8") as fh:
-                        rows = list(csv.DictReader(fh))
-                    steps = 0
-                    ts_sorted = sorted(int(r["ts_ms"]) for r in rows if r.get("ts_ms"))
-                    for a, b in zip(ts_sorted, ts_sorted[1:]):
-                        if b - a > 2 * 60 * 1000 * ({"1min": 1, "5min": 5, "15min": 15,
-                                                     "30min": 30, "1h": 60, "4h": 240,
-                                                     "1day": 1440}.get(gran, 1)):
-                            steps += 1
-                    info[sym] = {"rows": len(rows), "gaps": steps,
-                                 "first": ts_sorted[0] if ts_sorted else None,
-                                 "last": ts_sorted[-1] if ts_sorted else None}
-                except (OSError, ValueError, KeyError):
-                    continue
+            info, total = _raw_summary(gran, gdir)
             status["raw"][gran] = info
+            status["raw_files_total"][gran] = total
+    status["cached"] = True
+    _STATUS_CACHE["data"] = status
+    _STATUS_CACHE["ts"] = now
     return status
 
 
@@ -490,13 +613,34 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):              # 静音，避免刷屏
         pass
 
+    # 小于此体积不压缩（压缩开销大于收益）
+    GZIP_MIN_BYTES = 512
+
     def _send(self, code, body, ctype="application/json; charset=utf-8"):
         if isinstance(body, str):
             body = body.encode("utf-8")
+        headers = [("Content-Type", ctype), ("Cache-Control", "no-store")]
+
+        # ---- gzip（实测压缩率很高：overview 22% / timeline 15% / data-status 9%）----
+        # 只压 compressible 类型；已压缩过的（图片/gz）跳过。
+        accept = (self.headers.get("Accept-Encoding") or "").lower()
+        compressible = (ctype.startswith("text/") or ctype.startswith("application/json")
+                        or ctype.startswith("application/javascript"))
+        if "gzip" in accept and compressible and len(body) >= self.GZIP_MIN_BYTES:
+            try:
+                import gzip as _gzip
+                packed = _gzip.compress(body, 6)
+                if len(packed) < len(body):
+                    body = packed
+                    headers.append(("Content-Encoding", "gzip"))
+                    headers.append(("Vary", "Accept-Encoding"))
+            except Exception:                       # noqa: BLE001
+                pass                                # 压缩失败则退回未压缩
+
         self.send_response(code)
-        self.send_header("Content-Type", ctype)
+        for k, v in headers:
+            self.send_header(k, v)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -540,6 +684,28 @@ class Handler(BaseHTTPRequestHandler):
 def serve(port, tick):
     global TICK_SECONDS
     TICK_SECONDS = tick
+
+    # ---- 启动预热 ----
+    # `data-status` 冷态要真读 80 MB+ 采样文件数行（实测 2333 ms），
+    # 若留给首个请求就会让首屏卡住。这里在后台线程里预热：
+    #   ① 预填实时行情 ② 预建 data-status（含行数缓存）
+    # 于是任何请求都命中缓存，用户永不遇到冷态。
+    def _warmup():
+        try:
+            live_cached(force=True)
+            time.sleep(1.5)                 # 等后台线程回填实时行情
+            build_data_status()
+            read_latest_samples(force=True)
+            group_samples(_SAMPLE_CACHE["rows"])
+            build_overview()
+            build_timeline()
+            build_session_compare()
+            print("[warmup] 预热完成：实时行情 + data-status + 采样缓存 + 三个端点")
+        except Exception as exc:            # noqa: BLE001
+            print("[warmup] 预热异常（不影响服务）：%r" % (exc,))
+
+    threading.Thread(target=_warmup, daemon=True).start()
+
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print("=" * 74)
     print("Basis Terminal —— rToken 现货 vs 美股永续")

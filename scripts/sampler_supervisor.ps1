@@ -60,15 +60,18 @@ function Remove-SupervisorLock {
     } catch { }
 }
 
-# 三个采样器：名称 -> 参数
-# 三者采的都是"交易所不留存、停了就永久丢失"的数据，因此都需要守护：
+# 四个采样器：名称 -> 参数
+# 四者采的都是"交易所不留存、停了就永久丢失"的数据，因此都需要守护：
 #   core      10 配对 × 最优一档，60 秒   -> 时间序列密
 #   universe  213 配对轮转 × 最优一档      -> 截面广
 #   orderbook 10 配对 × 5 档，30 秒        -> 盘口形状（容量曲线）
+#   trades    10 配对 × 逐笔成交，60 秒    -> 成交价/量/方向（成交模型与逆向选择）
+#             实测交易所只保留每标的约 8000 笔（永续）/ 约 1000 笔（现货）
 $Samplers = @(
     @{ Name = "core";      Lock = ".sampler.lock";            Args = @("spread_sampler.py", "--loop", "--interval", "60") },
     @{ Name = "universe";  Lock = ".sampler_universe.lock";   Args = @("sampler_universe.py", "--loop", "--batch", "24", "--interval", "30") },
-    @{ Name = "orderbook"; Lock = ".orderbook_sampler.lock";  Args = @("orderbook_sampler.py", "--loop", "--interval", "30", "--levels", "5") }
+    @{ Name = "orderbook"; Lock = ".orderbook_sampler.lock";  Args = @("orderbook_sampler.py", "--loop", "--interval", "30", "--levels", "5") },
+    @{ Name = "trades";    Lock = ".trades_sampler.lock";     Args = @("trades_sampler.py", "--loop", "--interval", "60") }
 )
 
 # ---- 锁的存活判定 ----

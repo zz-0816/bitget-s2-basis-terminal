@@ -27,16 +27,27 @@ async function loadHealth() {
   const lab = $('session-label');
   lab.textContent = h.session_label;
   lab.className = 'sess-label ' + (closed ? 'closed' : 'open');
+
+  // ⭐ 平台路由才是"能不能靠挂单省点差"的判据（与 session 口径相差约 4 小时）
+  const rl = $('route-label');
+  if (rl) {
+    const mk = h.maker_benefit;
+    rl.textContent = mk ? '所内撮合 · 可赚点差' : 'StockRoute · 挂单也按 Taker';
+    rl.className = 'sess-label ' + (mk ? 'open' : 'closed');
+    rl.title = h.route_label || '';
+  }
+
   // 时间显示交给独立时钟（tickClock，每秒一次），不依赖健康检查的 30 秒节奏
   CLOCK_OFFSET_MS = new Date(h.server_time_utc).getTime() - Date.now();
   $('live-dot').className = 'dot on';
 
-  $('window-title').textContent = closed
-    ? '当前处于休市窗口 —— 这正是策略的建仓窗口'
-    : '当前美股开市中 —— 休市窗口尚未开始';
-  $('window-body').textContent = closed
-    ? '美股已休市，rToken 与美股永续仍在 7×24 交易。休市时段现货点差显著放大（这是策略的收益来源），而基差通常在开盘时收敛（这是退出时机）。下方「分时段点差」量化放大倍数。'
-    : '美股开市中，现货点差处于全天最窄区间——这是计算「休市窗口放大倍数」的基准值。策略的实际建仓窗口在每个交易日的 20:00 ET 之后及整个周末。';
+  $('window-title').textContent = h.maker_benefit
+    ? '当前处于「所内撮合」窗口 —— 这是策略唯一可交易的时段'
+    : (closed ? '美股休市，但走 StockRoute —— 挂单也按 Taker 计费'
+              : '美股开市中 —— 走 StockRoute，挂单省不了点差');
+  $('window-body').textContent = h.maker_benefit
+    ? '周末/节假日窗口：平台启用所内撮合，区分 Maker/Taker。现货腿挂单可「赚」半幅点差 —— 这是策略的收益来源。'
+    : '常规交易时段：平台走 StockRoute 直连美股，所有订单按 Taker 计费（不分挂单/吃单）。此时段不宜做市，数据仅作对照基准。';
   $('footer-meta').textContent =
     '刷新间隔 ' + REFRESH_MS / 1000 + 's · 行情缓存 ' + h.tick_seconds + 's · 配对 ' + h.pairs + ' 组';
 }
