@@ -31,11 +31,13 @@ import sys
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPREAD = os.path.join(BASE, "data", "spread")
 
-# 脚本 -> (锁文件, 每轮预期行数说明)
+# 脚本 -> 锁文件。**四个核心采样器都必须在列**：漏掉任何一个，
+# 重复实例就会在无人察觉的情况下把同一份数据写两遍（本项目已复发多次）。
 SAMPLERS = {
     "spread_sampler":    ".sampler.lock",
     "sampler_universe":  ".sampler_universe.lock",
     "orderbook_sampler": ".orderbook_sampler.lock",
+    "trades_sampler":    ".trades_sampler.lock",
 }
 
 FAIL = 0
@@ -105,11 +107,17 @@ def main():
     #   universe 轮转  48 行/轮，30 秒  -> 期望 ~2 轮/分钟（24 配对 × 现货/永续）
     #   orderbook      190 行/轮，30 秒 -> 期望 ~2 轮/分钟（10 配对 × 5 档 × 2 侧）
     # 只有"轮间隔 <20 秒"才是多实例的确凿特征，因此以此为主判据。
+    #
+    # ⚠️ 成交流水（trades-*.csv）**不能套用这条判据**：它记的是逐笔成交，
+    #    同一秒内天然有几十笔，轮间隔中位必然接近 0 秒 —— 早期版本因此把它
+    #    误报成"疑似多实例"。成交表另用**重复 trade_id** 判定（见下）。
     today = dt.datetime.now().strftime("%Y-%m-%d")
     files = sorted(f for f in os.listdir(SPREAD)
                    if f.endswith(".csv")) if os.path.isdir(SPREAD) else []
     for name in files:
         path = os.path.join(SPREAD, name)
+        if name.startswith("trades-"):
+            continue          # 见下方【2b】专项检查
         rows = []
         with open(path, newline="", encoding="utf-8") as fh:
             for r in csv.DictReader(fh):
@@ -138,6 +146,37 @@ def main():
             note = "   <- 疑似多实例（轮间隔过短）"
         print("  [%s] %-28s 轮数/分钟=%.2f  间隔中位=%.1fs  每轮行数=%s%s"
               % (tag, name, per_min, med, sizes, note))
+
+    print("\n【2b】成交流水：重复 trade_id 检测（多实例的确凿证据）")
+    tfiles = [f for f in files if f.startswith("trades-")]
+    if not tfiles:
+        print("  (无成交流水文件)")
+    for name in tfiles:
+        path = os.path.join(SPREAD, name)
+        seen = set()
+        dup = 0
+        n = 0
+        with open(path, newline="", encoding="utf-8") as fh:
+            for r in csv.DictReader(fh):
+                key = (r.get("venue"), r.get("base"), r.get("trade_id"))
+                n += 1
+                if key in seen:
+                    dup += 1
+                else:
+                    seen.add(key)
+        is_today = today in name
+        # 同一笔成交被写两次 = 两个实例在同时写同一个文件（或状态文件丢失）
+        bad = bool(is_today and dup > 0)
+        if bad:
+            FAIL += 1
+        tag = "!! " if bad else "OK "
+        note = ""
+        if not is_today:
+            note = "   (历史文件，不作判据)"
+        elif bad:
+            note = "   <- 同一 trade_id 重复写入，疑似多实例！"
+        print("  [%s] %-28s 行数=%7d  重复 trade_id=%d%s"
+              % (tag, name, n, dup, note))
 
     print("\n【3】当前数据量")
     for name in files:
