@@ -66,10 +66,29 @@ function Remove-SupervisorLock {
 #   universe  213 配对轮转 × 最优一档      -> 截面广
 #   orderbook 10 配对 × 5 档，30 秒        -> 盘口形状（容量曲线）
 $Samplers = @(
-    @{ Name = "core";      Args = @("spread_sampler.py", "--loop", "--interval", "60") },
-    @{ Name = "universe";  Args = @("sampler_universe.py", "--loop", "--batch", "24", "--interval", "30") },
-    @{ Name = "orderbook"; Args = @("orderbook_sampler.py", "--loop", "--interval", "30", "--levels", "5") }
+    @{ Name = "core";      Lock = ".sampler.lock";            Args = @("spread_sampler.py", "--loop", "--interval", "60") },
+    @{ Name = "universe";  Lock = ".sampler_universe.lock";   Args = @("sampler_universe.py", "--loop", "--batch", "24", "--interval", "30") },
+    @{ Name = "orderbook"; Lock = ".orderbook_sampler.lock";  Args = @("orderbook_sampler.py", "--loop", "--interval", "30", "--levels", "5") }
 )
+
+# ---- 锁的存活判定 ----
+# ⚠️ 真实踩过的坑（重复写入的根因之一）：
+#   守护只看「.supervisor.lock」判单实例。若上一个守护被强杀过，锁会陈旧；
+#   新守护接管锁后，会**无视仍在运行的旧采样器**再起一套 →
+#   同一 CSV 被两个进程交错写入（实测出现过 2.34 轮/分钟，正常应为 1）。
+#   因此启动前先看每个采样器的锁：**锁新鲜且持锁者存活 → 只监控、不重启**。
+function Get-LiveLockPid([string]$lockName) {
+    $p = Join-Path $RepoRoot ("data\spread\" + $lockName)
+    if (-not (Test-Path $p)) { return $null }
+    try {
+        $info = Get-Content $p -Raw -Encoding UTF8 | ConvertFrom-Json
+        $lp = [int]$info.pid
+        if ($lp -le 0) { return $null }
+        $proc = Get-Process -Id $lp -ErrorAction SilentlyContinue
+        if ($proc) { return $lp }
+    } catch { }
+    return $null
+}
 
 function Write-Log([string]$msg) {
     $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg
@@ -94,6 +113,16 @@ Write-Log "守护进程启动（仓库 $RepoRoot）"
 
 $procs = @{}
 foreach ($s in $Samplers) {
+    # ---- 先采纳已有实例，避免重复 ----
+    $livePid = Get-LiveLockPid $s.Lock
+    if ($livePid) {
+        $existing = Get-Process -Id $livePid -ErrorAction SilentlyContinue
+        if ($existing) {
+            $procs[$s.Name] = @{ Spec = $s; Proc = $existing }
+            Write-Log ("{0}: 已有存活实例 pid={1}，采纳并监控（不重启）" -f $s.Name, $livePid)
+            continue
+        }
+    }
     $p = Start-Sampler $s
     $procs[$s.Name] = @{ Spec = $s; Proc = $p }
     Write-Log ("启动 {0}: pid={1}" -f $s.Name, $p.Id)

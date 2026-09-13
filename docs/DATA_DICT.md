@@ -141,7 +141,12 @@ rho    = Σ (x_t − μ)(x_{t−1} − μ) / Σ (x_t − μ)²      # μ 为该�
 | 7 | 1m 只能回溯约 **13.9 天** | 关机超窗口则永久缺失，记入 `data/manifest.json` 的 `gap_log` |
 | 8 | PowerShell 把未加引号的 `--gran 1h,1D` 当数组 | 写 `--gran "1h,1D"` |
 | 9 | `.cmd` 必须**纯 ASCII**（cmd.exe 按 GBK 解析 UTF-8 中文会报错） | 中文放 `.ps1`（带 UTF-8 BOM） |
-| 10 | 多个守护/包装进程各拉一套采样器 | 守护自身持 `.supervisor.lock` 单实例 |
+| 10 | 多个守护/包装进程各拉一套采样器 | 守护自身持 `.supervisor.lock` 单实例；**新守护启动前先"采纳"已存活的采样器**（见 `sampler_supervisor.ps1` 的 `Get-LiveLockPid`） |
+| 11 | **PowerShell 写的锁文件带 UTF-8 BOM**，Python 用 `encoding="utf-8"` 读会抛 `Unexpected UTF-8 BOM` → 锁明明存在却被判"守护未运行" | 读锁一律用**容忍 BOM** 的方式（`utf-8-sig` → `utf-8` → 正则抠 `"pid"`）；见 `tools/precheck_window.py` 的 `read_lock_pid()` |
+| 12 | **`os.kill(pid, 0)` 在本环境对任何 pid 都抛 OSError**（会话受限，无法向任意进程发信号）→ 存活判定一律为假 | 存活判定改用"列进程"（CIM 全进程列表），不要用信号探测 |
+| 13 | 用 `powershell -Command "... -like '*sampler_supervisor.ps1*'"` 查询时，**查询命令自身的命令行就含该字符串** → PowerShell 子进程自我匹配，误计实例数 | 判守护实例**只看 `.supervisor.lock` 持有者**，不做命令行字符串匹配 |
+| 14 | 用 `wmic process get CommandLine` 查进程 → 新版 Windows 已弃用，**返回空**，导致误判 0 个实例 | 改用 `Get-CimInstance Win32_Process` |
+| 15 | 覆盖率的分子分母口径不一致 → 算出 **153.7% / 110%** 这类不可能值 | 分母用**窗口（或文件）时长**，不用"有数据的那一小段"；并单列"头部缺口"使缺失无处隐藏 |
 
 ---
 
