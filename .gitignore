@@ -51,3 +51,4 @@ MSG*.txt
 COMMIT_MSG*.txt
 COMMIT_MSG*.tmp*
 *.tmp.txt
+MSG_DECOMP.txt
