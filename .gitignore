@@ -52,3 +52,12 @@ COMMIT_MSG*.txt
 COMMIT_MSG*.tmp*
 *.tmp.txt
 MSG_DECOMP.txt
+
+# ---------- 采样原始 CSV（体积大且持续增长）----------
+# 当天文件越写越大（orderbook 实测约 2.3 MB/小时，已触发 GitHub 50 MB 警告，
+# 约 21 小时后会撞 100 MB 硬限）。压缩到约 15% 后放 data/spread/gz/ 入库。
+# 原始 csv 留在本地供采样器继续写；队友要原始数据可解压 gz：
+#     python tools/archive_samples.py     # 重新压缩（幂等）
+data/spread/*.csv
+!data/spread/gz/
+MSG_ARCH.txt
