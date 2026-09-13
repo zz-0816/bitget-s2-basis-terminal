@@ -460,6 +460,10 @@ def build_session_compare():
 
 _STATUS_CACHE = {"ts": 0.0, "data": None}
 _STATUS_CACHE_SEC = 60
+# 后台刷新去重：过期瞬间可能同时来多个请求，若每个都起一个线程，
+# 就会有 N 个线程同时去数 80 MB 文件的行数（自我制造的雪崩）。
+# 用非阻塞锁保证**同一时刻至多一个**刷新在跑。
+_STATUS_REFRESH_LOCK = threading.Lock()
 
 
 _ROWCOUNT_CACHE = {}
@@ -529,17 +533,9 @@ def _raw_summary(gran, gdir, limit_files=40):
     return info, len(names)
 
 
-def build_data_status():
-    """
-    数据覆盖状态——诚实标注局限。
-
-    带 60 秒缓存：前端刷新间隔 20 秒，而无缓存时本端点要扫 68 万行采样数据 +
-    K 线缺口，实测 26.7 秒会直接超时。
-    """
-    now = time.time()
-    if _STATUS_CACHE["data"] is not None and (now - _STATUS_CACHE["ts"]) < _STATUS_CACHE_SEC:
-        return _STATUS_CACHE["data"]
-
+def _build_data_status_uncached(now):
+    """真正干活的版本：扫采样文件行数 + K 线缺口。慢（冷启动约 2–3 秒），
+    所以只允许由 build_data_status() 通过缓存或后台线程调用。"""
     status = {"spread_days": [], "spread_rows": 0, "raw": {},
               "sampler": None, "cached": False, "raw_files_total": {}}
     if os.path.isdir(SPREAD_DIR):
@@ -565,9 +561,53 @@ def build_data_status():
             status["raw"][gran] = info
             status["raw_files_total"][gran] = total
     status["cached"] = True
-    _STATUS_CACHE["data"] = status
-    _STATUS_CACHE["ts"] = now
+    status["built_at"] = now
     return status
+
+
+def _bg_data_status():
+    """后台刷新：算完再换缓存，失败则保留旧值（绝不让前端吃异常）。"""
+    try:
+        st = _build_data_status_uncached(time.time())
+    except Exception:  # noqa: BLE001
+        return
+    finally:
+        _STATUS_REFRESH_LOCK.release()
+    _STATUS_CACHE["data"] = st
+    _STATUS_CACHE["ts"] = time.time()
+
+
+def build_data_status():
+    """
+    数据覆盖状态——诚实标注局限。
+
+    性能设计（两次踩坑，别再回退）：
+
+    1. **必须缓存**：无缓存时本端点要扫 68 万行采样数据 + K 线缺口，实测 26.7 秒
+       直接超时；加缓存后降到毫秒级。
+    2. **必须 stale-while-revalidate**：只做「过期重算」是不够的 ——
+       缓存一过期，第一个访问的请求就要**同步**付 2–3 秒。前端刷新间隔 20 秒、
+       缓存 60 秒，所以每天总有若干次用户正好撞上这个冷启动。
+       现在改成：**过期时先把旧值立刻返回，同时在后台线程重算**。
+       代价是数据最多滞后一个刷新周期（对「数据覆盖状态」这种分钟级信息完全够用）。
+    """
+    now = time.time()
+    cached = _STATUS_CACHE["data"]
+    fresh = cached is not None and (now - _STATUS_CACHE["ts"]) < _STATUS_CACHE_SEC
+    if fresh:
+        return cached
+    if cached is not None:
+        # 陈旧但可用：立即返回，后台刷新（stale-while-revalidate）。
+        # 非阻塞抢锁：抢不到说明已有刷新在跑，直接复用它的结果即可。
+        if _STATUS_REFRESH_LOCK.acquire(blocking=False):
+            threading.Thread(target=_bg_data_status, name="data-status-refresh",
+                             daemon=True).start()
+        return cached
+    # 首次访问（进程刚起来）：只能同步算一次，之后就都走上面的分支
+    st = _build_data_status_uncached(now)
+    _STATUS_CACHE["data"] = st
+    _STATUS_CACHE["ts"] = time.time()
+    return st
 
 
 # ---------------------------------------------------------------- 路由
