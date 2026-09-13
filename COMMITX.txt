@@ -1,0 +1,27 @@
+﻿fix: 修好 .gitignore（GBK 乱码致规则全失效）+ 停止追踪 810MB 回补数据
+
+[根因] .gitignore 曾被以 GBK 编码写入，含非法 UTF-8 字节（0xC1）。
+       git 无法解析该文件 -> **整个 .gitignore 的所有规则失效** ->
+       data/raw/ 下 2171 个文件（约 810 MB）自 083250d 起被提交进仓库。
+       实测：UTF-8 严格解码在第 816 字节处抛错；git check-ignore 对
+       data/raw/1m/*.csv 无任何匹配。
+
+[修复]
+  1) 整份重写为合法 UTF-8（无 BOM），并加自检命令说明
+  2) git rm -r --cached data/raw   -> 停止追踪 2171 个文件（**磁盘文件保留**）
+  3) 停止追踪 3 个运行期文件：.sampler.lock / .sampler_universe.lock /
+     _heartbeat_universe.json
+  4) 验证忽略规则对**未追踪**路径生效（这才是正确测法，
+     已追踪文件不受忽略规则影响 —— 这点也曾误判）：
+       data/raw/1m/NEWFILE.csv        -> .gitignore:35 匹配
+       data/spread/.supervisor.lock   -> .gitignore:23 匹配
+
+[影响与建议]
+  * 本次只停止追踪，**不改写历史** —— 队友已克隆的仓库不会被破坏。
+    但那 810 MB 仍在历史对象中（size-pack 190 MiB），克隆仍偏慢。
+    若日后需要瘦身，再单独评估是否跑 git filter-repo（需 force-push，
+    会要求队友重新克隆）。
+  * data/raw/ 可用 kline_accumulator.py 随时重抓，故不入库是正确取舍。
+
+[顺带] 本轮也说明了为什么"忽略规则加了却没生效"：
+  不是规则写错，而是**整个文件因编码问题没被解析**。

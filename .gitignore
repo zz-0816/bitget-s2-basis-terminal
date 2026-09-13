@@ -1,47 +1,53 @@
-# Python
+# ===============================================================
+#  .gitignore  -- 请保持本文件为【合法 UTF-8】【无 BOM】
+#
+#  [历史事故] 本文件曾被以 GBK 编码写入，产生非法 UTF-8 字节（0xC1），
+#  导致 git 完全无法解析整个 .gitignore -- 所有规则失效，
+#  结果 data/raw/ 下约 810 MB 的 K 线被提交进仓库（自 083250d 起）。
+#  改完本文件请自检：
+#      python -c "open('.gitignore',encoding='utf-8').read()"
+#  报 UnicodeDecodeError 即说明编码又坏了。
+# ===============================================================
+
+# ---------- Python ----------
 __pycache__/
 *.py[cod]
 .venv/
 venv/
 *.egg-info/
 
-# 閲囨牱鍣ㄨ繍琛屾椂鐘舵€?data/spread/.sampler.lock
+# ---------- 运行期状态（锁 / 心跳 / 临时文件）----------
+data/spread/.sampler.lock
 data/spread/.sampler_universe.lock
-data/spread/_heartbeat.json
-data/spread/*.tmp
-
-# 杩愯鏈熼攣鏂囦欢锛堜笉搴斿叆搴擄級
-data/.kline_accumulator.lock
-data/spread/.supervisor.lock
 data/spread/.orderbook_sampler.lock
+data/spread/.supervisor.lock
+data/spread/_heartbeat.json
+data/spread/_heartbeat_universe.json
+data/spread/*.tmp
+data/.kline_accumulator.lock
 data/manifest.json.tmp
 data/logs/
 
-# 鍘嗗彶鍥炶ˉ鏁版嵁锛堜綋绉ぇ锛屾寜闇€閲嶆柊鎶撳彇锛?# 淇濈暀 data/spread/ 鐨勫綋鏃ユ牱鏈綔涓烘暟鎹牱渚嬶紱raw 鍏ㄩ噺涓嶅叆搴?data/raw/
+# ---------- 大体积回补数据（不要入库）----------
+# K 线可用 python kline_accumulator.py --gran "1m,5m,1h,1D" 随时重抓；
+# 单 1m 就 400 MB+，入库会拖垮仓库并让队友克隆变慢。
+# 要给别人数据样本时，放受控体积的代表文件到 data/samples/（允许入库）。
+data/raw/
 
-# 缂栬緫鍣?/ 绯荤粺
+# ---------- 编辑器 / 系统 ----------
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
 *.swp
 
-# 鐜涓庡瘑閽ワ紙绂佹鎻愪氦锛?.env
+# ---------- 环境与密钥（禁止提交）----------
+.env
 *.key
 secrets.json
 
-# 临时提交信息
-*.tmp.txt
-MSG.tmp.txt
-
-# ��ʱ�ύ��Ϣ�ļ����ҷ����ֻ���
-MSGFILE.txt
+# ---------- 临时提交信息文件（反复手滑，用通配防住）----------
 MSG*.txt
+COMMIT_MSG*.txt
 COMMIT_MSG*.tmp*
-
-MSGX.txt
-MSG*.txt
-
-MSGZ.txt
-
-MSGA.txt
+*.tmp.txt
