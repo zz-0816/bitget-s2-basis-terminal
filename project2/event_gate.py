@@ -90,10 +90,39 @@ def load_calendar():
 
 
 def static_gate(base, now_ms):
-    """确定性回退路径：只查日历，不调任何外部服务。
+    """确定性路径：**可计算事件** + **人工日历**，都不调外部服务。
 
-    返回 {"in_window": bool, "severity": str, "reason": str, "source": "static"}
+    两层合并的理由（很重要）：
+      * 可计算层（`market_events`）由规则算出 —— opex / triple witching / 休市日，
+        **永远不会过期**；
+      * 人工日历（`events_calendar.json`）放财报/FOMC 这类必须查证的事件 ——
+        它会过期，所以带 `confirmed` 与复核日期，过期要**可见**。
+    只靠人工日历的闸门会给出"虚假的没有事件"，比没有闸门更危险。
     """
+    reason = []
+    severity = "none"
+
+    # ---- 第一层：可计算事件（永不过期）----
+    try:
+        from project2.market_events import upcoming as _computed
+    except ImportError:
+        try:
+            import market_events as _computed_mod
+            _computed = _computed_mod.upcoming
+        except ImportError:
+            _computed = None
+    if _computed:
+        now_dt = dt.datetime.fromtimestamp(now_ms / 1000, dt.UTC)
+        # 只关心"今天"的可计算事件（窗口以天为单位）
+        for e in _computed(now=now_dt, days=1):
+            if e["kind"] == "holiday":
+                reason.append(e["label"])
+                severity = "caution" if severity == "none" else severity
+            else:  # opex / triple witching
+                reason.append(e["label"])
+                severity = "caution" if severity == "none" else severity
+
+    # ---- 第二层：人工日历（会过期，需要复核）----
     cal = load_calendar()
     lo = now_ms - WINDOW_AFTER_MIN * 60000
     hi = now_ms + WINDOW_BEFORE_MIN * 60000
@@ -104,10 +133,10 @@ def static_gate(base, now_ms):
         except (KeyError, ValueError, TypeError):
             continue
         if lo <= t <= hi:
-            return {"in_window": True, "severity": "block",
-                    "reason": "财报 %s（%s）" % (e.get("label", "earnings"),
-                                                e["ts"]),
-                    "source": "static"}
+            severity = "block"
+            reason.append("财报 %s（%s%s）"
+                          % (e.get("label", "earnings"), e["ts"],
+                             "" if e.get("confirmed") else "，**未复核**"))
 
     for m in cal.get("macro", []):
         try:
@@ -115,12 +144,14 @@ def static_gate(base, now_ms):
         except (KeyError, ValueError, TypeError):
             continue
         if lo <= t <= hi:
-            sev = m.get("severity", "caution")
-            return {"in_window": True, "severity": sev,
-                    "reason": "宏观 %s（%s）" % (m.get("label", "macro"), m["ts"]),
-                    "source": "static"}
+            if m.get("severity", "caution") == "block":
+                severity = "block"
+            elif severity == "none":
+                severity = "caution"
+            reason.append("宏观 %s（%s）" % (m.get("label", "macro"), m["ts"]))
 
-    return {"in_window": False, "severity": "none", "reason": "无事件",
+    return {"in_window": severity != "none", "severity": severity,
+            "reason": "；".join(reason) if reason else "无事件",
             "source": "static"}
 
 
@@ -196,6 +227,57 @@ def llm_gate(base, now_ms, headlines, model, api_key, base_url):
         fallback = static_gate(base, now_ms)
         fallback["source"] = "static(LLM 响应解析失败: %r)" % (exc,)
         return fallback
+
+
+def calendar_quality():
+    """日历质量体检：把「过期」变成**可见**的状态。
+
+    动机：`static` 模式的覆盖度完全取决于日历质量，而**过期的日历比没有日历更危险**
+    —— 它会给出一个虚假的「无事件」，而我们以为检查过了。
+    所以这里主动报告：多少条已复核、最远的确认日期、人工条目覆盖到什么时候。
+    """
+    cal = load_calendar()
+    today = dt.date.today()
+    lines = []
+    n_earn = n_conf = 0
+    farthest = None
+    for b, evs in (cal.get("earnings") or {}).items():
+        for e in evs:
+            n_earn += 1
+            if e.get("confirmed"):
+                n_conf += 1
+            try:
+                d0 = dt.datetime.fromisoformat(e["ts"]).date()
+                farthest = d0 if farthest is None else max(farthest, d0)
+            except (KeyError, ValueError, TypeError):
+                pass
+    n_macro = len(cal.get("macro") or [])
+    far_macro = None
+    for m in (cal.get("macro") or []):
+        try:
+            d0 = dt.datetime.fromisoformat(m["ts"]).date()
+            far_macro = d0 if far_macro is None else max(far_macro, d0)
+        except (KeyError, ValueError, TypeError):
+            pass
+
+    lines.append("  人工日历：%d 条财报（其中**已复核 %d 条**）+ %d 条宏观"
+                 % (n_earn, n_conf, n_macro))
+    if farthest:
+        left = (farthest - today).days
+        lines.append("  财报覆盖到 %s（还有 %d 天）%s"
+                     % (farthest.isoformat(), left,
+                        "  ⚠️ 覆盖不足 14 天，尽快补" if left < 14 else ""))
+    if far_macro:
+        left = (far_macro - today).days
+        lines.append("  宏观覆盖到 %s（还有 %d 天）%s"
+                     % (far_macro.isoformat(), left,
+                        "  ⚠️ 覆盖不足 14 天，尽快补" if left < 14 else ""))
+    if n_earn and n_conf == 0:
+        lines.append("  🔴 **一条财报都未经复核** —— 当前闸门只能挡住『可计算事件』，"
+                     "挡不住财报。这是已知缺口。")
+    lines.append("  可计算层（opex / triple witching / 休市日）：**永不过期**，"
+                 "由 `market_events.py` 按规则算出")
+    return lines
 
 
 # ---------------------------------------------------------------- 自检
@@ -311,9 +393,14 @@ def main(argv=None):
     else:
         print("  ✅ 当前没有标的处于事件窗口。")
     print()
+    print("  日历质量体检（把「过期」变成可见状态）：")
+    for line in calendar_quality():
+        print(line)
+    print()
     print("  ⚠️ 边界：")
     print("    1. `static` 模式的覆盖度**取决于日历文件的质量** —— 日历空等于闸门空。")
     print("       补日历是持续工作（财报按季更新、宏观按周更新）。")
+    print("       **过期的日历比没有日历更危险**：它会给出虚假的「无事件」。")
     print("    2. `llm` 模式需要 API Key；**没 Key 时自动回退 static，绝不崩**。")
     print("    3. 本闸门**只做否决**（禁止挂单），不做做多/做空的方向建议。")
     return 0

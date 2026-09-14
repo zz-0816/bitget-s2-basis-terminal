@@ -254,7 +254,103 @@ def analyse(base, qty_usd, urgent, miss_bp, venue="perp"):
     }
 
 
-def render(r, verbose=True):
+def analyse_two_leg(base, qty_usd, urgent, miss_bp):
+    """**双腿**联合执行模型 —— 这才是真实的执行决策。
+
+    为什么单腿模型不够（单腿结论可能完全误导）：
+      策略是「买现货 / 空永续」，**两条腿都成交才算建仓**。
+      只成交一条腿 = **裸露的方向性敞口**，必须立刻处理：
+        * 要么吃单把另一条腿补上（付 taker 费 + 半幅点差）
+        * 要么把已成交的腿平掉（同样付一次往返点差 + 费）
+      两者都要花钱，所以**单腿成交是最坏的结果之一，不能忽略**。
+
+    独立性问题（必须声明的局限）：
+      两条腿的成交**不独立** —— 同一个信息事件会同时推动两边。
+      本模型用 `p_spot × p_perp` 作为 `P(两腿都成交)` 的**上界近似**，
+      并把相关性整体折进 `leg_risk` 的保守取值里。
+      **精确处理需要双腿联合分布，列为下一步工作。**
+    """
+    sst_s = spread_stats(base, "spot")
+    sst_p = spread_stats(base, "perp")
+    fills_p = load_fill_params("perp_ask").get(base, {})
+    fills_s = load_fill_params("spot_bid").get(base, {})
+    if not (sst_s and sst_p):
+        return None
+
+    half_s = sst_s["med"] / 2.0
+    half_p = sst_p["med"] / 2.0
+
+    # 成交概率（实测值；缺数据时用保守下限）
+    p_s = fills_s.get("fill_rate", 0.0)
+    p_p = fills_p.get("fill_rate", 0.0)
+    p_both = p_s * p_p                       # 上界近似（独立性假设，见 docstring）
+    p_part = p_s * (1 - p_p) + p_p * (1 - p_s)
+    p_none = (1 - p_s) * (1 - p_p)
+
+    # 逆向选择（有利漂移，正=有利；实测多为负）
+    adv_s = fills_s.get("fdmid_k6", 0.0)
+    adv_p = fills_p.get("fdmid_k6", 0.0)
+
+    # 费率：现货 5bp（maker=taker）；永续 maker 2 / taker 6
+    fee_spot = FEE_SPOT
+    fee_perp_maker = FEE_PERP_MAKER
+    fee_perp_taker = FEE_PERP_TAKER
+
+    # ---- 情形 A：全部挂单（maker）----
+    # 成交时赚两腿半幅点差；单腿成交要付"补另一腿"的代价
+    leg_risk = half_s + half_p + max(0.0, fee_perp_taker - fee_perp_maker)
+    cost_mm = (fee_spot + fee_perp_maker
+               - p_both * (half_s + half_p)
+               - p_both * (adv_s + adv_p)
+               + p_part * leg_risk
+               + p_none * miss_bp)
+
+    # ---- 情形 B：现货挂单 + 永续吃单（项目一 docs/13 的原始设定）----
+    # 现货腿按 maker 计（仅 in_house 有效！），永续立即成交
+    cost_mix = (fee_spot + fee_perp_taker
+                - p_s * half_s
+                - p_s * adv_s
+                + (1 - p_s) * miss_bp)
+
+    # ---- 情形 C：两腿都吃单（保成交，但付满点差 + taker 费）----
+    cost_tk = half_s + half_p + fee_spot + fee_perp_taker
+
+    rows = [("双腿全挂单", cost_mm), ("现货挂单+永续吃单", cost_mix),
+            ("双腿全吃单", cost_tk)]
+    best = min(rows, key=lambda z: z[1])
+
+    return {
+        "base": base, "qty": qty_usd,
+        "half_s": half_s, "half_p": half_p,
+        "p_s": p_s, "p_p": p_p, "p_both": p_both, "p_part": p_part,
+        "p_none": p_none, "adv_s": adv_s, "adv_p": adv_p,
+        "leg_risk": leg_risk, "miss": miss_bp,
+        "cost_mm": cost_mm, "cost_mix": cost_mix, "cost_tk": cost_tk,
+        "best_mode": best[0], "best_cost": best[1],
+        "spread_s": sst_s["med"], "spread_p": sst_p["med"],
+        "route": route_of(sst_p["ts"]), "session": session_of(sst_p["ts"]),
+        "n_s": fills_s.get("trades", 0), "n_p": fills_p.get("trades", 0),
+    }
+
+
+def render_two_leg(r):
+    print("  %-6s 现货点差 %6.2f ｜ 永续点差 %5.2f ｜ %s/%s"
+          % (r["base"], r["spread_s"], r["spread_p"], r["route"], r["session"]))
+    print("     实测成交率：现货 %5.1f%%（%s 笔）｜ 永续 %5.1f%%（%s 笔）"
+          % (100 * r["p_s"], format(r["n_s"], ","),
+             100 * r["p_p"], format(r["n_p"], ",")))
+    print("     -> 概率分解：两腿都成交 %.1f%% ｜ **只成交一腿 %.1f%%** ｜ 都没成交 %.1f%%"
+          % (100 * r["p_both"], 100 * r["p_part"], 100 * r["p_none"]))
+    print("        单腿成交的代价（补另一腿）%.2f bp —— 这就是「腿风险」"
+          % r["leg_risk"])
+    print()
+    print("     情形                    成本(bp)")
+    print("     " + "-" * 34)
+    for name, c in (("双腿全挂单", r["cost_mm"]), ("现货挂单+永续吃单", r["cost_mix"]),
+                    ("双腿全吃单", r["cost_tk"])):
+        mark = "  ← 最优" if name == r["best_mode"] else ""
+        print("     %-22s %+8.2f%s" % (name, c, mark))
+
     L = []
     L.append("  %-6s mid=%9.4f  点差中位 %6.2f bp（P75 %6.2f）  route=%s/%s"
              % (r["base"], r["mid"], r["spread_med"], r["spread_p75"],
@@ -284,6 +380,8 @@ def main(argv=None):
     ap.add_argument("--qty", type=float, default=1000.0, help="名义额 USD")
     ap.add_argument("--urgent", action="store_true", help="急着成交（放大未成交代价）")
     ap.add_argument("--miss-bp", type=float, default=DEFAULT_MISS_BP)
+    ap.add_argument("--two-leg", action="store_true",
+                    help="双腿联合模型（推荐；单腿模型是它的退化情形）")
     args = ap.parse_args(argv)
 
     bases = sorted({os.path.basename(p).split("-")[-1][:-4]
@@ -319,6 +417,39 @@ def main(argv=None):
         r = analyse(b, args.qty, args.urgent, args.miss_bp, args.venue)
         if r:
             rows.append(r)
+
+    if args.two_leg:
+        trows = []
+        for b in targets:
+            t = analyse_two_leg(b, args.qty, args.urgent, args.miss_bp)
+            if t:
+                trows.append(t)
+        if not trows:
+            print("  [FATAL] 双腿模型无可分析标的", file=sys.stderr)
+            return 2
+        print("  %-6s %8s %8s %9s %9s %11s %11s %11s  %s"
+              % ("base", "现点差", "永点差", "成交(现)", "成交(永)",
+                 "全挂单", "混挂吃", "全吃单", "最优"))
+        print("  " + "-" * 96)
+        for t in sorted(trows, key=lambda z: z["best_cost"]):
+            print("  %-6s %8.2f %8.2f %8.1f%% %8.1f%% %+11.2f %+11.2f %+11.2f  %s"
+                  % (t["base"], t["spread_s"], t["spread_p"],
+                     100 * t["p_s"], 100 * t["p_p"],
+                     t["cost_mm"], t["cost_mix"], t["cost_tk"], t["best_mode"]))
+        print()
+        print("  读法：**成本越低越好**（负 = 净赚）。三种执行方式里取最优。")
+        print("        ⚠️ 注意『只成交一腿』的概率 —— 它常常高到让『全挂单』变差。")
+        print()
+        if args.base:
+            render_two_leg(trows[0])
+            print()
+        print("  边界（必须与结论一起读）：")
+        print("    1. 两腿成交**不独立**，本模型用 p_s×p_p 作上界近似，")
+        print("       相关性折进 leg_risk 的保守取值里；精确处理需双腿联合分布。")
+        print("    2. 『现货挂单』只在 `in_house` 有效 —— 工作日走 stockroute 时")
+        print("       现货挂单也按 Taker 计费（docs/09），该情形应改用『双腿全吃单』。")
+        print("    3. 未计入事件风险，见 `event_gate.py`。")
+        return 0
 
     if not rows:
         print("  [FATAL] 没有可分析的标的（缺盘口采样？）", file=sys.stderr)

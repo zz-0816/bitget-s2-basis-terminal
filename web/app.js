@@ -86,13 +86,27 @@ function renderPairs(rows) {
     const basis = r.basis_bp;
     const hot = Math.abs(basis || 0) >= maxAbs * 0.98;
     const ratio = (sBp && pBp) ? (sBp / Math.max(pBp, 1e-9)) : null;
-    // 容量告警：永续腿顶部深度过小则标红（这是比点差更硬的约束）
-    const depth = r.capacity ? r.capacity.perp_top_depth_usd : null;
-    const thin = depth !== null && depth < 5000;
+    // ---- 容量告警（09-14 修正）----
+    // 旧判据：perp_top_depth_usd < 5000 —— 只看**永续腿**、且只看**最优一档**。
+    // 实测该判据会把 10 个标的**全部**标成"深度不足"，而实际有 6 个够吃：
+    //   TSLA 顶深 $97 -> ≤5bp 实际可吃 $26,957（低估 278 倍）
+    //   NVDA 顶深 $665 -> $23,746 ｜ SOXL 顶深 $1,115 -> $174,386
+    // 根因：深度是可以往下吃的，只看一档完全失真；而且策略**两条腿都要成交**。
+    // 新判据：用**5 档累计**的 `depth_within_5bp_usd`（已在后端算好，取四个方向最薄者），
+    // 不足 5000 才算"深度不足"，并把**瓶颈腿**一起显示出来。
+    const cap = r.capacity || null;
+    const eatable = cap ? cap.depth_within_5bp_usd : null;
+    const topDepth = cap ? cap.min_top_depth_usd : null;
+    const binding = cap ? cap.binding_leg_top : null;
+    const thin = (eatable !== null && eatable !== undefined)
+      ? eatable < 5000
+      : (topDepth !== null && topDepth !== undefined && topDepth < 5000);
+    const thinWhy = binding ? '（瓶颈：' + (binding === 'spot' ? '现货腿' : '永续腿') + '）' : '';
     return '<tr class="' + (hot ? 'best' : '') + '">' +
       '<td class="base-name">' + esc(r.base) +
         (hot ? ' <span class="tag hot">基差最大</span>' : '') +
-        (thin ? ' <span class="tag thin">深度不足</span>' : '') + '</td>' +
+        (thin ? ' <span class="tag thin" title="≤5bp 滑点内可吃 ' +
+          fmt(eatable, 0) + ' USD' + thinWhy + '">深度不足</span>' : '') + '</td>' +
       '<td>' + fmt(s && s.mid) + '</td>' +
       '<td class="sep ' + (sBp > 10 ? 'neg' : '') + '">' + fmt(sBp) +
         (ratio ? ' <span class="mono-dim">(' + ratio.toFixed(1) + '×)</span>' : '') + '</td>' +
@@ -101,7 +115,11 @@ function renderPairs(rows) {
       '<td class="sep ' + cls(basis) + '"><strong>' + fmt(basis) + '</strong></td>' +
       '<td>' + (basis === null ? '—'
         : '<span class="tag">' + (basis > 0 ? '多现货 / 空永续' : '空现货 / 多永续') + '</span>') + '</td>' +
-      '<td>' + (r.capacity ? fmt(r.capacity.perp_top_depth_usd, 0) : '—') + '</td>' +
+      // 显示"≤5bp 实际可吃"，因为那才是决定能做多大规模的量
+      '<td>' + (cap
+        ? (fmt(eatable, 0) + (binding ? ' <span class="mono-dim">' +
+            (binding === 'spot' ? '现' : '永') + '</span>' : ''))
+        : '—') + '</td>' +
       '</tr>';
   }).join('');
 }
