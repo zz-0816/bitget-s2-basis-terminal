@@ -34,6 +34,10 @@ SPREAD = os.path.join(BASE, "data", "spread")
 # 不归一化的话 HOOD 会被拆成两个标的、样本量也算错。
 BASE_ALIAS = {"HOO": "HOOD"}
 THRESHOLD_BP = 13.70      # docs/14：四条腿全挂单时的现货全幅点差门槛
+# docs/14 补丁（见 tools/funding_analysis.py + tools/funding_sign_check.py）：
+# 空永续腿在 48h 窗口内**收**资金费，全池中位 +2.36 bp。资金费是窗口内的固定加成，
+# 因此 **有效门槛下降**为 THRESHOLD_BP − FUNDING_BP。
+FUNDING_BP = 2.36
 
 
 def load_core(days):
@@ -158,15 +162,42 @@ def main(argv=None):
                  sp[int(len(sp) * 0.75)], sp[int(len(sp) * 0.90)], over, ratio))
 
     # ---- ③b 门槛越线率：直接接上 docs/14 的可执行判据 ----
-    print("\n【3b】⭐ 门槛越线率（现货全幅点差 >= %.2f bp 才值得挂单，见 docs/14 §4）"
-          % THRESHOLD_BP)
-    for rt in rt_list:
-        sp = by_route[rt]
-        if not sp:
+    # ⚠️ 必须**按 (route, session) 分格**，不能把 route 下所有 session 混在一起：
+    # 盘前/盘中的点差本来就比隔夜宽（实测 stockroute 盘前中位 6.03 vs 隔夜 3.61），
+    # 混算会把这个"时段效应"错误地记到"路由效应"头上。
+    # 干净的对照只能是 **同 session** 比：两边都取 closed。
+    print("\n【3b】⭐ 门槛越线率 —— 按 (route, session) 分格（现货全幅点差够宽才值得挂单）")
+    cells = collections.defaultdict(list)
+    for ts, b, v, bid, ask in rows:
+        if v != "spot":
             continue
-        over = sum(1 for x in sp if x >= THRESHOLD_BP)
-        print("  %-14s %6d/%6d = %5.1f%% 的时间可挂单"
-              % (rt, over, len(sp), 100.0 * over / len(sp)))
+        mid = (bid + ask) / 2.0
+        cells[(route_of(ts), session_of(ts))].append((ask - bid) / mid * 1e4)
+
+    print("  %-12s %-12s %7s %9s %11s %13s %13s"
+          % ("route", "session", "n", "中位bp", ">=13.70", ">=11.34(扣资金费)", "判定"))
+    print("  " + "-" * 88)
+    for key in sorted(cells):
+        rt, se = key
+        sp = cells[key]
+        a = sum(1 for x in sp if x >= THRESHOLD_BP) / float(len(sp)) * 100.0
+        b2 = sum(1 for x in sp if x >= THRESHOLD_BP - FUNDING_BP) / float(len(sp)) * 100.0
+        print("  %-12s %-12s %7d %9.2f %10.1f%% %12.1f%%   %s"
+              % (rt, se, len(sp), statistics.median(sp), a, b2,
+                 ""))
+    print()
+    print("  ⭐ **干净的对照 = 同 session 比**（只有两边都是 closed 才排除时段效应）：")
+    for se in sorted({k[1] for k in cells}):
+        ih = cells.get(("in_house", se))
+        sr = cells.get(("stockroute", se))
+        if ih and sr:
+            m1, m2 = statistics.median(ih), statistics.median(sr)
+            print("     session=%-12s in_house %.2f bp (n=%d) vs stockroute %.2f bp (n=%d)"
+                  "  ->  %.2fx" % (se, m1, len(ih), m2, len(sr), m1 / m2))
+    print()
+    print("  ⚠️ 盘前/盘中点差本来就宽，但那是 **stockroute**：")
+    print("     点差宽 ≠ 可赚 —— 直连模式下挂单也按 Taker 计费，maker 优势归零。")
+    print("     所以策略需要**同时**满足「点差宽」+「maker 省费」，只有 in_house 二者兼有。")
 
     # ---- ④ 同一 route 内的 session 细分 ----
     print("\n【4】route × session 交叉（现货有效报价行数 / 中位点差 bp）")
@@ -188,8 +219,10 @@ def main(argv=None):
     print("  · 若某个 route 下现货行数≈0 -> 该时段平台根本不报现货价，策略无从下手。")
     print("  · ⭐ 关键看【3b】：门槛越线率决定「这个 route 到底有没有可交易时段」。")
     print("    in_house 的越线率就是策略的时间覆盖率上限。")
-    print("  · 本次样本的 session 全部是 closed（美股盘中还没到），")
-    print("    所以两边的差异**归因于 route 本身**，而不是时段 —— 这正是我们要的对照。")
+    print("  · 只有在【同一 session 内】比较 route，差异才能归因于路由本身；")
+    print("    跨 session 混算会把'时段效应'误记成'路由效应'（盘前 6.03 vs 隔夜 3.61 就是例子）。")
+    print("  · 盘前点差宽但走 stockroute —— 挂单按 Taker 计费，maker 优势归零。")
+    print("    所以策略要**同时**满足『点差宽』+『maker 省费』，只有 in_house 二者兼有。")
     return 0
 
 
