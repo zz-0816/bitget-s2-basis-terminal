@@ -322,6 +322,8 @@ def main(argv=None):
     ap.add_argument("--sanity-bp", type=float, default=2000.0,
                     help="基差合理性上限(bp)，超过则判为脏数据并剔除")
     ap.add_argument("--report", action="store_true")
+    ap.add_argument("--force", action="store_true",
+                    help="即使解析出 0 行也照写（会清空已有面板文件，谨慎）")
     args = ap.parse_args(argv)
 
     # 默认滞后容忍度：日线必须 0（现货常整天无成交，一旦回落就是跨日拼接），
@@ -368,6 +370,32 @@ def main(argv=None):
 
     os.makedirs(OUT_DIR, exist_ok=True)
     out = os.path.join(OUT_DIR, "%s_%dpairs.csv" % (args.gran, len(pairs)))
+
+    # ⚠️ 防"用空结果覆盖好结果"。
+    # 真实事故（2026-09-14 复跑自测发现）：全新克隆里 `data/raw/` 被 gitignore 不随仓库分发，
+    # 于是 `python build_panel.py` 一路跑到底、**0 行**，然后把仓库里已提交的
+    # 2.4 MB 面板文件覆盖成 0 行的空文件 —— 评委照 README 走一遍就会亲手毁掉证据，
+    # 而且脚本退出码还是 0，完全看不出出过事。
+    # 处置：无有效数据时**拒绝写入**，并明确告诉用户原因与正确的前置步骤。
+    if not rows and not args.force:
+        print()
+        print("=" * 78)
+        print("[拒绝写入] 本次解析出 0 行有效数据，**不覆盖**已有的 %s" % os.path.relpath(out, BASE))
+        print("=" * 78)
+        print("  最可能的原因：`data/raw/` 不在仓库里（体积原因被 gitignore），")
+        print("  因此没有 K 线可直接建面板。这是**预期行为**，不是 bug。")
+        print()
+        print("  两种正确做法：")
+        print("   A) 只想复现报告结论 -> 用仓库里已提交的快照，不要重建：")
+        print("        data/panel/*.csv、data/derived/*.csv 就是报告数字的来源")
+        print("   B) 想真的重建面板 -> 先联网抓 K 线：")
+        print("        python backfill_history.py --matrix")
+        print("        python build_panel.py --gran 1h")
+        print("      注意 1min 只能回溯约 13.9 天，重建得到的面板会**短于**报告所用的样本。")
+        print()
+        print("  若确认就是要写空文件，加 --force。")
+        return 3
+
     with open(out, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["ts_ms", "ts_utc", "date_cn", "spot_symbol", "perp_symbol",

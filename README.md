@@ -101,17 +101,54 @@ Bitget 上同一个标的（如 TSLA）同时存在于**两个场所**：rToken 
 
 ## 快速开始
 
+### 第 0 步（强烈建议）：先跑自检
+
 ```powershell
-# 1) 双场所盘口采样（常驻；这是策略能否成立的关键数据）
-python spread_sampler.py --loop --interval 60
+python tools\reproduce_check.py
+```
 
-# 2) 历史 K 线回补（日线 + 小时线 + 分钟线）
-python backfill_history.py --matrix
+它会用**约 60 秒**验证四件事：环境是否合规、报告结论依赖的快照是否随仓库分发、
+每个脚本能否导入并 `--help`、报告里的核心数字能否从已提交快照重算出来。
+**退出码 0 = 通过**。这一步会替你省掉"到底该信哪份数据"的猜测。
 
-# 3) 启动监控台
+> 这个自检本身是有来历的：第一次在**全新克隆**里跑，就抓出一个真实缺陷 ——
+> `build_panel.py` 在缺少 `data/raw/` 时会解析出 0 行却照样写文件，
+> 把已提交的 2.4 MB 面板覆盖成空文件、退出码还是 0。
+> 现在它在 0 行时会**拒绝写入**并告诉你正确的前置步骤（见下面的"两种复现方式"）。
+
+### 两种复现方式（先想清楚你要哪一种）
+
+| 你想要 | 怎么做 | 能拿到什么 |
+|---|---|---|
+| **A. 复现报告结论**（推荐，评委/队友） | 什么都不用装，直接读仓库里已提交的快照：`data/panel/*.csv`、`data/derived/*.csv`、`data/samples/*.csv.gz` | 报告里每个数字的来源文件；`tools\reproduce_check.py` 会替你核对 |
+| **B. 从零重建数据** | 联网跑 `python backfill_history.py --matrix` → `python build_panel.py --gran 1h` | 重新抓的 K 线面板。**注意 `1min` 只能回溯约 13.9 天**，重建出来的样本会比报告用的短 |
+
+> ⚠️ `data/raw/`（历史 K 线，400 MB+）**不在仓库里**，这是刻意的体积取舍。
+> 所以方式 B 必须**先联网抓数**；直接 `python build_panel.py` 会（按设计）拒绝写入并提示你。
+
+### 启动监控台
+
+```powershell
 python server\app.py --port 8787
 #    打开 http://127.0.0.1:8787
 ```
+
+**在全新克隆里也能正常显示**：原始采样 CSV 被 gitignore，但仓库里带了 gzip 归档
+（`data/spread/gz/*.csv.gz`），后端会**自动回退到归档快照**
+（`/api/data-status` 的 `spread_source` 会显示 `archive(gz)`）。
+实测：不修这一条时 `/api/timeline` 在克隆里返回 `[]`（2 字节），监控台一片空白。
+
+### 要采集新数据时
+
+```powershell
+# 四个采样器由守护进程统一起停（自动接管已在运行的实例，不会重复启动）
+powershell -ExecutionPolicy Bypass -File scripts\sampler_supervisor.ps1
+python tools\check_samplers.py     # 退出码 0 = 健康（实例数/节奏/重复 trade_id）
+```
+
+采样器：`spread_sampler.py`（10 配对最优一档，60s）、`sampler_universe.py`（213 配对轮转，30s）、
+`orderbook_sampler.py`（10 配对 × 5 档 × 2 侧，30s）、`trades_sampler.py`（逐笔成交，60s）。
+**这四类数据交易所都不提供历史接口，漏掉就永久拿不回来** —— 详见 `docs/DATA_DICT.md`。
 
 **无需任何 API Key**——全部使用 Bitget 公开行情端点。
 
@@ -120,36 +157,61 @@ python server\app.py --port 8787
 - Python **3.10+**（仅用标准库；`zoneinfo` 用于美东时段判定）
 - 无需 pandas / numpy（规避 Python 3.14rc 预发布版的 wheel 缺失风险）
 - 出网：直连 `api.bitget.com`。**`curl.exe` 在 Windows 上存在 schannel 凭据 bug，请勿使用**，本仓库一律用 Python `urllib`。
+- 实测全新克隆：**约 35 秒 / 326 MB**（其中 `.git` 264 MB，含早期误提交的 `data/raw` 历史；工作区内容约 61 MB）
+
+### 常见问题
+
+| 现象 | 原因与处置 |
+|---|---|
+| `build_panel.py` 拒绝写入、退出码 3 | **预期行为**：缺 `data/raw/`。先 `backfill_history.py --matrix`，或改用已提交的快照 |
+| 控制台中文/符号乱码或脚本中断 | Windows 控制台是 GBK；已由 `common/console.py` 统一兜底。若仍异常，跑 `python common\console.py` 自检 |
+| `--gran 1h,1D` 报错 | PowerShell 会按逗号拆参数，**必须加引号**：`--gran "1h,1D"` |
+| `/api/timeline` 返回 `[]` | 说明既没有原始 CSV 也没有 gz 归档；跑 `python tools\audit_samples.py` 查采样真实性 |
 
 ---
 
 ## 目录结构
 
 ```
-├── spread_sampler.py          双场所盘口采样器（常驻，60s 节奏）
-├── backfill_history.py        历史 K 线回补（多粒度矩阵）
-├── server/
-│   └── app.py                 Basis Terminal 后端（仅标准库）
+├── common/                    共享口径（唯一实现，改这里就够）
+│   ├── market_calendar.py     session（美东，决定点差宽窄）+ route（平台，决定挂单能否省钱）
+│   ├── samples.py             透明读取 .csv / .csv.gz（克隆里只有 gz 归档）
+│   └── console.py             控制台编码兜底（GBK 下不让排版符号中断脚本）
+├── spread_sampler.py          10 配对最优一档，60s（常驻，不可回补）
+├── sampler_universe.py        213 配对轮转，30s（常驻，不可回补）
+├── orderbook_sampler.py       10 配对 × 5 档 × 2 侧，30s（常驻，不可回补）
+├── trades_sampler.py          逐笔成交，60s（常驻，不可回补）
+├── kline_accumulator.py       历史 K 线累积（可回补，1m 仅约 13.9 天）
+├── backfill_history.py        一次性历史回补（多粒度矩阵）
+├── build_panel.py             基差面板构建（含防"空结果覆盖好结果"闸门）
+├── server/app.py              Basis Terminal 后端（仅标准库，7 个端点）
 ├── web/                       前端监控台（原生 JS + 手写 SVG，无外部依赖）
-│   ├── index.html
-│   ├── styles.css
-│   └── app.js
+├── scripts/                   守护/安装/协作脚本（PowerShell）
+├── tools/                     运维与复核工具（自检、审计、分析、定位缺口）
 ├── data/
-│   ├── spread/                盘口采样（按 UTC+8 日期分区，追加写）
-│   └── raw/                   历史 K 线（gitignore）
-├── tools/                     一次性摸底探针（非交付物）
-└── docs/                      需求分析 · 分工 · 环境核查 · 选题依据
+│   ├── spread/                盘口采样，按 UTC+8 日期分区追加写（原始 CSV 被 gitignore）
+│   │   └── gz/                压缩归档（**入库**，克隆里后端自动回退读它）
+│   ├── panel/ derived/        **入库**：报告数字的来源快照
+│   ├── samples/               **入库**：受控体积的数据样本（含 MANIFEST + SHA256）
+│   ├── b-side/                队友侧独立采样（双机交叉验证）
+│   └── raw/                   历史 K 线（gitignore，400 MB+）
+└── docs/                      需求分析 · 分工 · 数据字典 · 结论文档（00–15）
 ```
 
 ## API
 
 | 端点 | 说明 |
 |---|---|
-| `GET /api/health` | 服务状态 + 当前时段（休市/盘前/盘中/盘后） |
+| `GET /api/health` | 服务状态 + **两个口径**：`session`（美东：休市/盘前/盘中/盘后）与 `route`（平台：`in_house` 所内撮合 / `stockroute` 直连）+ `maker_benefit` |
 | `GET /api/overview` | 每个配对：两场所点差、基差、容量约束 |
 | `GET /api/timeline` | 基差与点差时间序列 |
 | `GET /api/session-compare` | 分时段点差对比（休市 vs 盘中放大倍数） |
-| `GET /api/data-status` | 数据覆盖与采样器心跳（诚实标注局限） |
+| `GET /api/data-status` | 数据覆盖与采样器心跳（含 `spread_source`：`live` 还是 `archive(gz)`） |
+| `GET /api/meta` | 配对数、时段标签、基差口径声明 |
+
+**性能**（实测，别再回退）：首屏 7 个端点合计 **266 ms**；`/api/data-status` 冷启动
+曾要 26.7 秒、加缓存后 2.9 秒、改成 stale-while-revalidate 后**过期时也只需 2 ms**
+（后台线程重算 + 非阻塞锁去重）。回归测试：`python tools\verify_status_cache.py`。
 | `GET /api/meta` | 配对清单与时段标签 |
 
 ---

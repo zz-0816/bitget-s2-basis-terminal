@@ -46,6 +46,8 @@ from common.market_calendar import (  # noqa: E402
     route_of as _cal_route_of,
     ROUTE_LABEL,
 )
+# 透明读取 .csv / .csv.gz（全新克隆里只有 gz 归档，见 common/samples.py 的说明）
+from common.samples import find_core_samples, iter_rows  # noqa: E402
 
 # ---------------------------------------------------------------- 路径
 
@@ -268,32 +270,38 @@ def _core_sample_files():
     `orderbook-*.csv`、`trades-*.csv`。早先只按 `.csv` 结尾取末两个文件，
     在加入 trades 后会误取到 trades 文件（其列名不同）。
     这里显式只取 core 采样（纯日期命名、无前缀）。
+
+    **返回绝对路径**，且兼容 `.csv.gz`：
+    全新克隆里顶层没有原始 CSV（被 gitignore），只有 `data/spread/gz/*.csv.gz`。
+    早先只 glob `*.csv` 导致 `/api/timeline` 在克隆里返回 `[]`（监控台一片空白）。
     """
     if not os.path.isdir(SPREAD_DIR):
         return []
-    out = []
+    names = []
     for f in sorted(os.listdir(SPREAD_DIR)):
         if not f.endswith(".csv"):
             continue
         if "-" in f.split(".")[0][:12] and not f[:4].isdigit():
             continue                       # 有前缀的（universe-/orderbook-/trades-）
         if f[:4].isdigit() and f.count("-") == 2:
-            out.append(f)
-    return out
+            names.append(f)
+    paths = [os.path.join(SPREAD_DIR, n) for n in names]
+    if paths:
+        return paths
+    # 顶层没有 -> 退回归档快照（按日期排序，调用方取末两个 = 最新的两天）
+    return find_core_samples(SPREAD_DIR)
 
 
 def read_latest_samples(limit_rows=6000, force=False):
-    """读最近一个（或两个）core 采样 CSV。带 15 秒缓存（见 _SAMPLE_CACHE 注释）。"""
+    """读最近一个（或两个）core 采样 CSV（兼容 .gz）。带 15 秒缓存。"""
     now = time.time()
     if not force and _SAMPLE_CACHE["rows"] and (now - _SAMPLE_CACHE["ts"]) < _SAMPLE_CACHE_SEC:
         return _SAMPLE_CACHE["rows"]
-    files = _core_sample_files()
     rows = []
-    for name in files[-2:]:
+    for path in _core_sample_files()[-2:]:
         try:
-            with open(os.path.join(SPREAD_DIR, name), newline="", encoding="utf-8") as fh:
-                rows.extend(csv.DictReader(fh))
-        except OSError:
+            rows.extend(iter_rows(path))
+        except (OSError, EOFError):
             continue
     rows = rows[-limit_rows:]
     _SAMPLE_CACHE["rows"] = rows
@@ -537,13 +545,29 @@ def _build_data_status_uncached(now):
     """真正干活的版本：扫采样文件行数 + K 线缺口。慢（冷启动约 2–3 秒），
     所以只允许由 build_data_status() 通过缓存或后台线程调用。"""
     status = {"spread_days": [], "spread_rows": 0, "raw": {},
-              "sampler": None, "cached": False, "raw_files_total": {}}
+              "sampler": None, "cached": False, "raw_files_total": {},
+              "spread_source": "live"}
     if os.path.isdir(SPREAD_DIR):
-        for name in sorted(os.listdir(SPREAD_DIR)):
-            if name.endswith(".csv"):
-                path = os.path.join(SPREAD_DIR, name)
-                n = _count_lines(path)
+        # 优先顶层原始 CSV（本地在采）；全新克隆里没有，退回 gz/ 归档快照。
+        # 归档也要能报出来，否则克隆环境会显示"0 行采样"，
+        # 让人误以为项目没数据 —— 而实际上快照就在仓库里。
+        live = sorted(n for n in os.listdir(SPREAD_DIR) if n.endswith(".csv"))
+        if live:
+            for name in live:
+                n = _count_lines(os.path.join(SPREAD_DIR, name))
                 status["spread_days"].append({"file": name, "rows": n})
+                status["spread_rows"] += n
+        else:
+            status["spread_source"] = "archive(gz)"
+            # 用默认模式（纯日期名）——不要用 "*.csv"，否则会把
+            # orderbook-*.csv.gz / universe-*.csv.gz 也算进 core 采样行数。
+            for path in find_core_samples(SPREAD_DIR):
+                nm = os.path.basename(path)
+                try:
+                    n = sum(1 for _ in iter_rows(path))
+                except (OSError, EOFError):
+                    continue
+                status["spread_days"].append({"file": nm, "rows": n})
                 status["spread_rows"] += n
         hb = os.path.join(SPREAD_DIR, "_heartbeat.json")
         if os.path.exists(hb):
