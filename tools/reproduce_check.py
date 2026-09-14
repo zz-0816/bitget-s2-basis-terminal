@@ -149,6 +149,7 @@ TOOLS = [
     "tools/check_samplers.py", "tools/coverage_report.py", "tools/find_gaps.py",
     "tools/route_compare.py", "tools/route_now.py", "tools/window_watch.py",
     "tools/funding_analysis.py", "tools/funding_sign_check.py",
+    "tools/window_capture.py", "tools/sample_adequacy.py",
     "tools/reproduce_check.py", "common/samples.py",
     "tools/friction_budget.py", "tools/precise_fill_analysis.py",
     "tools/audit_samples.py", "tools/capacity_curve.py",
