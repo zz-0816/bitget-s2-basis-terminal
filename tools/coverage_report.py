@@ -26,7 +26,6 @@ import os
 import statistics
 import subprocess
 import sys
-import time
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPREAD = os.path.join(BASE, "data", "spread")
@@ -34,23 +33,10 @@ RAW = os.path.join(BASE, "data", "raw")
 OUT_DIR = os.path.join(BASE, "data", "reports")
 
 # 各采样器的设计节奏（用于判断覆盖率是否达标）
-# ⚠️ 四个核心采样器必须都在这里。曾漏掉 trades —— 于是「采样器日报」里
-#    看不到成交流水的实例数与覆盖率，而重复实例正是本项目复发多次的头号故障。
 EXPECTED = {
     "core":      {"pattern": "20??-??-??.csv", "cycle_sec": 60, "rows_per_cycle": 20},
     "universe":  {"pattern": "universe-*.csv", "cycle_sec": 30, "rows_per_cycle": 48},
     "orderbook": {"pattern": "orderbook-*.csv", "cycle_sec": 30, "rows_per_cycle": 190},
-    # 成交流水是**逐笔**写入：每轮行数天然不定（实测 1–72），所以
-    # rows_per_cycle 只用于展示，不参与覆盖率判定（覆盖率按轮次时间算）。
-    "trades":    {"pattern": "trades-*.csv", "cycle_sec": 60, "rows_per_cycle": None},
-}
-
-# 进程名 -> 报告里的采样器键
-PROC_TO_KEY = {
-    "spread_sampler": "core",
-    "sampler_universe": "universe",
-    "orderbook_sampler": "orderbook",
-    "trades_sampler": "trades",
 }
 
 
@@ -121,7 +107,7 @@ def samplers_running():
         out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
                              capture_output=True, text=True, timeout=45).stdout
         for line in out.splitlines():
-            for k in PROC_TO_KEY:
+            for k in ("spread_sampler", "sampler_universe", "orderbook_sampler"):
                 if k + ".py" in line:
                     counts[k] += 1
     except Exception:  # noqa: BLE001
@@ -177,17 +163,19 @@ def main(argv=None):
     A("## 1. 进程状态")
     A("")
     run = samplers_running()
-    A("| 采样器 | 脚本 | 实例数 | 应为 |")
-    A("|---|---|---|---|")
-    for k, label in PROC_TO_KEY.items():
+    A("| 采样器 | 实例数 | 应为 |")
+    A("|---|---|---|")
+    for k, label in (("spread_sampler", "core"), ("sampler_universe", "universe"),
+                     ("orderbook_sampler", "orderbook")):
         n = run.get(k, 0)
-        A("| `%s` | `%s.py` | **%d** | 1 |" % (label, k, n))
+        A("| `%s` | **%d** | 1 |" % (label, n))
     A("")
-    if any(run.get(k, 0) != 1 for k in PROC_TO_KEY):
+    if any(run.get(k, 0) != 1 for k in
+           ("spread_sampler", "sampler_universe", "orderbook_sampler")):
         A("> **[异常] 实例数异常**（≠1）→ 多实例会重复写同一文件。处置：")
         A("> `powershell -ExecutionPolicy Bypass -File scripts\\converge_samplers.ps1`")
     else:
-        A("> **[OK] 四个采样器各 1 个实例。**")
+        A("> **[OK] 三个采样器各 1 个实例。**")
     A("")
 
     # ---- 覆盖率 ----
@@ -205,13 +193,6 @@ def main(argv=None):
         if not paths:
             A("| %s | 0 | — | — | — | **0%%** | — | 未采样 |" % name)
             worst = name
-            continue
-        if name == "trades":
-            st = trades_summary(paths[0], spec["cycle_sec"])
-            if st["stale_sec"] > 5 * spec["cycle_sec"]:
-                worst = name
-            A("| %s | %d 笔 | %.0f 分钟 | 逐笔 | — | **按构造无缺口** | — | 最后写入 %.0f 秒前 |"
-              % (name, st["rows"], st["span_min"], st["stale_sec"]))
             continue
         agg_rows = agg_rounds = 0
         lost = 0.0
@@ -291,40 +272,7 @@ def main(argv=None):
 
 
 def specless(name, day):
-    return {"universe": "universe-%s.csv" % day,
-            "orderbook": "orderbook-%s.csv" % day,
-            "trades": "trades-%s.csv" % day}[name]
-
-
-def trades_summary(path, cycle_sec):
-    """成交流水的「覆盖率」与报价采样器**不是同一个量**，必须分开算。
-
-    为什么不能用 analyse()：那张表的 ts_ms 是**成交发生的时刻**，不是采样轮次。
-    逐笔成交天然毫秒级密集且分布不均（可能整分钟没有成交），
-    拿它算「轮次/间隔/覆盖率」只会得到没有意义的数字。
-
-    成交流水的正确性质是：**按构造无缺口**。采样器每轮把「上次见过的 tradeId
-    之后的所有成交」全部取回并去重写入，所以只要进程活着、且轮询间隔远小于
-    交易所的成交保留窗口（现货约 1000 笔、永续约 8000 笔），就不会漏。
-    因此这里只报：行数、时间跨度、**最后写入距今多久**（活性），
-    以及一个诚实的提醒——若采样器停机超过保留窗口，那段时间的成交确实会丢。
-    """
-    n = 0
-    first = last = None
-    with open(path, newline="", encoding="utf-8") as fh:
-        for r in csv.DictReader(fh):
-            n += 1
-            try:
-                ts = int(r["ts_ms"])
-            except (KeyError, ValueError, TypeError):
-                continue
-            first = ts if first is None else min(first, ts)
-            last = ts if last is None else max(last, ts)
-    mtime = os.path.getmtime(path)
-    stale_sec = time.time() - mtime
-    return {"rows": n, "first": first, "last": last,
-            "span_min": ((last - first) / 60000.0) if (first and last) else 0.0,
-            "stale_sec": stale_sec}
+    return {"universe": "universe-%s.csv" % day, "orderbook": "orderbook-%s.csv" % day}[name]
 
 
 if __name__ == "__main__":

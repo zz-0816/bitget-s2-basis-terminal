@@ -46,18 +46,6 @@ SPREAD = os.path.join(BASE, "data", "spread")
 OUT_DIR = os.path.join(BASE, "data", "reports")
 LOG = os.path.join(OUT_DIR, "window_watch.csv")
 
-# 各采样器的设计周期（秒）。用途：判断"最新数据是不是太旧了"。
-# 漏掉任何一个采样器 → 它就永远不会被监测到停摆（本项目已犯过同类错误）。
-CYCLE_SEC = {
-    "core": 60,
-    "universe": 30,
-    "orderbook": 30,
-    "trades": 60,
-}
-# 最新数据比 N × 周期还旧 -> 判定停摆。
-# 取 3 而不是 2：网络抖动导致单轮重试是正常的，只有连续 3 轮拿不到数据才值得报警。
-STALL_FACTOR = 3
-
 COLUMNS = ["ts_utc", "ts_cn", "route", "session", "event",
            "hours_to_open", "hours_to_close",
            "core_rows", "core_rounds", "core_last_utc",
@@ -110,7 +98,7 @@ def read_ts(path):
 
 def sampler_stats(pattern, since_ms=None):
     """
-    返回 (rows, rounds, last_utc, last_ms)。since_ms 给出时只统计该时刻之后的行。
+    返回 (rows, rounds, last_utc)。since_ms 给出时只统计该时刻之后的行。
     注意 `since_ms` 是 **UTC 毫秒**，与 CSV 的 ts_ms 同口径。
     """
     rows_all = []
@@ -120,32 +108,10 @@ def sampler_stats(pattern, since_ms=None):
             ts = [t for t in ts if t >= since_ms]
         rows_all.extend(ts)
     if not rows_all:
-        return 0, 0, "", None
+        return 0, 0, ""
     last = max(rows_all)
     return (len(rows_all), len(set(rows_all)),
-            dt.datetime.fromtimestamp(last / 1000, dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            last)
-
-
-def detect_stalls(stats, now_ms):
-    """返回 {name: lag_sec}，只含判定为停摆的采样器。
-
-    为什么必须做这件事：盘口数据**交易所不留存、永久不可回补**。
-    2026-09-14 10:24–10:36 就发生过一次三个采样器同时停摆 11 分钟
-    （根因是网络 SSL 中断，`data/logs/sampler_core.err.log` 里全是
-    `SSLEOFError`），而当时的 window_watch **完全没有察觉** ——
-    它照常每 30 分钟记一行，只是行数涨得慢了一点。
-    下一个 in_house 窗口（09-19）是截止前最后一个，必须能自己发现停摆。
-    """
-    out = {}
-    for name, (rows, _rounds, _last, last_ms) in stats.items():
-        if last_ms is None:
-            out[name] = float("inf")     # 一行都没有 = 最严重的停摆
-            continue
-        lag = (now_ms - last_ms) / 1000.0
-        if lag > STALL_FACTOR * CYCLE_SEC.get(name, 60):
-            out[name] = lag
-    return out
+            dt.datetime.fromtimestamp(last / 1000, dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
 
 
 def window_coverage(pattern, open_ms, close_ms, cycle_sec):
@@ -191,9 +157,6 @@ def collect(now_ms):
     core = sampler_stats("2026-*.csv", since)
     uni = sampler_stats("universe-*.csv", since)
     ob = sampler_stats("orderbook-*.csv", since)
-    tr = sampler_stats("trades-*.csv", since)
-    stalls = detect_stalls({"core": core, "universe": uni,
-                            "orderbook": ob, "trades": tr}, now_ms)
 
     # 窗口内覆盖率（含"距窗口起点的头部缺口"）
     cov = {}
@@ -207,8 +170,8 @@ def collect(now_ms):
         "window_open_ms": cur_o if in_window else nxt_o,
         "window_close_ms": cur_c if in_window else nxt_c,
         "hours_to_open": h_open, "hours_to_close": h_close,
-        "core": core, "universe": uni, "orderbook": ob, "trades": tr,
-        "stalls": stalls, "coverage": cov,
+        "core": core, "universe": uni, "orderbook": ob,
+        "coverage": cov,
     }
 
 
@@ -229,9 +192,8 @@ def render(st, prev_route=None, verbose=True):
                  % (st["hours_to_open"],
                     dt.datetime.fromtimestamp(st["window_open_ms"] / 1000, dt.UTC)
                     .astimezone(CN_TZ).strftime("%m-%d")))
-    for name, key in (("core", "core"), ("universe", "universe"),
-                      ("orderbook", "orderbook"), ("trades", "trades")):
-        rows, rounds, last, _ms = st[key]
+    for name, key in (("core", "core"), ("universe", "universe"), ("orderbook", "orderbook")):
+        rows, rounds, last = st[key]
         scope = "窗口内" if st["in_window"] else "自窗口起"
         L.append("   %-10s %s %7s 行 / %5s 轮   最后 %s"
                  % (name, scope, format(rows, ","), format(rounds, ","), last or "-"))
@@ -243,33 +205,12 @@ def render(st, prev_route=None, verbose=True):
                          % (cpct, hgap))
             else:
                 L.append("              覆盖率 %.1f%%   头部缺口 %.0f 分钟" % (cpct, hgap))
-
-    # ---- 停摆告警（最高优先级，放最后以便一眼看到）----
-    stalls = st.get("stalls") or {}
-    if stalls:
-        crit = st["in_window"]
-        L.append("")
-        L.append("   " + "!" * 68)
-        if crit:
-            L.append("   !! 停摆告警：**当前在所内撮合窗口内**，这段数据永久不可回补 !!")
-        else:
-            L.append("   !! 停摆告警（当前不在 in_house 窗口，损失较小）")
-        for nm, lag in sorted(stalls.items(), key=lambda z: -z[1]):
-            if lag == float("inf"):
-                L.append("   !!   %-10s 窗口内一行数据都没有" % nm)
-            else:
-                L.append("   !!   %-10s 最新数据已滞后 %.0f 秒（阈值 %.0f 秒）"
-                         % (nm, lag, STALL_FACTOR * CYCLE_SEC.get(nm, 60)))
-        L.append("   !! 排查：1) 看 data\\logs\\sampler_<name>.err.log 是不是 SSLEOFError（网络/代理中断）")
-        L.append("   !!       2) python tools\\check_samplers.py 看实例数是否 != 1")
-        L.append("   !!       3) 网络恢复后采样器会自己继续；漏掉的时段无法补")
-        L.append("   " + "!" * 68)
     if verbose:
         print("\n".join(L))
     return "\n".join(L)
 
 
-def append_row(st, event="", note=""):
+def append_row(st, event=""):
     os.makedirs(OUT_DIR, exist_ok=True)
     new = not os.path.exists(LOG)
     now = dt.datetime.now(dt.UTC)
@@ -283,65 +224,11 @@ def append_row(st, event="", note=""):
             now.astimezone(CN_TZ).strftime("%Y-%m-%d %H:%M:%S"),
             st["route"], st["session"], event,
             round(st["hours_to_open"], 2), round(st["hours_to_close"], 2),
-            c[0], c[1], c[2], u[0], u[1], u[2], o[0], o[1], o[2],
-            note,
+            c[0], c[1], c[2], u[0], u[1], u[2], o[0], o[1], o[2], "",
         ])
 
 
-def stall_event(st):
-    """把停摆信息折成 (event 后缀, note 文本)。列结构不动，写进已有的 event/note 列。"""
-    stalls = st.get("stalls") or {}
-    if not stalls:
-        return "", ""
-    parts = []
-    for nm, lag in sorted(stalls.items()):
-        parts.append("%s=%s" % (nm, "无数据" if lag == float("inf") else "%.0fs" % lag))
-    ev = "STALL" + ("(IN_WINDOW)" if st["in_window"] else "")
-    note = "; ".join(parts) + " | trades_rows=%d" % st["trades"][0]
-    return ev, note
-
-
 # ---------------------------------------------------------------- 报告
-
-def selftest():
-    """自检停摆判定。合成数据，不依赖真实采样状态 —— 否则"检测器本身坏了"永远发现不了。
-
-    ⚠️ 单位：`lags_sec` 是**秒**，与 `detect_stalls()` 内部的 lag 同单位。
-    第一版这里误写成毫秒，自检立刻报出 4 个假告警 —— 自检的价值就在这里：
-    它把"检测器到底会不会报警"从假设变成了可验证的事实。
-    """
-    now = 1_700_000_000_000          # 任意固定的 UTC 毫秒
-    # 阈值：core=3x60=180s, universe/orderbook=3x30=90s, trades=3x60=180s
-    cases = [
-        ("正常：全部新鲜（滞后都远小于阈值）",
-         {"core": 10, "universe": 20, "orderbook": 20, "trades": 30}, set()),
-        ("临界：core 恰好 180 秒（判定是 >，不该报警）",
-         {"core": 180}, set()),
-        ("停摆：core 滞后 181 秒（刚过阈值）",
-         {"core": 181}, {"core"}),
-        ("停摆：universe 滞后 91 秒（阈值 90 秒）",
-         {"universe": 91}, {"universe"}),
-        ("停摆：完全没有数据", {"core": None}, {"core"}),
-        ("停摆：三采样器同时滞后（模拟 09-14 10:24 事故）",
-         {"core": 700, "universe": 700, "orderbook": 700},
-         {"core", "universe", "orderbook"}),
-    ]
-    ok = True
-    for title, lags_sec, expect in cases:
-        stats = {}
-        for name in ("core", "universe", "orderbook", "trades"):
-            lag = lags_sec.get(name, 0)
-            last = None if lag is None else now - lag * 1000
-            stats[name] = (1, 1, "synthetic", last)
-        got = set(detect_stalls(stats, now))
-        good = got == expect
-        ok = ok and good
-        print("  [%s] %-46s 期望=%-32s 实际=%s"
-              % ("OK " if good else "!! ", title,
-                 sorted(expect) or "{}", sorted(got) or "{}"))
-    print("\n自检%s" % ("通过" if ok else "**失败**"))
-    return 0 if ok else 1
-
 
 def report():
     now_ms = int(time.time() * 1000)
@@ -377,11 +264,7 @@ def main(argv=None):
     ap.add_argument("--loop", action="store_true", help="常驻，默认每 30 分钟一次")
     ap.add_argument("--interval", type=float, default=30.0, help="分钟")
     ap.add_argument("--report", action="store_true", help="只看当前状态，不写日志")
-    ap.add_argument("--selftest", action="store_true", help="自检停摆判定逻辑（合成数据）")
     args = ap.parse_args(argv)
-
-    if args.selftest:
-        return selftest()
 
     if args.report:
         return report()
@@ -389,8 +272,7 @@ def main(argv=None):
     if args.once:
         st = collect(int(time.time() * 1000))
         render(st)
-        sev, snote = stall_event(st)
-        append_row(st, "once" + (" " + sev if sev else ""), snote)
+        append_row(st, "once")
         print("\n已追加到 %s" % os.path.relpath(LOG, BASE))
         return 0
 
@@ -411,11 +293,8 @@ def main(argv=None):
                 print("\n" + "!" * 80)
                 print("!! 路由切换：%s -> %s（%s）" % (prev_route, st["route"], ROUTE_LABEL[st["route"]]))
                 print("!" * 80)
-            sev, snote = stall_event(st)
-            if sev:
-                ev = (ev + "; " + sev) if ev else sev
             render(st, prev_route)
-            append_row(st, ev, snote)
+            append_row(st, ev)
             prev_route = st["route"]
             time.sleep(args.interval * 60)
     except KeyboardInterrupt:

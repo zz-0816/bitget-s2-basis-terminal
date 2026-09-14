@@ -17,16 +17,27 @@ venv/
 *.egg-info/
 
 # ---------- 运行期状态（锁 / 心跳 / 临时文件）----------
+# ⚠️ 教训：这些文件**必须在第一次提交前就忽略**。`.gitignore` 不会取消已经
+# 被跟踪的文件 —— 下面这些曾经被提交过，于是即便规则在，git 仍然跟踪它们。
+# 后果实测（2026-09-14）：`git pull --rebase` 直接失败
+#   error: unable to unlink old 'data/logs/sampler_core.err.log': Invalid argument
+# 原因是采样器进程**正持有该日志的句柄**，Windows 不允许删除/改名。
+# 只要还有一个正在被写入的文件被 git 跟踪，变基/切分支就会随机失败。
+# 处置：`git rm --cached` 掉，让规则真正生效。
 data/spread/.sampler.lock
 data/spread/.sampler_universe.lock
 data/spread/.orderbook_sampler.lock
+data/spread/.trades_sampler.lock
 data/spread/.supervisor.lock
 data/spread/_heartbeat.json
 data/spread/_heartbeat_universe.json
 data/spread/*.tmp
+data/spread/.trades_state.json
 data/.kline_accumulator.lock
 data/manifest.json.tmp
 data/logs/
+data/reports/window_watch.csv
+msg.txt
 
 # ---------- 大体积回补数据（不要入库）----------
 # K 线可用 python kline_accumulator.py --gran "1m,5m,1h,1D" 随时重抓；
