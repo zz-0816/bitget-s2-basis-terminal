@@ -340,6 +340,63 @@ def check_readme():
             ok("%s 引用的 %d 个文件全部存在" % (rel, len(refs)))
 
 
+def check_features():
+    """关键**行为**是否还在（不只是「文件能不能 import」）。
+
+    为什么需要这一层 —— 真实事故：
+    2026-09-14 一次 `git pull --rebase` 失败后工作区被部分回退，我提交了回退后的版本，
+    于是 `tools/window_watch.py` 丢了 121 行（**整套停摆告警**）、
+    `tools/coverage_report.py` 丢了 57 行（trades 支持）。
+    两个文件都**照样能 `--help`** —— 第 3 层完全查不出来。
+    是后来跑覆盖率日报时发现「怎么又只有 3 个采样器」才察觉的。
+
+    教训：**「能跑」不等于「功能还在」**。关键能力必须用源码特征 + 行为输出双重钉住。
+    """
+    head(6, "关键行为是否还在（防「提交了回退后的版本」这类静默丢失）")
+
+    # (文件, 必须存在的源码特征, 人话说明)
+    must = [
+        ("tools/window_watch.py", "def detect_stalls(", "停摆告警"),
+        ("tools/window_watch.py", "STALL_FACTOR", "停摆阈值"),
+        ("tools/window_watch.py", "def selftest(", "停摆自检"),
+        ("tools/window_watch.py", "CYCLE_SEC", "各采样器周期表"),
+        ("tools/coverage_report.py", "PROC_TO_KEY", "四采样器实例表"),
+        ("tools/coverage_report.py", "def trades_summary(", "成交流水专项统计"),
+        ("tools/check_samplers.py", "trades_sampler", "trades 实例校验"),
+        ("tools/check_samplers.py", "trade_id", "重复 trade_id 检测"),
+        ("common/samples.py", "def find_core_samples(", "csv/gz 透明读取"),
+        ("common/console.py", "TRANSLIT", "控制台编码兜底"),
+        ("build_panel.py", "--force", "拒绝空结果覆盖"),
+        ("server/app.py", "depth_within_5bp_usd", "5 档累计深度"),
+        ("server/app.py", "_STATUS_REFRESH_LOCK", "stale-while-revalidate 去重"),
+        ("server/app.py", "find_core_samples", "后端 gz 回退"),
+        ("common/market_calendar.py", "def route_of(", "route 口径唯一实现"),
+    ]
+    for rel, needle, desc in must:
+        p = os.path.join(BASE, rel)
+        if not os.path.exists(p):
+            bad("%s 不存在（%s）" % (rel, desc))
+            continue
+        src = open(p, encoding="utf-8").read()
+        if needle in src:
+            ok("%-26s %s" % (os.path.basename(rel), desc))
+        else:
+            bad("%s 缺少 %s（%s）" % (rel, needle, desc),
+                "该功能被回退或误删；用 git log -p 查是哪次提交")
+
+    # 行为层：能跑的先跑一遍（比源码特征更硬）
+    try:
+        r = subprocess.run([sys.executable, "tools/window_watch.py", "--selftest"],
+                           cwd=BASE, capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            ok("停摆自检实际运行通过（6 个场景）")
+        else:
+            bad("window_watch --selftest 退出码 %d" % r.returncode,
+                (r.stdout or "").strip().splitlines()[-1] if r.stdout else "")
+    except Exception as exc:  # noqa: BLE001
+        bad("停摆自检无法运行", repr(exc))
+
+
 # ---------------------------------------------------------------- 主流程
 
 def main(argv=None):
@@ -357,6 +414,7 @@ def main(argv=None):
     check_code(args.quick)
     check_numbers()
     check_readme()
+    check_features()
 
     print("\n" + "=" * 78)
     print("结论：%d 项通过 ／ %d 项警告 ／ %d 项失败"
