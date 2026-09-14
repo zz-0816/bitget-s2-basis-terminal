@@ -24,6 +24,7 @@ rToken 现货  vs  美股永续：点差 + 基差监控台
 import argparse
 import csv
 import datetime as dt
+import glob
 import json
 import mimetypes
 import os
@@ -396,24 +397,135 @@ def build_overview():
         else:
             e["closed_vs_intraday_x"] = None
 
-    # 容量约束：永续腿是瓶颈（实测永续量远小于现货）
+    # ---- 容量约束 ----
+    # ⚠️ 这里曾经有两个错，都是"看起来没问题、实际会误导人"的那种：
+    #
+    # 错 1（注释与事实相反）：原文写「永续腿是瓶颈（实测永续量远小于现货）」。
+    #   后续实测**正好相反** —— 按**已成交名义额**看，现货腿只有永续的 1/20 ~ 1/300，
+    #   瓶颈在**现货腿**（见 docs/14 §3.2）。原判断来自早期小样本，已被推翻。
+    #
+    # 错 2（只看一条腿）：容量只取永续腿的顶部深度。本策略**两条腿都要成交**，
+    #   正确的口径是**两腿取较小者**，否则现货腿更薄时完全看不出来。
+    #
+    # 另外要区分两个**不同**的量，它们会给出相反的"瓶颈腿"结论，别混用：
+    #   * **顶部挂单深度**（瞬时能吃多少）-> 实测**永续更薄**（如 AAPL 167 vs 现货 6009）
+    #   * **已成交名义额**（长期能做多大规模）-> 实测**现货更薄**（docs/14 §3.2）
+    #   本函数同时给出两者，让前端能说清"是哪种不够"。
+    ob = _latest_orderbook_depth()
     for e in out:
         s, p = e.get("spot"), e.get("perp")
         e["capacity"] = None
         if s and p:
             sv = s.get("usdt_vol_24h") or 0
             pv = p.get("usdt_vol_24h") or 0
-            # 可承载规模按永续腿盘口深度粗估（保守取 bid/ask 较小侧）
-            depth = min(p.get("bid_depth_usd") or 0, p.get("ask_depth_usd") or 0)
+            s_top = min(s.get("bid_depth_usd") or 0, s.get("ask_depth_usd") or 0)
+            p_top = min(p.get("bid_depth_usd") or 0, p.get("ask_depth_usd") or 0)
+            binding = "spot" if s_top < p_top else "perp"
+            base = e.get("base") or ""
             e["capacity"] = {
                 "perp_vol_24h": pv,
                 "spot_vol_24h": sv,
                 "spot_over_perp": round(sv / pv, 1) if pv else None,
-                "perp_top_depth_usd": depth,
+                # 保留旧字段名，避免前端与既有文档失效
+                "perp_top_depth_usd": p_top,
+                # ---- 修正后 ----
+                "spot_top_depth_usd": s_top,
+                "min_top_depth_usd": min(s_top, p_top),
+                "binding_leg_top": binding,
+                # 5 档累计：在 ≤N bp 滑点内能吃下多少（比只看一档真实得多）
+                "depth_within_5bp_usd": (ob.get(base) or {}).get("d5"),
+                "depth_within_10bp_usd": (ob.get(base) or {}).get("d10"),
+                "ob_ts_ms": (ob.get(base) or {}).get("ts"),
             }
 
     out.sort(key=lambda x: -(x["basis_bp"] or -999))
     return out
+
+
+# 5 档累计深度缓存（订单簿采样文件每 30 秒追加一轮，读末轮即可）
+_OB_DEPTH_CACHE = {"ts": 0.0, "data": {}}
+_OB_DEPTH_SEC = 30
+
+
+def _latest_orderbook_depth():
+    """从 `orderbook-*.csv` 的**最新一轮**算 5 档累计深度。
+
+    为什么要它：只看最优一档会**严重低估**容量 —— 深度是可以往下吃的。
+    `tools/capacity_curve.py` 早就做了这个计算，但前端一直没接上，
+    于是界面上显示"深度不足 $290"，而实际上多档吃下去的容量更大。
+    返回 {base: {"d5": 5bp 内可吃 USD, "d10": 10bp 内可吃 USD, "ts": ms}}
+    """
+    now = time.time()
+    if _OB_DEPTH_CACHE["data"] and (now - _OB_DEPTH_CACHE["ts"]) < _OB_DEPTH_SEC:
+        return _OB_DEPTH_CACHE["data"]
+    files = sorted(glob.glob(os.path.join(SPREAD_DIR, "orderbook-*.csv")))
+    if not files:
+        files = sorted(glob.glob(os.path.join(SPREAD_DIR, "gz", "orderbook-*.csv*")))
+    if not files:
+        return _OB_DEPTH_CACHE["data"]
+    path = files[-1]
+    rows = []
+    last_ms = None
+    try:
+        for r in iter_rows(path):
+            try:
+                ts = int(r["ts_ms"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if last_ms is None or ts > last_ms:
+                last_ms = ts
+                rows = [r]
+            elif ts == last_ms:
+                rows.append(r)
+            # 只保留末轮，前面的直接丢（文件很大，不占内存）
+    except (OSError, EOFError):
+        return _OB_DEPTH_CACHE["data"]
+
+    # 按 base+venue+side 聚合各档。
+    # ⚠️ 必须带上 venue：早先只按 (base, side) 做键，会把**现货与永续的同名档位
+    # 合并到一起**（现货 level1 被永续 level1 覆盖），算出来的容量是错的。
+    book = {}
+    for r in rows:
+        try:
+            b = r["base"]
+            v = r["venue"]
+            side = r["side"]
+            lvl = int(r["level"])
+            price = float(r["price"])
+            notional = float(r["notional_usd"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        book.setdefault((b, v, side), {})[lvl] = (price, notional)
+
+    # 本策略四个方向都会用到：买现货(ask)、卖永续(bid)、平仓时卖现货(bid)、买永续(ask)
+    # -> 容量取这**四个方向里最薄的那个**，这才是真正能做的规模。
+    per_base = {}
+    for (b, _v, _side), levels in book.items():
+        if not levels:
+            continue
+        best = min(levels.values(), key=lambda z: z[0])[0] if _side == "ask" \
+            else max(levels.values(), key=lambda z: z[0])[0]
+        if best <= 0:
+            continue
+        cum = 0.0
+        d5 = d10 = None
+        for lvl in sorted(levels):
+            price, notional = levels[lvl]
+            slip_bp = abs(price / best - 1.0) * 1e4
+            cum += notional
+            if d5 is None and slip_bp > 5.0:
+                d5 = cum - notional
+            if d10 is None and slip_bp > 10.0:
+                d10 = cum - notional
+        cum_all = sum(n for _p, n in levels.values())
+        v5 = cum_all if d5 is None else d5
+        v10 = cum_all if d10 is None else d10
+        rec = per_base.setdefault(b, {"d5": None, "d10": None, "ts": last_ms})
+        rec["d5"] = v5 if rec["d5"] is None else min(rec["d5"], v5)
+        rec["d10"] = v10 if rec["d10"] is None else min(rec["d10"], v10)
+    _OB_DEPTH_CACHE["data"] = per_base
+    _OB_DEPTH_CACHE["ts"] = now
+    return per_base
 
 
 def build_timeline(max_points=300):
