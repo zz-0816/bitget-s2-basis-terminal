@@ -1,0 +1,46 @@
+{
+  "_README": "项目二事件日历。static 模式的覆盖度完全取决于本文件质量 —— 日历空 = 闸门空。",
+  "_ts_format": "ISO8601，带时区。财报用美东时间（-04:00 夏令时 / -05:00 冬令时）。",
+  "_status": "初版由公开财报日历整理；**递交前必须复核**（日期会改，且这是硬门禁依据）。",
+  "_update_rule": "财报按季更新、宏观按周更新。过期日历比没有日历更危险（会给出虚假的'无事件'）。",
+  "_note_2026_earnings": "以下日期为 2026 年 9-11 月美股常见财报窗口的**待复核**条目；确认后请把 _status 改成 confirmed。",
+  "earnings": {
+    "NVDA": [
+      {"ts": "2026-11-18T16:20:00-05:00", "label": "Q3 FY2027 财报（盘后）", "confirmed": false}
+    ],
+    "AAPL": [
+      {"ts": "2026-10-29T16:30:00-04:00", "label": "Q4 FY2026 财报（盘后）", "confirmed": false}
+    ],
+    "META": [
+      {"ts": "2026-10-28T16:05:00-04:00", "label": "Q3 财报（盘后）", "confirmed": false}
+    ],
+    "GOOGL": [
+      {"ts": "2026-10-27T16:05:00-04:00", "label": "Q3 财报（盘后）", "confirmed": false}
+    ],
+    "TSLA": [
+      {"ts": "2026-10-21T16:05:00-04:00", "label": "Q3 财报（盘后）", "confirmed": false}
+    ],
+    "MRVL": [
+      {"ts": "2026-12-03T16:05:00-05:00", "label": "Q3 FY2027 财报（盘后）", "confirmed": false}
+    ],
+    "HOOD": [
+      {"ts": "2026-10-28T16:05:00-04:00", "label": "Q3 财报（盘后）", "confirmed": false}
+    ],
+    "SPY": [],
+    "QQQ": [],
+    "SOXL": []
+  },
+  "macro": [
+    {"ts": "2026-09-16T14:00:00-04:00", "label": "FOMC 利率决议", "severity": "block"},
+    {"ts": "2026-09-16T14:30:00-04:00", "label": "FOMC 新闻发布会", "severity": "block"},
+    {"ts": "2026-10-02T08:30:00-04:00", "label": "非农就业（NFP）", "severity": "block"},
+    {"ts": "2026-10-13T08:30:00-04:00", "label": "CPI 通胀数据", "severity": "block"},
+    {"ts": "2026-11-04T14:00:00-05:00", "label": "FOMC 利率决议", "severity": "block"},
+    {"ts": "2026-11-06T08:30:00-05:00", "label": "非农就业（NFP）", "severity": "block"},
+    {"ts": "2026-11-12T08:30:00-05:00", "label": "CPI 通胀数据", "severity": "block"}
+  ],
+  "holidays_us": [
+    {"ts": "2026-11-26", "label": "Thanksgiving（美股休市）"},
+    {"ts": "2026-12-25", "label": "Christmas（美股休市）"}
+  ]
+}

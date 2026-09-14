@@ -372,6 +372,10 @@ def check_features():
         ("server/app.py", "_STATUS_REFRESH_LOCK", "stale-while-revalidate 去重"),
         ("server/app.py", "find_core_samples", "后端 gz 回退"),
         ("common/market_calendar.py", "def route_of(", "route 口径唯一实现"),
+        # 项目二（独立提交）：必须能独立跑通，且不得反向污染项目一
+        ("project2/execution_cost.py", "def impact_bp(", "执行成本·冲击模型"),
+        ("project2/event_gate.py", "def static_gate(", "事件闸门·确定性回退"),
+        ("project2/event_gate.py", "def llm_gate(", "事件闸门·LLM 路径"),
     ]
     for rel, needle, desc in must:
         p = os.path.join(BASE, rel)
