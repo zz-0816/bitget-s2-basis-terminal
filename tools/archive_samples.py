@@ -29,6 +29,9 @@ import shutil
 import sys
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 让 `from common.gzio import ...` 可用
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
 SPREAD = os.path.join(BASE, "data", "spread")
 GZDIR = os.path.join(SPREAD, "gz")
 
@@ -46,20 +49,25 @@ def rows_of(path):
 
 
 def gz_write(src, dst):
-    """流式压缩并原子替换，返回 (原始字节, 压缩字节)。"""
+    """流式压缩并原子替换，返回 (原始字节, 压缩字节)。
+
+    用**确定性** gzip（`common/gzio.py`）：`gzip.open()` 会把当前时间写进头，
+    导致同一份数据每次压缩字节都不同 —— 仓库 diff 全是无意义的二进制改动，
+    且 MANIFEST 的 SHA256 校验失效。实测踩过。
+    """
+    from common.gzio import gzip_write
+    n_in = os.path.getsize(src)
+    n_out = gzip_write(src, dst, compresslevel=6)
+    return n_in, n_out
+
+
+def _gz_write_orig(src, dst):
+    """（保留原始实现作对照，未被调用）"""
     tmp = dst + ".tmp"
     n_in = 0
     with open(src, "rb") as fi, gzip.open(tmp, "wb", compresslevel=6) as fo:
         while True:
             b = fi.read(1 << 20)
-            if not b:
-                break
-            n_in += len(b)
-            fo.write(b)
-    os.replace(tmp, dst)
-    return n_in, os.path.getsize(dst)
-
-
 def check():
     print("=" * 84)
     print("采样文件体积检查")

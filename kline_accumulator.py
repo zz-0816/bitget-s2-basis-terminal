@@ -35,6 +35,16 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
+# 控制台编码兜底（**必需**）：本文件有两处 print 带 ⚠️（U+26A0），
+# 而 Windows 控制台默认 GBK 编不出这个字符 -> 抛 UnicodeEncodeError **并中断整个脚本**。
+# 这个脚本还被注册进了开机启动（`BitgetS2_KlineAccumulate.cmd`），
+# 一旦崩就意味着**每日自动补齐静默失败**。实测复现过：
+#   PYTHONIOENCODING=gbk python -c "print('\u26a0')"  -> EXIT=1
+from common.console import install as _install_console  # noqa: E402
+
+_install_console()
 RAW = os.path.join(BASE, "data", "raw")
 UNIVERSE = os.path.join(BASE, "data", "universe.csv")
 MANIFEST = os.path.join(BASE, "data", "manifest.json")

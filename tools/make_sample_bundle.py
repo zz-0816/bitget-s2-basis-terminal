@@ -28,6 +28,15 @@ import shutil
 import sys
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 让 `from common.gzio import ...` 可用（本脚本在 tools/ 下，需显式加仓库根）
+if BASE not in sys.path:
+    sys.path.insert(0, BASE)
+# 控制台编码兜底：本文件里有 ✅ 这类 GBK 无法编码的字符，
+# 不装这个兜底就会在 Windows 控制台下抛 UnicodeEncodeError **并中断整个脚本**
+# （已算完的结果全部白跑）。实测踩过 —— 所以每个会 print 排版符号的工具都必须装。
+from common.console import install as _install_console  # noqa: E402
+
+_install_console()
 RAW = os.path.join(BASE, "data", "raw")
 OUT = os.path.join(BASE, "data", "samples")
 
@@ -38,20 +47,22 @@ CORE = ["RTSLAUSDT", "TSLAUSDT", "RNVDAUSDT", "NVDAUSDT", "RAAPLUSDT", "AAPLUSDT
 
 
 def gz_copy(src, dst):
-    """流式压缩，返回 (原始字节, 压缩字节)。"""
+    """流式压缩，返回 (原始字节, 压缩字节)。
+
+    ⚠️ 必须用**确定性** gzip（`common/gzio.py`）：`gzip.open()` 会把当前时间
+    写进 gzip 头，导致同一份数据每次压缩字节都不同 —— 872 个文件全部变成
+    "已修改"、且 MANIFEST 里承诺的 SHA256 校验失去意义。实测踩过。
+    """
     n_in = n_out = 0
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    with open(src, "rb") as fi, gzip.open(dst, "wb", compresslevel=6) as fo:
-        while True:
-            chunk = fi.read(1 << 20)
-            if not chunk:
-                break
-            n_in += len(chunk)
-            fo.write(chunk)
-    n_out = os.path.getsize(dst)
+    from common.gzio import gzip_write
+    n_in = os.path.getsize(src)
+    n_out = gzip_write(src, dst, compresslevel=6)
     return n_in, n_out
 
 
+def _gz_copy_orig(src, dst):
+    """（保留原始实现作对照，未被调用）"""
 def sha256(path, limit=None):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -181,6 +192,11 @@ def write_manifest(recs, total_in=None, total_out=None):
     A("   复核命令：`python tools/audit_samples.py`")
     A("3. **1m 只能回溯约 13.9 天**，故 1m 样本跨度有限；1h/1D 覆盖更久。")
     A("4. 采样文件仍在持续写入 —— 本清单的 SHA256 只对**生成时刻**的副本有效。")
+    A("   ✅ 但 `data/samples/` 里的 `.gz` 现在是**确定性压缩**（`common/gzio.py`，")
+    A("      gzip 头不带时间戳），所以**同一份数据重跑压出的字节完全相同**。")
+    A("      实测：修好之前重跑一次会有 **872 个文件全部变成「已修改」**，")
+    A("      现在只有本清单自身（含生成时间）会变。")
+    A("      校验命令：`python tools/make_sample_bundle.py --verify`")
     A("")
     A("## 复核入口（都能一键重跑）")
     A("")
@@ -201,10 +217,58 @@ def write_manifest(recs, total_in=None, total_out=None):
     return path
 
 
+def verify():
+    """校验 MANIFEST 里记录的每个 SHA256 与实际文件是否一致。
+
+    这是"数据可校验"承诺的兑现方式：复核方拿到仓库后跑一条命令，
+    就能确认"我手上的 .gz 与你声称的是同一份"，不必信任任何描述。
+    """
+    import re
+    mp = os.path.join(OUT, "MANIFEST.md")
+    if not os.path.exists(mp):
+        print("[FATAL] 找不到 %s，先跑一次不带参数的本脚本" % mp, file=sys.stderr)
+        return 2
+    text = open(mp, encoding="utf-8").read()
+    pat = re.compile(r"\|\s*([\w\-]+)\s*\|\s*([\w\-]+)\s*\|\s*([\d,]*)\s*\|"
+                     r"\s*([\d,]*)\s*\|\s*`([0-9a-f]{16})`\s*\|")
+    rows = pat.findall(text)
+    print("=" * 78)
+    print("样本包完整性校验")
+    print("=" * 78)
+    if not rows:
+        print("  [!!] MANIFEST 里没有解析到带 SHA256 的记录 —— 格式可能变了")
+        return 1
+    ok = bad = missing = 0
+    for gran, sym, _r, _b, h in rows:
+        p = os.path.join(OUT, gran, sym + ".csv.gz")
+        if not os.path.exists(p):
+            missing += 1
+            print("  [缺] %s/%s" % (gran, sym))
+            continue
+        real = sha256(p)[:16]
+        if real == h:
+            ok += 1
+        else:
+            bad += 1
+            print("  [!!] %s/%s  MANIFEST=%s 实际=%s" % (gran, sym, h, real))
+    print("  共 %d 条：**%d 一致** ／ %d 不一致 ／ %d 缺失"
+          % (len(rows), ok, bad, missing))
+    if bad or missing:
+        print("  -> 校验失败。若刚重跑过生成脚本，说明确定性压缩被破坏。")
+        return 1
+    print("  -> 全部一致 ✅（`.gz` 为确定性压缩，重跑不会改变字节）")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="生成给队友的数据样本包 + 清单")
     ap.add_argument("--manifest-only", action="store_true", help="只重写清单")
+    ap.add_argument("--verify", action="store_true",
+                    help="按 MANIFEST 校验每个文件的 SHA256")
     args = ap.parse_args(argv)
+
+    if args.verify:
+        return verify()
 
     if args.manifest_only:
         recs = []

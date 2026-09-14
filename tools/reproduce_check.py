@@ -401,6 +401,37 @@ def check_features():
     except Exception as exc:  # noqa: BLE001
         bad("停摆自检无法运行", repr(exc))
 
+    # ---- 控制台编码：有没有"会被 print 的非 GBK 字符却没兜底"的文件 ----
+    # 这条是真事故驱动：`kline_accumulator.py` 有两处 print 带 ⚠️ 且没装兜底，
+    # 而它**注册在开机启动**里 —— 一旦崩，每日自动补齐就静默失败。
+    try:
+        py = []
+        for dirpath, dirnames, names in os.walk(BASE):
+            dirnames[:] = [d for d in dirnames
+                           if d not in (".git", "__pycache__", "data")]
+            py += [os.path.join(dirpath, n) for n in names if n.endswith(".py")]
+        r = subprocess.run([sys.executable, "tools/check_console_encoding.py"] + py,
+                           cwd=BASE, capture_output=True, text=True, timeout=180)
+        if r.returncode == 0:
+            ok("所有工具的控制台编码兜底齐全（0 个会崩的文件）")
+        else:
+            tail = (r.stdout or "").strip().splitlines()
+            bad("有工具会在 GBK 控制台下崩（UnicodeEncodeError 并中断脚本）",
+                tail[-1] if tail else "")
+    except Exception as exc:  # noqa: BLE001
+        bad("控制台编码检查无法运行", repr(exc))
+
+    # ---- 确定性 gzip：同输入必须同字节 ----
+    try:
+        r = subprocess.run([sys.executable, "common/gzio.py"],
+                           cwd=BASE, capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            ok("gzip 为确定性压缩（同输入同字节，SHA256 可校验）")
+        else:
+            bad("gzip 确定性自检失败", (r.stdout or "").strip()[-120:])
+    except Exception as exc:  # noqa: BLE001
+        bad("gzip 确定性自检无法运行", repr(exc))
+
 
 # ---------------------------------------------------------------- 主流程
 

@@ -223,8 +223,10 @@ def archive(args):
                 continue
             tmp = dst + ".tmp"
             try:
-                with open(p, "rb") as fi, gzip.open(tmp, "wb", compresslevel=6) as fo:
-                    shutil.copyfileobj(fi, fo, 1024 * 1024)
+                # 确定性 gzip：同一份数据每次压出的字节相同，
+                # 否则 872 个文件每次重跑都变"已修改"，SHA256 校验也失去意义。
+                from common.gzio import gzip_write
+                gzip_write(p, tmp, compresslevel=6)
                 os.replace(tmp, dst)
             except OSError as exc:
                 print("  [FAIL] %s：%r" % (base, exc))
