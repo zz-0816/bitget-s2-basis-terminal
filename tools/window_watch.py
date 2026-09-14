@@ -31,6 +31,7 @@ import datetime as dt
 import glob
 import os
 import statistics
+import subprocess
 import sys
 import time
 
@@ -303,6 +304,39 @@ def stall_event(st):
 
 # ---------------------------------------------------------------- 报告
 
+def auto_archive(reason):
+    """窗口关闭时自动归档（调用 tools/window_capture.py --archive）。
+
+    为什么放在这里：`archive_samples.py` 原本**没有被任何脚本调用** ——
+    归档全靠人记得手动跑。而原始 CSV 被 gitignore，**不归档就等于这份数据
+    在仓库里不存在**，报告也就无法指向它。这条链条必须在无人值守时也能闭合。
+
+    触发点选得刚好：`window_watch` 已经常驻运行，而且它**恰好知道
+    什么时候 `in_house` 结束**（route 切换那一刻 = 窗口关闭）。
+    在别的进程里再判断一次窗口边界，反而多一处可能算错的地方。
+
+    失败绝不抛出：归档是"锦上添花"，不能因为它把监测进程弄挂。
+    """
+    script = os.path.join(BASE, "tools", "window_capture.py")
+    if not os.path.exists(script):
+        print("   [归档] 跳过：找不到 %s" % script)
+        return
+    print("\n" + "=" * 80)
+    print("   [归档] %s -> 自动归档刚结束的窗口" % reason)
+    print("=" * 80)
+    try:
+        r = subprocess.run([sys.executable, script, "--archive"],
+                           cwd=BASE, capture_output=True, text=True, timeout=900)
+        for line in (r.stdout or "").strip().splitlines()[-14:]:
+            print("   " + line)
+        if r.returncode != 0:
+            print("   [归档] 退出码 %d；stderr: %s"
+                  % (r.returncode, (r.stderr or "").strip()[:200]))
+        print("   [归档] 提醒：确认后请 git add data/spread/gz/ 并提交（入库才算交付）")
+    except Exception as exc:  # noqa: BLE001
+        print("   [归档] 异常（不影响监测）：%r" % (exc,))
+
+
 def selftest():
     """自检停摆判定。合成数据，不依赖真实采样状态 —— 否则"检测器本身坏了"永远发现不了。
 
@@ -378,6 +412,8 @@ def main(argv=None):
     ap.add_argument("--interval", type=float, default=30.0, help="分钟")
     ap.add_argument("--report", action="store_true", help="只看当前状态，不写日志")
     ap.add_argument("--selftest", action="store_true", help="自检停摆判定逻辑（合成数据）")
+    ap.add_argument("--no-archive", action="store_true",
+                    help="窗口关闭时不自动归档（默认会归档）")
     args = ap.parse_args(argv)
 
     if args.selftest:
@@ -411,6 +447,13 @@ def main(argv=None):
                 print("\n" + "!" * 80)
                 print("!! 路由切换：%s -> %s（%s）" % (prev_route, st["route"], ROUTE_LABEL[st["route"]]))
                 print("!" * 80)
+                # ⭐ in_house 结束 = 周末窗口关闭 -> 自动把窗口内数据归档入库。
+                # 这是唯一能保证"无人值守时证据也能落袋"的触发点。
+                if prev_route == "in_house" and st["route"] != "in_house":
+                    if args.no_archive:
+                        print("   [归档] 已用 --no-archive 跳过")
+                    else:
+                        auto_archive("in_house -> %s" % st["route"])
             sev, snote = stall_event(st)
             if sev:
                 ev = (ev + "; " + sev) if ev else sev
