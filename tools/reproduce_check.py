@@ -378,6 +378,8 @@ def check_features():
         ("project2/event_gate.py", "def llm_gate(", "事件闸门·LLM 路径"),
         ("project2/event_gate.py", "def assess(", "风险与理由引擎"),
         ("project2/event_gate.py", "CONF_CAP_NO_SOURCE", "置信度受来源约束"),
+        ("project2/signal_adapter.py", "def normalize(", "bitget-signal 事件源适配器"),
+        ("server/app.py", "/api/assess", "风险与理由接口"),
         ("project2/execution_cost.py", "def consult_gate(", "执行成本·闸门联动"),
         ("project2/execution_cost.py", "def selftest(", "执行成本·闸门否决自检"),
     ]

@@ -298,6 +298,64 @@ function drawChart() {
 
 /* ---------------- 主循环（固定节奏，无自检轮询） ---------------- */
 
+/* ---------------- 执行决策：风险与理由（项目二） ---------------- */
+
+// 风险等级 -> 展示样式与中文
+const RISK_META = {
+  high:   { label: '高', cls: 'neg' },
+  medium: { label: '中', cls: '' },
+  low:    { label: '低', cls: 'pos' }
+};
+
+async function loadAssess() {
+  const body = document.getElementById('assess-body');
+  const note = document.getElementById('assess-note');
+  if (!body) return;
+  let r;
+  try {
+    r = await api('/api/assess');
+  } catch (e) {
+    body.innerHTML = '<tr><td colspan="5">风险引擎暂不可用</td></tr>';
+    return;
+  }
+  if (!r || r.available === false) {
+    // 刻意不让"可选功能不可用"把整页拖死
+    body.innerHTML = '<tr><td colspan="5">' +
+      esc((r && r.error) || '风险引擎暂不可用') + '</td></tr>';
+    if (note) note.textContent = '';
+    return;
+  }
+  body.innerHTML = (r.items || []).map(function (it) {
+    if (it.error) {
+      return '<tr><td>' + esc(it.base) + '</td><td colspan="4">' + esc(it.error) + '</td></tr>';
+    }
+    const rm = RISK_META[it.risk_level] || { label: '?', cls: '' };
+    const reasons = (it.rationale || []).map(function (x) {
+      return '<div class="r-line">· ' + esc(x) + '</div>';
+    }).join('');
+    const warns = (it.warnings || []).map(function (x) {
+      return '<div class="r-line r-warn">! ' + esc(x) + '</div>';
+    }).join('');
+    const cond = Object.keys(it.conditions || {}).map(function (k) {
+      return esc(k) + '=' + esc(String(it.conditions[k]));
+    }).join('；') || '—';
+    return '<tr>' +
+      '<td class="base-name">' + esc(it.base) +
+        (it.event_severity === 'block'
+          ? ' <span class="tag thin">事件窗口</span>' : '') + '</td>' +
+      '<td class="' + rm.cls + '"><strong>' + esc(rm.label) + '</strong></td>' +
+      '<td>' + esc(it.verdict) + '</td>' +
+      '<td class="sep r-cell">' + reasons + warns + '</td>' +
+      '<td class="sep mono-dim">' + cond + '</td>' +
+      '</tr>';
+  }).join('');
+  if (note) {
+    const nSrc = (r.items || []).filter(function (x) { return !x.source_count; }).length;
+    note.textContent = (r.disclaimer || '') +
+      (nSrc ? '  ｜ ' + nSrc + ' 个标的无可回溯事件来源，其事件判断的置信度已被压到 0.40。' : '');
+  }
+}
+
 async function refresh() {
   try {
     const [ov, ses, st] = await Promise.all([
@@ -338,6 +396,8 @@ async function boot() {
   await loadHealth();
   await refresh();
   await loadTimeline();
+  // 风险与理由单独加载：它不可用时**不影响**上面的策略视图（可选功能不该拖死整页）
+  loadAssess();
   tickClock();
   setInterval(tickClock, 1000);            // 时钟每秒走字（纯前端）
   setInterval(refresh, REFRESH_MS);

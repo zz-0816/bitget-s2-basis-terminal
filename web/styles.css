@@ -111,6 +111,12 @@ td.sep, th.sep { border-left: 1px solid var(--line); }
 .neg { color: var(--neg); }
 .mono-dim { color: var(--dim); }
 
+/* 执行决策 · 风险与理由（项目二）：理由多行展示，警告单列颜色 */
+.r-cell { max-width: 640px; }
+.r-line { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+.r-line.r-warn { color: var(--neg); }
+.thesis-line { color: var(--muted); font-size: 13px; line-height: 1.7; margin: 4px 0 10px; }
+
 /* ---------- 图表 ---------- */
 .chart-toolbar { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 10px; }
 .chip {

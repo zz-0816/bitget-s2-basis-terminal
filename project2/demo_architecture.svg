@@ -9,8 +9,8 @@
   </defs>
   <rect width="1180" height="700" fill="#f7f9fb"/>
 
-  <text x="30" y="44" font-size="25" font-weight="700" fill="#1b2733">第二项目 Demo：执行成本感知层（Execution-aware Alpha）</text>
-  <text x="30" y="72" font-size="15" fill="#5b6b7c">一句话：<tspan font-weight="700" fill="#1b2733">给定盘口和我想要的仓位，这一单该「吃」还是「挂」？挂在哪个价？</tspan> —— 挂单类方案必须先过事件闸门</text>
+  <text x="30" y="44" font-size="25" font-weight="700" fill="#1b2733">统一交互页面：策略与信号 → 执行决策（一条流水线）</text>
+  <text x="30" y="72" font-size="15" fill="#5b6b7c">同一页面两个视角：左边告诉你<tspan font-weight="700" fill="#1b2733">哪里</tspan>有价差；右边告诉你这一单<tspan font-weight="700" fill="#1b2733">该不该做、为什么、什么条件</tspan> —— 输出理由与警告，<tspan font-weight="700" fill="#8a2b1d">不代下单</tspan></text>
 
   <!-- 项目一 数据（只读） -->
   <rect x="30" y="110" width="250" height="150" rx="10" fill="#eaf3fb" stroke="#4a90c4" stroke-width="1.6"/>
@@ -51,12 +51,12 @@
   <text x="380" y="514" font-size="12.5" fill="#8a97a6">判断：现在是不是有信息事件？</text>
 
   <rect x="380" y="526" width="290" height="44" rx="6" fill="#f6f0fa" stroke="#d5c2e4"/>
-  <text x="392" y="546" font-size="12.5" fill="#33475b">输入：新闻 / 公告 / 财报日历（非结构化）</text>
-  <text x="392" y="563" font-size="12" fill="#8a97a6">规则写不全 -> 这才是 LLM 该干的活</text>
+  <text x="392" y="546" font-size="12.5" fill="#33475b">来源：bitget-signal（手册官方，免 Key）</text>
+  <text x="392" y="563" font-size="12" fill="#8a97a6">news-briefing / macro-analyst 等 5 个 Skill</text>
 
   <rect x="380" y="578" width="290" height="46" rx="6" fill="#f6f0fa" stroke="#d5c2e4"/>
   <text x="392" y="598" font-size="12.5" fill="#33475b">输出：{是否事件, 严重度, 理由, 置信度}</text>
-  <text x="392" y="615" font-size="12" fill="#8a2b1d">LLM 没有下单权，也不能推翻硬规则</text>
+  <text x="392" y="615" font-size="12" fill="#8a2b1d">无来源则置信度封顶 0.40；LLM 无下单权</text>
 
   <!-- 决策 -->
   <rect x="760" y="150" width="390" height="270" rx="10" fill="#ffffff" stroke="#1e8449" stroke-width="2"/>
@@ -84,13 +84,14 @@
   <text x="536" y="443" font-size="12.5" font-weight="700" fill="#c0392b">否决挂单</text>
   <line x1="690" y1="560" x2="752" y2="400" stroke="#c0392b" stroke-width="2.4" stroke-dasharray="6 4" marker-end="url(#ar)"/>
 
-  <!-- 底部：为什么这是独立项目 -->
+  <!-- 底部：为什么这是一套流水线 -->
   <rect x="30" y="460" width="290" height="180" rx="10" fill="#fdf3e7" stroke="#d9a441" stroke-width="1.6"/>
-  <text x="48" y="488" font-size="15" font-weight="700" fill="#8a6412">为什么这是「第二个项目」</text>
-  <text x="48" y="514" font-size="12.5" fill="#33475b">项目一回答「<tspan font-weight="700">在哪里</tspan>有价差」</text>
-  <text x="48" y="535" font-size="12.5" fill="#33475b">项目二回答「<tspan font-weight="700">怎么下</tspan>才拿得到」</text>
-  <text x="48" y="562" font-size="12.5" fill="#33475b">项目一能算出"能不能赚"，</text>
-  <text x="48" y="582" font-size="12.5" fill="#33475b">但算不出"这一单该怎么下"。</text>
-  <text x="48" y="612" font-size="12" fill="#8a6412">共用同一套数据，不重复造轮子；</text>
-  <text x="48" y="630" font-size="12" fill="#8a2b1d">独立提交（手册要求两投独立）</text>
+  <text x="48" y="488" font-size="15" font-weight="700" fill="#8a6412">这是一条流水线，不是两个项目</text>
+  <text x="48" y="512" font-size="12" fill="#33475b">① 找价差（策略与信号）</text>
+  <text x="48" y="531" font-size="12" fill="#33475b">② 判断该不该做（风险与理由）</text>
+  <text x="48" y="550" font-size="12" fill="#33475b">③ 给出执行方式与条件点位</text>
+  <text x="48" y="574" font-size="12" fill="#8a6412">若两投：按<tspan font-weight="700">赛道</tspan>分，不按流水线砍——</text>
+  <text x="48" y="592" font-size="12" fill="#33475b">赛道一 Alpha Factory（开放主题</text>
+  <text x="48" y="609" font-size="12" fill="#33475b">Execution-aware Alpha）／</text>
+  <text x="48" y="626" font-size="12" fill="#33475b">赛道三 AI Trading Desk（执行辅助）</text>
 </svg>

@@ -580,6 +580,10 @@ def build_session_compare():
 
 _STATUS_CACHE = {"ts": 0.0, "data": None}
 _STATUS_CACHE_SEC = 60
+# 风险与理由缓存：冷跑 5.6 秒（10 标的 × 双腿模型），风险判断是分钟级信息，
+# 30 秒缓存足够，避免页面像卡死。
+_ASSESS_CACHE = {"ts": 0.0, "data": None}
+_ASSESS_CACHE_SEC = 30
 # 后台刷新去重：过期瞬间可能同时来多个请求，若每个都起一个线程，
 # 就会有 N 个线程同时去数 80 MB 文件的行数（自我制造的雪崩）。
 # 用非阻塞锁保证**同一时刻至多一个**刷新在跑。
@@ -746,6 +750,86 @@ def build_data_status():
     return st
 
 
+def build_assess(base=None, size_usd=5000.0):
+    """⭐ 风险与理由接口 —— 把项目二的能力接到统一页面上。
+
+    返回每个标的的：风险等级 / 结论 / **可核验理由** / 警告 / **条件点位**。
+    刻意**只读** project2 的模块，不反向依赖（见 project2/README.md §0）。
+
+    不可用时**不抛异常**：返回带 error 字段的结构，让前端能显示
+    "该功能暂不可用"而不是整页崩掉 —— 一个监控页面不该被可选功能拖死。
+
+    缓存 30 秒：实测冷跑 **5.6 秒**（10 个标的 × 双腿模型，每个都要读盘口文件）。
+    风险判断本来就是分钟级的，30 秒缓存完全够用，而 5.6 秒的等待会让页面像卡死。
+    """
+    now = time.time()
+    if (base is None and _ASSESS_CACHE["data"] is not None
+            and (now - _ASSESS_CACHE["ts"]) < _ASSESS_CACHE_SEC):
+        return _ASSESS_CACHE["data"]
+
+    p2 = os.path.join(BASE, "project2")
+    if p2 not in sys.path:
+        sys.path.insert(0, p2)
+    try:
+        import event_gate as _eg  # type: ignore
+        try:
+            from project2.execution_cost import analyse_two_leg as _atl
+        except ImportError:
+            import sys as _s
+            _s.path.insert(0, BASE)
+            from project2.execution_cost import analyse_two_leg as _atl
+    except Exception as exc:  # noqa: BLE001
+        return {"available": False,
+                "error": "风险引擎不可用：%s: %s" % (type(exc).__name__, exc),
+                "items": []}
+
+    # ⚠️ PAIRS 里是 (现货符号, 永续符号)，如 ("RAAPLUSDT","AAPLUSDT")。
+    # 风险引擎要的是**裸标的**（"AAPL"），不是现货符号 ——
+    # 第一版直接把 RAAPLUSDT 传进去，结果成本查询全落空、风险全被误判成 low。
+    def _base_of(sym):
+        s = sym
+        if s.startswith("R") and s.endswith("USDT"):
+            s = s[1:]
+        return s[:-4] if s.endswith("USDT") else s
+
+    bases = [base.upper()] if base else [_base_of(b) for b, _p in PAIRS]
+    items = []
+    for b in bases:
+        try:
+            cost = _atl(b, size_usd, False, 3.0)
+        except Exception:  # noqa: BLE001
+            cost = None
+        try:
+            a = _eg.assess(b, cost=cost, size_usd=size_usd, mode="static")
+        except Exception as exc:  # noqa: BLE001
+            items.append({"base": b, "error": repr(exc)})
+            continue
+        items.append({
+            "base": a["base"],
+            "risk_level": a["risk_level"],
+            "verdict": a["verdict"],
+            "confidence": a["confidence"],
+            "event_severity": a["event"]["severity"],
+            "event_reason": a["event"]["reason"],
+            "rationale": a["rationale"],
+            "warnings": a["warnings"],
+            "conditions": a["conditions"],
+            "source_count": len(a["sources"]),
+            "mode": a["mode"],
+        })
+    order = {"high": 0, "medium": 1, "low": 2}
+    items.sort(key=lambda z: (order.get(z.get("risk_level"), 9),
+                              z.get("base") or ""))
+    out = {"available": True, "size_usd": size_usd,
+           "disclaimer": "风险提示，不是收益承诺；低风险不等于无风险。"
+                         "本功能不下单，也不构成投资建议。",
+           "items": items}
+    if base is None:
+        _ASSESS_CACHE["data"] = out
+        _ASSESS_CACHE["ts"] = time.time()
+    return out
+
+
 # ---------------------------------------------------------------- 路由
 
 def _health():
@@ -774,6 +858,7 @@ ROUTES = {
     "/api/timeline": build_timeline,
     "/api/session-compare": build_session_compare,
     "/api/data-status": build_data_status,
+    "/api/assess": build_assess,
     "/api/meta": lambda: {
         "pairs": [{"base": s[1:].replace("USDT", ""), "spot": s, "perp": p} for s, p in PAIRS],
         "session_labels": SESSION_LABEL,
