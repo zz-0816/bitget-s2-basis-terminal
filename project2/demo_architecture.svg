@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="700" viewBox="0 0 1180 700" font-family="'Microsoft YaHei','PingFang SC',Segoe UI,sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5b6b7c"/>
+    </marker>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c0392b"/>
+    </marker>
+  </defs>
+  <rect width="1180" height="700" fill="#f7f9fb"/>
+
+  <text x="30" y="44" font-size="25" font-weight="700" fill="#1b2733">第二项目 Demo：执行成本感知层（Execution-aware Alpha）</text>
+  <text x="30" y="72" font-size="15" fill="#5b6b7c">一句话：<tspan font-weight="700" fill="#1b2733">给定盘口和我想要的仓位，这一单该「吃」还是「挂」？挂在哪个价？</tspan> —— 挂单类方案必须先过事件闸门</text>
+
+  <!-- 项目一 数据（只读） -->
+  <rect x="30" y="110" width="250" height="150" rx="10" fill="#eaf3fb" stroke="#4a90c4" stroke-width="1.6"/>
+  <text x="48" y="138" font-size="15" font-weight="700" fill="#1b5a8a">项目一的数据（只读）</text>
+  <text x="48" y="163" font-size="13" fill="#33475b">· 盘口 5 档  orderbook-*.csv</text>
+  <text x="48" y="184" font-size="13" fill="#33475b">· 最优一档 / 点差  2026-*.csv</text>
+  <text x="48" y="205" font-size="13" fill="#33475b">· 成交率、逆向选择（实测）</text>
+  <text x="48" y="226" font-size="13" fill="#33475b">· 费率（docs/09）</text>
+  <text x="48" y="248" font-size="12" fill="#8a97a6">硬边界：只读，不修改（README §0）</text>
+
+  <!-- 用户输入 -->
+  <rect x="30" y="300" width="250" height="120" rx="10" fill="#fff8e6" stroke="#d9a441" stroke-width="1.6"/>
+  <text x="48" y="328" font-size="15" font-weight="700" fill="#8a6412">用户输入</text>
+  <text x="48" y="353" font-size="13" fill="#33475b">标的（如 NVDA）</text>
+  <text x="48" y="374" font-size="13" fill="#33475b">名义额（如 5,000 USDT）</text>
+  <text x="48" y="395" font-size="13" fill="#33475b">是否急单</text>
+
+  <!-- 确定性引擎 -->
+  <rect x="360" y="150" width="330" height="270" rx="10" fill="#ffffff" stroke="#2f4f6f" stroke-width="2"/>
+  <text x="380" y="180" font-size="16" font-weight="700" fill="#1b2733">① 确定性引擎（可复现、可审计）</text>
+  <text x="380" y="206" font-size="12.5" fill="#8a97a6">数值计算全部在这里；LLM 不参与</text>
+
+  <rect x="380" y="220" width="290" height="52" rx="6" fill="#f2f6fa" stroke="#c8d6e2"/>
+  <text x="392" y="240" font-size="13" fill="#1b2733" font-weight="600">双腿联合成本（三种执行方式）</text>
+  <text x="392" y="260" font-size="12" fill="#5b6b7c">全挂单 ／ 现货挂单+永续吃单 ／ 全吃单</text>
+
+  <rect x="380" y="282" width="290" height="52" rx="6" fill="#f2f6fa" stroke="#c8d6e2"/>
+  <text x="392" y="302" font-size="13" fill="#1b2733" font-weight="600">成本 = 点差 + 手续费 + 冲击 + 逆向选择</text>
+  <text x="392" y="322" font-size="12" fill="#5b6b7c">冲击由 5 档盘口实算；逆向选择用实测值</text>
+
+  <rect x="380" y="344" width="290" height="58" rx="6" fill="#fff2f0" stroke="#e0b4ae"/>
+  <text x="392" y="364" font-size="13" fill="#8a2b1d" font-weight="600">腿风险：两腿不都成交 = 裸露敞口</text>
+  <text x="392" y="384" font-size="12" fill="#8a2b1d">实测「只成交一腿」概率常达 60%+</text>
+
+  <!-- 事件闸门 -->
+  <rect x="360" y="460" width="330" height="180" rx="10" fill="#ffffff" stroke="#8e44ad" stroke-width="2"/>
+  <text x="380" y="490" font-size="16" font-weight="700" fill="#5b2c6f">② 事件闸门（LLM 的唯一职责）</text>
+  <text x="380" y="514" font-size="12.5" fill="#8a97a6">判断：现在是不是有信息事件？</text>
+
+  <rect x="380" y="526" width="290" height="44" rx="6" fill="#f6f0fa" stroke="#d5c2e4"/>
+  <text x="392" y="546" font-size="12.5" fill="#33475b">输入：新闻 / 公告 / 财报日历（非结构化）</text>
+  <text x="392" y="563" font-size="12" fill="#8a97a6">规则写不全 -> 这才是 LLM 该干的活</text>
+
+  <rect x="380" y="578" width="290" height="46" rx="6" fill="#f6f0fa" stroke="#d5c2e4"/>
+  <text x="392" y="598" font-size="12.5" fill="#33475b">输出：{是否事件, 严重度, 理由, 置信度}</text>
+  <text x="392" y="615" font-size="12" fill="#8a2b1d">LLM 没有下单权，也不能推翻硬规则</text>
+
+  <!-- 决策 -->
+  <rect x="760" y="150" width="390" height="270" rx="10" fill="#ffffff" stroke="#1e8449" stroke-width="2"/>
+  <text x="780" y="180" font-size="16" font-weight="700" fill="#145a32">③ 决策与输出</text>
+
+  <rect x="780" y="200" width="350" height="70" rx="6" fill="#eafaf1" stroke="#a9dfbf"/>
+  <text x="792" y="222" font-size="13" fill="#145a32" font-weight="600">闸门 = none / caution</text>
+  <text x="792" y="243" font-size="12.5" fill="#33475b">三种方案都参与比较，取成本最低者</text>
+  <text x="792" y="261" font-size="12" fill="#5b6b7c">例：META -> 现货挂单+永续吃单 (+9.72 bp)</text>
+
+  <rect x="780" y="282" width="350" height="70" rx="6" fill="#fdedec" stroke="#f1948a"/>
+  <text x="792" y="304" font-size="13" fill="#8a2b1d" font-weight="600">闸门 = block（事件窗口）</text>
+  <text x="792" y="325" font-size="12.5" fill="#33475b">两个挂单类方案 <tspan font-weight="700">直接作废</tspan></text>
+  <text x="792" y="343" font-size="12" fill="#5b6b7c">只剩「双腿全吃单」；不可接受就不做</text>
+
+  <rect x="780" y="364" width="350" height="44" rx="6" fill="#f2f6fa" stroke="#c8d6e2"/>
+  <text x="792" y="384" font-size="12.5" fill="#33475b">兜底：闸门不可用 -> 降级 caution，</text>
+  <text x="792" y="400" font-size="12" fill="#8a2b1d">绝不静默当作「没有事件」</text>
+
+  <!-- 箭头 -->
+  <line x1="280" y1="180" x2="352" y2="200" stroke="#5b6b7c" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="280" y1="350" x2="352" y2="300" stroke="#5b6b7c" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="690" y1="285" x2="752" y2="265" stroke="#5b6b7c" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="525" y1="423" x2="525" y2="452" stroke="#c0392b" stroke-width="2.4" marker-end="url(#ar)"/>
+  <text x="536" y="443" font-size="12.5" font-weight="700" fill="#c0392b">否决挂单</text>
+  <line x1="690" y1="560" x2="752" y2="400" stroke="#c0392b" stroke-width="2.4" stroke-dasharray="6 4" marker-end="url(#ar)"/>
+
+  <!-- 底部：为什么这是独立项目 -->
+  <rect x="30" y="460" width="290" height="180" rx="10" fill="#fdf3e7" stroke="#d9a441" stroke-width="1.6"/>
+  <text x="48" y="488" font-size="15" font-weight="700" fill="#8a6412">为什么这是「第二个项目」</text>
+  <text x="48" y="514" font-size="12.5" fill="#33475b">项目一回答「<tspan font-weight="700">在哪里</tspan>有价差」</text>
+  <text x="48" y="535" font-size="12.5" fill="#33475b">项目二回答「<tspan font-weight="700">怎么下</tspan>才拿得到」</text>
+  <text x="48" y="562" font-size="12.5" fill="#33475b">项目一能算出"能不能赚"，</text>
+  <text x="48" y="582" font-size="12.5" fill="#33475b">但算不出"这一单该怎么下"。</text>
+  <text x="48" y="612" font-size="12" fill="#8a6412">共用同一套数据，不重复造轮子；</text>
+  <text x="48" y="630" font-size="12" fill="#8a2b1d">独立提交（手册要求两投独立）</text>
+</svg>
