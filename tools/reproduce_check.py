@@ -376,6 +376,8 @@ def check_features():
         ("project2/execution_cost.py", "def impact_bp(", "执行成本·冲击模型"),
         ("project2/event_gate.py", "def static_gate(", "事件闸门·确定性回退"),
         ("project2/event_gate.py", "def llm_gate(", "事件闸门·LLM 路径"),
+        ("project2/event_gate.py", "def assess(", "风险与理由引擎"),
+        ("project2/event_gate.py", "CONF_CAP_NO_SOURCE", "置信度受来源约束"),
         ("project2/execution_cost.py", "def consult_gate(", "执行成本·闸门联动"),
         ("project2/execution_cost.py", "def selftest(", "执行成本·闸门否决自检"),
     ]
@@ -446,6 +448,20 @@ def check_features():
                 if r.stdout else "")
     except Exception as exc:  # noqa: BLE001
         bad("闸门否决自检无法运行", repr(exc))
+
+    # ---- 风险与理由引擎：关键约束必须真的生效 ----
+    # 特别是「无可回溯来源 -> 置信度被压低」这条 —— 它是"真实"要求的代码化。
+    try:
+        r = subprocess.run([sys.executable, "project2/event_gate.py",
+                            "--risk-selftest"],
+                           cwd=BASE, capture_output=True, text=True, timeout=120)
+        if r.returncode == 0:
+            ok("风险与理由引擎自检通过（5 项约束）")
+        else:
+            bad("风险与理由引擎自检失败",
+                (r.stdout or "").strip().splitlines()[-1] if r.stdout else "")
+    except Exception as exc:  # noqa: BLE001
+        bad("风险与理由引擎自检无法运行", repr(exc))
 
 
 # ---------------------------------------------------------------- 主流程
