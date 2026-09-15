@@ -376,6 +376,8 @@ def check_features():
         ("project2/execution_cost.py", "def impact_bp(", "执行成本·冲击模型"),
         ("project2/event_gate.py", "def static_gate(", "事件闸门·确定性回退"),
         ("project2/event_gate.py", "def llm_gate(", "事件闸门·LLM 路径"),
+        ("project2/execution_cost.py", "def consult_gate(", "执行成本·闸门联动"),
+        ("project2/execution_cost.py", "def selftest(", "执行成本·闸门否决自检"),
     ]
     for rel, needle, desc in must:
         p = os.path.join(BASE, rel)
@@ -431,6 +433,19 @@ def check_features():
             bad("gzip 确定性自检失败", (r.stdout or "").strip()[-120:])
     except Exception as exc:  # noqa: BLE001
         bad("gzip 确定性自检无法运行", repr(exc))
+
+    # ---- 项目二：事件闸门的**否决路径**必须真的生效 ----
+    # 只验证"闸门允许时一切正常"等于没验证闸门起作用。
+    try:
+        r = subprocess.run([sys.executable, "project2/execution_cost.py", "--selftest"],
+                           cwd=BASE, capture_output=True, text=True, timeout=120)
+        if r.returncode == 0:
+            ok("执行成本·闸门否决路径自检通过（6 项）")
+        else:
+            bad("闸门否决自检失败", (r.stdout or "").strip().splitlines()[-1]
+                if r.stdout else "")
+    except Exception as exc:  # noqa: BLE001
+        bad("闸门否决自检无法运行", repr(exc))
 
 
 # ---------------------------------------------------------------- 主流程

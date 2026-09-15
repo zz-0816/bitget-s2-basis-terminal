@@ -50,6 +50,7 @@
 import argparse
 import collections
 import csv
+import datetime as dt
 import glob
 import os
 import statistics
@@ -254,7 +255,41 @@ def analyse(base, qty_usd, urgent, miss_bp, venue="perp"):
     }
 
 
-def analyse_two_leg(base, qty_usd, urgent, miss_bp):
+def consult_gate(base, now_ms=None):
+    """挂单前先问事件闸门 —— **闸门是否决权，不是建议**。
+
+    为什么必须联动：挂单的收益来自"等到成交"，而事件窗口里"等到成交"
+    往往等于**被逆向选择**（`docs/14` 实测 −0.21~−21.84 bp）。
+    `docs/TASKS.md` 已有一个实测案例：7/23 某标的 −7.65% → 实际 −8.83%，
+    **是财报，不是错价**。
+
+    设计原则：
+      * 闸门只做**否决**（禁挂单），不做方向建议
+      * 取不到闸门结果时**不静默放过** —— 记为 `caution` 并在输出里明说
+        （fail-safe：宁可少赚，不要在信息事件里挂单）
+      * 闸门**不改变**吃单方案的成本 —— 吃单是立即成交，不承担"等在事件里"的风险
+
+    返回 (severity, reason, source, maker_allowed)
+    """
+    now_ms = now_ms or int(dt.datetime.now(dt.UTC).timestamp() * 1000)
+    try:
+        # project2 内部模块：允许两种导入方式（脚本直跑 / 被 import）
+        try:
+            from project2.event_gate import static_gate as _gate
+        except ImportError:
+            from event_gate import static_gate as _gate
+        r = _gate(base, now_ms)
+        sev = r.get("severity", "caution")
+        return sev, r.get("reason", ""), r.get("source", "static"), sev != "block"
+    except Exception as exc:  # noqa: BLE001
+        # ⚠️ 关键：闸门取不到时**不能当作"没有事件"**。
+        # 静默放过 = 在可能的信息事件里挂单 = 把逆向选择风险当成 0。
+        return ("caution",
+                "闸门不可用（%s: %s）—— 按保守处理" % (type(exc).__name__, exc),
+                "unavailable", True)
+
+
+def analyse_two_leg(base, qty_usd, urgent, miss_bp, gate=True, now_ms=None):
     """**双腿**联合执行模型 —— 这才是真实的执行决策。
 
     为什么单腿模型不够（单腿结论可能完全误导）：
@@ -317,6 +352,17 @@ def analyse_two_leg(base, qty_usd, urgent, miss_bp):
 
     rows = [("双腿全挂单", cost_mm), ("现货挂单+永续吃单", cost_mix),
             ("双腿全吃单", cost_tk)]
+
+    # ---- ⭐ 事件闸门联动：挂单类方案要过闸门 ----
+    g_sev, g_reason, g_src, maker_allowed = (
+        consult_gate(base, now_ms) if gate else ("none", "未启用闸门", "off", True))
+    invalidated = []
+    if not maker_allowed:
+        # 事件窗口 -> 挂单类方案**直接作废**（不是"变贵"，是不允许）
+        kept = [(n, c) for n, c in rows if n == "双腿全吃单"]
+        invalidated = [n for n, _c in rows if n != "双腿全吃单"]
+        rows = kept
+
     best = min(rows, key=lambda z: z[1])
 
     return {
@@ -327,6 +373,9 @@ def analyse_two_leg(base, qty_usd, urgent, miss_bp):
         "leg_risk": leg_risk, "miss": miss_bp,
         "cost_mm": cost_mm, "cost_mix": cost_mix, "cost_tk": cost_tk,
         "best_mode": best[0], "best_cost": best[1],
+        "gate_severity": g_sev, "gate_reason": g_reason,
+        "gate_source": g_src, "maker_allowed": maker_allowed,
+        "invalidated": invalidated,
         "spread_s": sst_s["med"], "spread_p": sst_p["med"],
         "route": route_of(sst_p["ts"]), "session": session_of(sst_p["ts"]),
         "n_s": fills_s.get("trades", 0), "n_p": fills_p.get("trades", 0),
@@ -336,6 +385,17 @@ def analyse_two_leg(base, qty_usd, urgent, miss_bp):
 def render_two_leg(r):
     print("  %-6s 现货点差 %6.2f ｜ 永续点差 %5.2f ｜ %s/%s"
           % (r["base"], r["spread_s"], r["spread_p"], r["route"], r["session"]))
+    # ---- 事件闸门（放在最前：它是**否决**，优先级高于成本比较）----
+    mark = {"none": "[OK]", "caution": "[!]", "block": "[X]"}.get(
+        r["gate_severity"], "[?]")
+    print("     事件闸门 %s severity=%s  [%s]"
+          % (mark, r["gate_severity"], r["gate_source"]))
+    if r["gate_reason"]:
+        print("        -> %s" % r["gate_reason"][:78])
+    if not r["maker_allowed"]:
+        print("        🔴 **挂单类方案已作废**（%s）—— 事件窗口内挂单等于被逆向选择"
+              % "、".join(r["invalidated"]))
+        print("           剩下唯一可执行方案是「双腿全吃单」；若其成本不可接受，就**不做**。")
     print("     实测成交率：现货 %5.1f%%（%s 笔）｜ 永续 %5.1f%%（%s 笔）"
           % (100 * r["p_s"], format(r["n_s"], ","),
              100 * r["p_p"], format(r["n_p"], ",")))
@@ -351,26 +411,6 @@ def render_two_leg(r):
         mark = "  ← 最优" if name == r["best_mode"] else ""
         print("     %-22s %+8.2f%s" % (name, c, mark))
 
-    L = []
-    L.append("  %-6s mid=%9.4f  点差中位 %6.2f bp（P75 %6.2f）  route=%s/%s"
-             % (r["base"], r["mid"], r["spread_med"], r["spread_p75"],
-                r["route"], r["session"]))
-    L.append("     笔量 $%s ｜ 吃穿 %d 档，冲击 %.2f bp%s"
-             % (format(int(r["qty"]), ","), r["levels"], r["impact"],
-                "" if r["enough"] else "  ⚠️ 5 档不够吃，冲击被低估"))
-    L.append("     吃单成本 = 半幅 %.2f + 费 %.1f + 冲击 %.2f = **%+6.2f bp**"
-             % (r["half"], r["fee_taker"], r["impact"], r["cost_taker"]))
-    L.append("     挂单成本 = 费 %.1f − 成交率 %.1f%%×半幅 %.2f + 未成交 %.1f%%×%.1f"
-             " + 逆向选择 %+.2f = **%+6.2f bp**"
-             % (r["fee_maker"], 100 * r["p_fill"], r["half"],
-                100 * (1 - r["p_fill"]), r["miss"], -r["p_fill"] * r["adv"],
-                r["cost_maker"]))
-    L.append("     -> **%s**（差 %+.2f bp，成交率来自实测 %s 笔成交）"
-             % (r["verdict"], r["diff"], format(r["trades"], ",")))
-    if verbose:
-        print("\n".join(L))
-    return "\n".join(L)
-
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="执行成本模型（项目二）")
@@ -382,7 +422,14 @@ def main(argv=None):
     ap.add_argument("--miss-bp", type=float, default=DEFAULT_MISS_BP)
     ap.add_argument("--two-leg", action="store_true",
                     help="双腿联合模型（推荐；单腿模型是它的退化情形）")
+    ap.add_argument("--no-gate", action="store_true",
+                    help="跳过事件闸门（**不建议**：等于无视信息事件风险）")
+    ap.add_argument("--selftest", action="store_true",
+                    help="自检闸门否决路径（合成数据，不需要网络/Key）")
     args = ap.parse_args(argv)
+
+    if args.selftest:
+        return selftest()
 
     bases = sorted({os.path.basename(p).split("-")[-1][:-4]
                     for p in glob.glob(os.path.join(SPREAD, "2026-*.csv"))})
@@ -421,7 +468,8 @@ def main(argv=None):
     if args.two_leg:
         trows = []
         for b in targets:
-            t = analyse_two_leg(b, args.qty, args.urgent, args.miss_bp)
+            t = analyse_two_leg(b, args.qty, args.urgent, args.miss_bp,
+                                gate=not args.no_gate)
             if t:
                 trows.append(t)
         if not trows:
@@ -432,12 +480,35 @@ def main(argv=None):
                  "全挂单", "混挂吃", "全吃单", "最优"))
         print("  " + "-" * 96)
         for t in sorted(trows, key=lambda z: z["best_cost"]):
-            print("  %-6s %8.2f %8.2f %8.1f%% %8.1f%% %+11.2f %+11.2f %+11.2f  %s"
+            gate_tag = {"none": "", "caution": " [!]",
+                        "block": " [X禁挂单]"}.get(t["gate_severity"], "")
+            print("  %-6s %8.2f %8.2f %8.1f%% %8.1f%% %+11.2f %+11.2f %+11.2f  %s%s"
                   % (t["base"], t["spread_s"], t["spread_p"],
                      100 * t["p_s"], 100 * t["p_p"],
-                     t["cost_mm"], t["cost_mix"], t["cost_tk"], t["best_mode"]))
+                     t["cost_mm"], t["cost_mix"], t["cost_tk"],
+                     t["best_mode"], gate_tag))
+        blocked = [t["base"] for t in trows if not t["maker_allowed"]]
+        caution = [t["base"] for t in trows
+                   if t["gate_severity"] == "caution"]
+        unauth = [t["base"] for t in trows if t["gate_source"] == "unavailable"]
         print()
-        print("  读法：**成本越低越好**（负 = 净赚）。三种执行方式里取最优。")
+        print("  ⭐ 事件闸门（挂单前必查）：")
+        if blocked:
+            print("     🔴 %d 个标的处于**事件窗口**，挂单类方案已作废：%s"
+                  % (len(blocked), ", ".join(blocked)))
+            print("        -> 这些标的只能『双腿全吃单』或**不做**。")
+        else:
+            print("     ✅ 当前没有标的被闸门否决。")
+        if caution:
+            print("     [!] %d 个标的为 caution（可挂但需缩小规模/放宽价位）：%s"
+                  % (len(caution), ", ".join(caution)))
+        if unauth:
+            print("     ⚠️ %d 个标的**闸门不可用**，已按保守处理：%s"
+                  % (len(unauth), ", ".join(unauth)))
+            print("        取不到闸门时**不能**当作「没有事件」—— 见 README §4 的设计原则。")
+        print()
+        print("  读法：**成本越低越好**（负 = 净赚）。三种执行方式里取最优，")
+        print("        **但挂单类方案必须先过闸门** —— 闸门是否决，不是建议。")
         print("        ⚠️ 注意『只成交一腿』的概率 —— 它常常高到让『全挂单』变差。")
         print()
         if args.base:
@@ -448,7 +519,8 @@ def main(argv=None):
         print("       相关性折进 leg_risk 的保守取值里；精确处理需双腿联合分布。")
         print("    2. 『现货挂单』只在 `in_house` 有效 —— 工作日走 stockroute 时")
         print("       现货挂单也按 Taker 计费（docs/09），该情形应改用『双腿全吃单』。")
-        print("    3. 未计入事件风险，见 `event_gate.py`。")
+        print("    3. 事件风险**已联动** `event_gate.py`：挂单类方案必须先过闸门，")
+        print("       被否决时只剩『双腿全吃单』或不做。")
         return 0
 
     if not rows:
@@ -486,6 +558,65 @@ def main(argv=None):
     print("       rToken **现货腿**挂单也按 Taker 计费（docs/09）——")
     print("       即「挂单省点差」在现货腿上**不成立**。永续腿的 maker/taker 区分不受影响。")
     return 0
+
+
+def selftest():
+    """自检「闸门否决」这条路径 —— 只测允许路径是不够的。
+
+    方法：把 `consult_gate` 临时换成"永远 block"，看挂单类方案是否**真的**被剔除。
+    只验证"闸门允许时一切正常"，等于没验证闸门起作用。
+    """
+    ok = True
+    base = "META"
+    real = globals()["consult_gate"]
+
+    r_allow = analyse_two_leg(base, 5000, False, DEFAULT_MISS_BP, gate=True)
+    good = bool(r_allow) and r_allow["maker_allowed"]
+    ok = ok and good
+    print("  [%s] 闸门放行：maker_allowed=True，最优=%s"
+          % ("OK " if good else "!! ", r_allow["best_mode"] if r_allow else "-"))
+
+    globals()["consult_gate"] = lambda b, n=None: ("block", "合成测试：财报窗口",
+                                                   "selftest", False)
+    try:
+        r_block = analyse_two_leg(base, 5000, False, DEFAULT_MISS_BP, gate=True)
+    finally:
+        globals()["consult_gate"] = real
+
+    good = bool(r_block) and (not r_block["maker_allowed"])
+    ok = ok and good
+    print("  [%s] 闸门否决：maker_allowed=False" % ("OK " if good else "!! "))
+
+    good = bool(r_block) and r_block["best_mode"] == "双腿全吃单"
+    ok = ok and good
+    print("  [%s] 否决后最优只能是『双腿全吃单』（实际=%s）"
+          % ("OK " if good else "!! ", r_block["best_mode"] if r_block else "-"))
+
+    good = bool(r_block) and set(r_block["invalidated"]) == {"双腿全挂单",
+                                                             "现货挂单+永续吃单"}
+    ok = ok and good
+    print("  [%s] 两个挂单类方案都被剔除：%s"
+          % ("OK " if good else "!! ", r_block["invalidated"] if r_block else "-"))
+
+    globals()["consult_gate"] = lambda b, n=None: ("caution", "闸门不可用",
+                                                   "unavailable", True)
+    try:
+        r_unauth = analyse_two_leg(base, 5000, False, DEFAULT_MISS_BP, gate=True)
+    finally:
+        globals()["consult_gate"] = real
+    good = bool(r_unauth) and r_unauth["gate_severity"] == "caution"
+    ok = ok and good
+    print("  [%s] 闸门不可用时降级为 caution（**不当作无事件**）"
+          % ("OK " if good else "!! "))
+
+    r_off = analyse_two_leg(base, 5000, False, DEFAULT_MISS_BP, gate=False)
+    good = bool(r_off) and r_off["gate_source"] == "off"
+    ok = ok and good
+    print("  [%s] --no-gate 时显式标注 source=off（不静默）"
+          % ("OK " if good else "!! "))
+
+    print("\n自检%s" % ("通过" if ok else "**失败**"))
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
