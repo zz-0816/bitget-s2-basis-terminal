@@ -39,14 +39,24 @@ import time
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 from common.market_calendar import route_of, session_of, CN_TZ  # noqa: E402
+# 控制台编码兜底（**必需**）：本报告的正文里有 🔴 这类 GBK 无法编码的字符，
+# 不装兜底就会在 print 时抛 UnicodeEncodeError **并中断整个预检** ——
+# 也就是说「预检本身因为一个 emoji 失败」，而它保护的正是最贵的那个窗口。
+from common.console import install as _install_console  # noqa: E402
+
+_install_console()
 
 REPORTS = os.path.join(BASE, "data", "reports")
 SPREAD = os.path.join(BASE, "data", "spread")
+P2 = os.path.join(BASE, "project2")      # 项目二目录（只读引用，见 project2/README.md §0）
 
 SCRIPT_LOCKS = {
     "spread_sampler": ".sampler.lock",
     "sampler_universe": ".sampler_universe.lock",
     "orderbook_sampler": ".orderbook_sampler.lock",
+    # ⚠️ 漏掉它 = 预检报告里永远看不到成交流水是否在跑。
+    # 四个核心采样器一个都不能少（本项目已犯过同类错误两次）。
+    "trades_sampler": ".trades_sampler.lock",
 }
 PRE_WINDOW_MIN = 60          # 窗口开启前多少分钟触发
 
@@ -211,11 +221,13 @@ def run_precheck(do_kline=True, verbose=True):
     cur_o, cur_c = window_bounds(now_ms)
     in_window = cur_o <= now_ms < cur_c
 
-    if in_window:
-        # 已在窗口内：预检针对**下一个**窗口（+7 天）
-        nxt_o, nxt_c = cur_o + 7 * 86400 * 1000, cur_c + 7 * 86400 * 1000
-    else:
-        nxt_o, nxt_c = cur_o, cur_c
+    # ⚠️ 只有这两种情况（`window_bounds` 已保证 `cur_o <= now`）：
+    #    * now <  cur_c -> 正在窗口内，下一个窗口是 +7 天
+    #    * now >= cur_c -> 本轮的窗口**已经结束**，下一个窗口**也是 +7 天**
+    # 早先写成"不在窗口内就用 cur"，于是窗口刚关掉的那几天会算出
+    # **负的倒计时**（实测打印出「距下一个窗口开启 -85.8 小时（09-12 08:00）」）。
+    # `window_capture.py` 犯过同一个错，这里是第二处 —— 教训是同一条。
+    nxt_o, nxt_c = cur_o + 7 * 86400 * 1000, cur_c + 7 * 86400 * 1000
     hours_to_next = (nxt_o - now_ms) / 3600000.0
     mins_to_next = hours_to_next * 60.0
 
@@ -314,6 +326,55 @@ def run_precheck(do_kline=True, verbose=True):
     A("- **窗口开启后无法追补**：盘口/深度数据交易所不留存，错过即永久丢失。")
     A("")
 
+    # ---- 5. 事件闸门体检（项目二联动）----
+    # 为什么放进窗口预检：窗口内是**唯一可挂单**的时段，而挂单最怕
+    # 「在信息事件里等到成交」（= 被逆向选择，docs/14 实测 −0.21~−21.84 bp）。
+    # 所以开窗前必须确认闸门**是活的、日历没过期**。
+    A("## 5. 事件闸门体检（窗口内唯一可挂单，必须先确认闸门可用）")
+    A("")
+    gate_ok = True
+    # ⚠️ 直接 import 闸门模块调用，**不要解析它的文本输出**。
+    # 第一版就是去 grep 它的 stdout，结果把说明文字里的「LLM」当成了标的名，
+    # 报出"1 个标的处于事件窗口：LLM"这种假警报。
+    # 解析人类可读输出 = 把 UI 文案当成 API，改一个词就坏。
+    try:
+        if P2 not in sys.path:
+            sys.path.insert(0, P2)
+        import event_gate as _eg  # type: ignore
+
+        bases = ["TSLA", "NVDA", "AAPL", "META", "GOOGL", "SPY", "QQQ", "SOXL",
+                 "HOOD", "MRVL"]
+        now_ms = int(time.time() * 1000)
+        blocked, caution = [], []
+        for b in bases:
+            r = _eg.static_gate(b, now_ms)
+            if r.get("severity") == "block":
+                blocked.append((b, r.get("reason", "")))
+            elif r.get("severity") == "caution":
+                caution.append((b, r.get("reason", "")))
+        A("- 闸门模块可导入并调用（`project2/event_gate.static_gate`）")
+        if blocked:
+            A("- 🔴 **%d 个标的处于事件窗口**：" % len(blocked))
+            for b, why in blocked:
+                A("  - `%s`：%s" % (b, why[:70]))
+            A("  -> 这些标的在窗口内**不应挂单**，只能吃单或不交易。")
+        else:
+            A("- ✅ 当前没有标的被闸门否决。")
+        if caution:
+            A("- [!] caution（可挂但需缩小规模/放宽价位）：%s"
+              % "、".join(b for b, _ in caution))
+        for line in _eg.calendar_quality():
+            A("- %s" % line.strip().replace("**", ""))
+    except Exception as exc:  # noqa: BLE001
+        gate_ok = False
+        A("- [!!] 闸门无法调用：%r" % (exc,))
+        problems.append("事件闸门不可用（%r）—— 窗口内挂单将失去事件保护" % (exc,))
+    A("")
+    A("> 闸门是否决权：`block` 时挂单类方案作废（见 `project2/README.md` §4.1）。")
+    A("> 闸门不可用时执行模型会降级为 `caution`，**不会静默放过**。")
+    A("")
+    _ = gate_ok
+
     A("## 结论")
     A("")
     if problems:
@@ -322,10 +383,11 @@ def run_precheck(do_kline=True, verbose=True):
         for p in problems:
             A("- %s" % p)
     else:
-        A("**全部检查通过** —— 采样器各 1 实例、守护在位、K 线新鲜。")
+        A("**全部检查通过** —— 采样器各 1 实例、守护在位、K 线新鲜、事件闸门可用。")
     A("")
     A("> 本脚本**不 kill、不重启任何采样器**，只做只读检查（+ 可选补 K 线），")
     A("> 以免『检查动作本身』造成中断。")
+    _ = gate_ok
 
     text = "\n".join(L)
     if verbose:
