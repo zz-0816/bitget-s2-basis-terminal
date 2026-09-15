@@ -1,0 +1,123 @@
+# =====================================================================
+#  乙侧策略回测 · 控制台输出留档（2026-09-15）
+#
+#  复跑（在仓库根执行，仅标准库、只读，不写除 data/b-side/backtest/ 之外的任何文件）：
+#      python tools/b_side_backtest_basis_timing.py
+#      python tools/b_side_backtest_fee_sensitivity.py
+#
+#  本文件为上述两条命令的 stdout 原文，未作修改。
+#  配套解读见 docs/b-side/08-跨场所基差择时回测.md
+# =====================================================================
+
+仓库根：D:\黑客松\Bitget黑客松\队友仓库快照-基差终端
+数据：panel in_house bar = 3691，标的 10 个
+成本表覆盖标的：AAPL、GOOGL、HOOD、META、MRVL、NVDA、QQQ、SPY、TSLA
+
+== 基准 vs 主参数 ==
+  [baseline(entry=0)]
+      n_trades           265
+      total_pnl_bp       4475.05
+      sharpe_ann         3.13
+      sortino_ann        3.29
+      max_dd_bp          363.82
+      turnover_pct       7.85
+      win_rate_pct       70.2
+      avg_trade_bp       16.887
+      t_stat             6.17
+  [entry=11.34]
+      n_trades           190
+      total_pnl_bp       5103.57
+      sharpe_ann         3.64
+      sortino_ann        3.61
+      max_dd_bp          290.46
+      turnover_pct       5.63
+      win_rate_pct       80.0
+      avg_trade_bp       26.861
+      t_stat             7.61
+
+== 参数敏感性（entry x exit） ==
+  entry    exit     trades   total_bp sharpe_ann     maxDD      win%
+  0.0      0.0         265    4475.05       3.13    363.82      70.2
+  0.0      5.0         352    4686.53       3.30    396.87      63.9
+  5.0      0.0         226    4835.59       3.41    310.28      75.2
+  5.0      5.0         288    5085.41       3.61    310.68      72.6
+  8.0      0.0         210    5134.11       3.64    304.89      78.6
+  8.0      5.0         259    5426.14       3.88    305.20      78.4
+  11.34    0.0         190    5103.57       3.64    290.46      80.0
+  11.34    5.0         227    5502.45       3.97    290.78      82.4
+  15.0     0.0         169    4940.04       3.58    278.77      80.5
+  15.0     5.0         199    5285.57       3.87    278.77      84.9
+  20.0     0.0         145    4669.94       3.43    278.77      81.4
+  20.0     5.0         171    5044.14       3.75    278.77      84.2
+  25.0     0.0         120    4379.26       3.26    278.77      83.3
+  25.0     5.0         136    4690.17       3.53    278.77      86.8
+
+== IS / OOS ==
+  窗口总数 9 ；IS 用 4 个、OOS 用 5 个
+  [IS] n_trades=97 total_pnl_bp=3436.1 sharpe_ann=4.23 sortino_ann=4.31 max_dd_bp=280.07 turnover_pct=7.12 win_rate_pct=83.5 avg_trade_bp=35.424 t_stat=5.76
+  [OOS] n_trades=93 total_pnl_bp=1667.47 sharpe_ann=3.79 sortino_ann=3.46 max_dd_bp=76.71 turnover_pct=4.62 win_rate_pct=76.3 avg_trade_bp=17.93 t_stat=5.85
+  decay(Sharpe_OOS/Sharpe_IS) = 0.896
+
+== 收益分解（每笔平均，bp；entry=11.34） ==
+  convergence      +29.40
+  capture          +15.45
+  adverse           -4.69
+  funding           +0.70
+  fee              -14.00
+  total            +26.86
+  ⚠️ capture 假设「挂单必成交」；真实可达收益需乘以成交率（见下）
+
+== 成交率折算（现货腿，docs/14 §3.1） ==
+  base         成交率%         笔数       机会bp/笔        折算后bp/笔
+  AAPL        2.98%         21        51.52           1.54
+  GOOGL      36.35%         21        29.68          10.79
+  HOOD        8.68%         20        14.60           1.27
+  META       86.49%         17        25.30          21.88
+  MRVL        9.76%         31        35.09           3.43
+  NVDA       46.87%         29        34.84          16.33
+  QQQ        20.75%         17        13.00           2.70
+  SPY         0.50%         11        21.71           0.11
+  TSLA       36.95%         23         5.13           1.90
+  合计             -                  5103.57        1326.60
+  ⚠️ 折算后是「每笔挂单的期望收益」；真实可实现收益还取决于单位时间挂单次数。
+
+== 分标的总收益（entry=11.34） ==
+  MRVL     trades=  31  total=  1087.93 bp  avg/trade=  35.095
+  AAPL     trades=  21  total=  1081.93 bp  avg/trade=  51.520
+  NVDA     trades=  29  total=  1010.40 bp  avg/trade=  34.841
+  GOOGL    trades=  21  total=   623.32 bp  avg/trade=  29.682
+  META     trades=  17  total=   430.11 bp  avg/trade=  25.301
+  HOOD     trades=  20  total=   292.05 bp  avg/trade=  14.603
+  SPY      trades=  11  total=   238.78 bp  avg/trade=  21.707
+  QQQ      trades=  17  total=   221.02 bp  avg/trade=  13.001
+  TSLA     trades=  23  total=   118.03 bp  avg/trade=   5.132
+
+== 分窗口明细（entry=11.34）—— B17 逐窗 Sharpe ==
+  window(sat UTC)    n_bar   trades    total_bp     sharpe     win%
+  2026-07-18 00:00     282       21      635.56       7.13     85.7
+  2026-07-25 00:00     354       28      461.63       2.09     67.9
+  2026-08-01 00:00     372       31     1753.61       5.33     93.5
+  2026-08-08 00:00     355       17      585.30       6.18     88.2
+  2026-08-15 00:00     363       14      311.86       4.47     71.4
+  2026-08-22 00:00     394       21      311.04       3.28     76.2
+  2026-08-29 00:00     390       15      496.52       5.99     93.3
+  2026-09-05 00:00     737       32      523.52       3.16     78.1
+  2026-09-12 00:00     130       11       24.54       0.98     54.5
+
+落盘：D:\黑客松\Bitget黑客松\队友仓库快照-基差终端\data\b-side\backtest\backtest_result.json
+落盘：D:\黑客松\Bitget黑客松\队友仓库快照-基差终端\data\b-side\backtest\trades.csv  （190 笔）
+自洽性校验：逐笔 pnl 求和 = 5103.57 bp（应等于 total_pnl_bp 5103.57）
+仓库根：D:\黑客松\Bitget黑客松\队友仓库快照-基差终端
+费用敏感性（策略参数固定为 entry=11.34 / exit=5.0）
+口径                             n_trades  total_pnl_bp  sharpe_ann  max_dd_bp  win_rate_pct  avg_trade_bp  t_stat
+四条腿全挂单 (14.0 bp)               227  5502.45  3.97  290.78  82.4  24.24  8.21
+永续腿吃单 (22.0 bp)                227  3686.45  2.72  315.83  66.1  16.24  5.5
+    -> 收益为正的标的数：8 / 9
+    -> 收益为正的窗口数：8 / 9
+
+参照：docs/14 §4 的门槛表
+  四条腿全挂单  往返 14.0 bp  -> 现货全幅点差需 >= 13.70 bp
+  永续腿吃单    往返 22.0 bp  -> 现货全幅点差需 >= 21.70 bp
+
+⚠️ 本脚本只回答「费率翻上去后收益是否仍为正」，
+   不回答「可否真的吃单」—— 后者受成交率约束（见主脚本的成交率折算一节）。
