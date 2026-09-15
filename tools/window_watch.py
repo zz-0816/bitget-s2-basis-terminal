@@ -46,6 +46,8 @@ from common.market_calendar import (  # noqa: E402
 SPREAD = os.path.join(BASE, "data", "spread")
 OUT_DIR = os.path.join(BASE, "data", "reports")
 LOG = os.path.join(OUT_DIR, "window_watch.csv")
+REPORTS = OUT_DIR                        # 预检报告也写在同一个目录
+PRE_WINDOW_MIN = 60                      # 开窗前多少分钟内触发专项预检
 
 # 各采样器的设计周期（秒）。用途：判断"最新数据是不是太旧了"。
 # 漏掉任何一个采样器 → 它就永远不会被监测到停摆（本项目已犯过同类错误）。
@@ -304,6 +306,66 @@ def stall_event(st):
 
 # ---------------------------------------------------------------- 报告
 
+def maybe_run_precheck(st, now_ms):
+    """按需触发窗口预检，留下**连续留痕**。
+
+    为什么放在这个进程里（而不是再起一个常驻）：
+      `window_watch --loop` 已经在跑、且已在启动文件夹里 —— 再起一个常驻进程
+      只会多一处会挂的地方。同一个进程既能判断窗口边界，又知道"现在几点"。
+
+    两个触发点：
+      1. **每日一次**：确认当天采样器/守护/闸门都是好的（连续日报）
+      2. **窗口开启前 60 分钟内一次**：开窗前的专项确认
+         （上次就是"窗口开了 13~17 小时后才启动"，开窗前这一次是防复发的证据）
+
+    幂等靠**报告文件是否存在**判断，不靠内存状态 ——
+    这样进程重启、机器重启都不会重复跑，也不会漏跑。
+    """
+    if _precheck_disabled():
+        return
+    day = dt.datetime.now(CN_TZ).strftime("%Y-%m-%d")
+    script = os.path.join(BASE, "tools", "precheck_window.py")
+    if not os.path.exists(script):
+        return
+
+    def _ran(label):
+        return os.path.exists(os.path.join(REPORTS, "precheck-%s%s.md"
+                                           % (day, ("-" + label) if label else "")))
+
+    jobs = []
+    # ① 每日一次（label 统一用 "daily"，与 `_ran` 的判据必须一致）
+    if not _ran("daily"):
+        jobs.append(("daily", "每日预检"))
+    # ② 开窗前 60 分钟内一次
+    o, c = current_window(now_ms)
+    nxt_o = o + 7 * 86400 * 1000          # current_window 保证 open <= now
+    mins = (nxt_o - now_ms) / 60000.0
+    if 0 < mins <= PRE_WINDOW_MIN and not _ran("t60"):
+        jobs.append(("t60", "开窗前 %.0f 分钟专项预检" % mins))
+
+    for label, why in jobs:
+        print("\n" + "=" * 80)
+        print("   [预检] %s（label=%s）" % (why, label))
+        print("=" * 80)
+        try:
+            r = subprocess.run(
+                [sys.executable, script, "--label", label, "--no-kline"],
+                cwd=BASE, capture_output=True, text=True, timeout=600)
+            tail = (r.stdout or "").strip().splitlines()
+            for line in tail[-8:]:
+                print("   " + line)
+            if r.returncode != 0:
+                print("   [预检] 退出码 %d；stderr: %s"
+                      % (r.returncode, (r.stderr or "").strip()[:200]))
+        except Exception as exc:  # noqa: BLE001
+            print("   [预检] 异常（不影响监测）：%r" % (exc,))
+
+
+def _precheck_disabled():
+    """允许用环境变量关掉自动预检（调试用），默认开启。"""
+    return os.environ.get("BITGETS2_NO_AUTO_PRECHECK", "") not in ("", "0", "false")
+
+
 def auto_archive(reason):
     """窗口关闭时自动归档（调用 tools/window_capture.py --archive）。
 
@@ -414,6 +476,8 @@ def main(argv=None):
     ap.add_argument("--selftest", action="store_true", help="自检停摆判定逻辑（合成数据）")
     ap.add_argument("--no-archive", action="store_true",
                     help="窗口关闭时不自动归档（默认会归档）")
+    ap.add_argument("--no-precheck", action="store_true",
+                    help="不自动跑窗口预检（默认每日 + 开窗前 60 分钟各一次）")
     args = ap.parse_args(argv)
 
     if args.selftest:
@@ -459,6 +523,9 @@ def main(argv=None):
                 ev = (ev + "; " + sev) if ev else sev
             render(st, prev_route)
             append_row(st, ev, snote)
+            # 预检触发（每日一次 + 开窗前 60 分钟内一次）—— 幂等靠报告文件存在性
+            if not args.no_precheck:
+                maybe_run_precheck(st, int(time.time() * 1000))
             prev_route = st["route"]
             time.sleep(args.interval * 60)
     except KeyboardInterrupt:

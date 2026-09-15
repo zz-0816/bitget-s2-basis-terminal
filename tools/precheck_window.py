@@ -216,7 +216,7 @@ def kline_freshness():
 
 # ---------------------------------------------------------------- 主流程
 
-def run_precheck(do_kline=True, verbose=True):
+def run_precheck(do_kline=True, verbose=True, label=""):
     now_ms = int(time.time() * 1000)
     cur_o, cur_c = window_bounds(now_ms)
     in_window = cur_o <= now_ms < cur_c
@@ -395,7 +395,11 @@ def run_precheck(do_kline=True, verbose=True):
 
     os.makedirs(REPORTS, exist_ok=True)
     day = dt.datetime.now().strftime("%Y-%m-%d")
-    path = os.path.join(REPORTS, "precheck-%s.md" % day)
+    # `label` 让**同一天的不同触发**各留一份报告，形成连续的留痕链。
+    # 为什么重要：报告里要能指着这串文件说"我们在 09-19 开窗前每天都查过、
+    # 且在开窗前 60 分钟又专门查了一次"—— 覆盖写同一份文件名就没有这个证据。
+    path = os.path.join(REPORTS, "precheck-%s%s.md"
+                        % (day, ("-" + label) if label else ""))
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(text)
     if verbose:
@@ -419,6 +423,8 @@ def main(argv=None):
     ap.add_argument("--no-kline", action="store_true", help="跳过 K 线补齐")
     ap.add_argument("--loop", action="store_true", help="常驻：每隔一段时间检查是否该预检")
     ap.add_argument("--install-task", action="store_true", help="打印计划任务注册命令")
+    ap.add_argument("--label", default="",
+                    help="报告文件名后缀（如 daily / t60），用于留下同一天不同触发的留痕")
     args = ap.parse_args(argv)
 
     if args.install_task:
@@ -437,7 +443,7 @@ def main(argv=None):
         return 0
 
     if not args.loop:
-        return run_precheck(do_kline=not args.no_kline)
+        return run_precheck(do_kline=not args.no_kline, label=args.label)
 
     # 常驻：每到"距窗口开启 ≤60 分钟且本周期尚未预检"就跑一次
     print("窗口预检常驻模式（每 10 分钟判断一次；窗口前 %d 分钟触发）" % PRE_WINDOW_MIN)
