@@ -1,4 +1,4 @@
-# 安装采样器守护（开机自启 + 自动重启）
+﻿# 安装采样器守护（开机自启 + 自动重启）
 # ==========================================
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File scripts\install_sampler_guard.ps1

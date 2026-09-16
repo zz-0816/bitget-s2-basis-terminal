@@ -20,6 +20,11 @@ $ScriptLocks = @{
     "spread_sampler"    = ".sampler.lock"
     "sampler_universe"  = ".sampler_universe.lock"
     "orderbook_sampler" = ".orderbook_sampler.lock"
+    # ⚠️ 2026-09-17 补：原来漏了 trades_sampler。
+    # sampler_supervisor.ps1 管 4 个采样器，而这个收敛脚本只认 3 个 ——
+    # 于是 trades 的重复实例**不会被收敛**，去重时会被漏掉。
+    # trades 又是最新加的一路（成交明细），正是最容易起重复实例的。
+    "trades_sampler"    = ".trades_sampler.lock"
 }
 
 function Get-LockPid([string]$lockName) {
