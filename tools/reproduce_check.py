@@ -379,6 +379,8 @@ def check_features():
         ("project2/event_gate.py", "def assess(", "风险与理由引擎"),
         ("project2/event_gate.py", "CONF_CAP_NO_SOURCE", "置信度受来源约束"),
         ("project2/signal_adapter.py", "def normalize(", "bitget-signal 事件源适配器"),
+        ("project2/agent_team.py", "def validate(", "分析师层·证据铁律"),
+        ("project2/agent_team.py", "def run_team(", "分析师层·四维度汇总"),
         ("server/app.py", "/api/assess", "风险与理由接口"),
         ("project2/execution_cost.py", "def consult_gate(", "执行成本·闸门联动"),
         ("project2/execution_cost.py", "def selftest(", "执行成本·闸门否决自检"),
@@ -464,6 +466,19 @@ def check_features():
                 (r.stdout or "").strip().splitlines()[-1] if r.stdout else "")
     except Exception as exc:  # noqa: BLE001
         bad("风险与理由引擎自检无法运行", repr(exc))
+
+    # ---- 多 Agent 分析师层：统一 schema + 证据铁律必须真的生效 ----
+    # 最关键的一条是「空证据的结论被判无效」—— 它是防「换三个说法」的结构保证。
+    try:
+        r = subprocess.run([sys.executable, "project2/agent_team.py", "--selftest"],
+                           cwd=BASE, capture_output=True, text=True, timeout=180)
+        if r.returncode == 0:
+            ok("多 Agent 分析师层自检通过（8 项：schema/证据铁律/独立性）")
+        else:
+            bad("分析师层自检失败",
+                (r.stdout or "").strip().splitlines()[-1] if r.stdout else "")
+    except Exception as exc:  # noqa: BLE001
+        bad("分析师层自检无法运行", repr(exc))
 
 
 # ---------------------------------------------------------------- 主流程
