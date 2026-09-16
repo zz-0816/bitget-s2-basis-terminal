@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="820" viewBox="0 0 1260 820" font-family="'Microsoft YaHei','PingFang SC',Segoe UI,sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5b6b7c"/>
+    </marker>
+    <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c0392b"/>
+    </marker>
+  </defs>
+  <rect width="1260" height="820" fill="#f7f9fb"/>
+
+  <text x="30" y="42" font-size="24" font-weight="700" fill="#1b2733">AI 套利研究团队：多 Agent 协作架构（赛道一 · 开放主题）</text>
+  <text x="30" y="68" font-size="14" fill="#5b6b7c">参考证券分析团队分工，但<tspan font-weight="700" fill="#1b2733">每一个 agent 都锚定到我们已经实测过的量</tspan> —— 不是从零造，是把已有组件 agent 化 + 加一层可证伪的辩论</text>
+
+  <!-- ============ 分析师团队 ============ -->
+  <rect x="30" y="92" width="1200" height="196" rx="10" fill="#eef4fb" stroke="#4a90c4" stroke-width="1.8"/>
+  <text x="48" y="120" font-size="16" font-weight="700" fill="#1b5a8a">① 分析师团队 · 4 维度独立分析（互不干扰，各自出结论）</text>
+  <text x="48" y="140" font-size="12" fill="#6b7b8c">独立 = 不允许互相抄结论；每个 agent 只拿到自己那一路数据</text>
+
+  <rect x="48" y="152" width="282" height="120" rx="8" fill="#ffffff" stroke="#a8c6e0"/>
+  <text x="62" y="174" font-size="13.5" font-weight="700" fill="#1b2733">📊 价差基本面分析师</text>
+  <text x="62" y="196" font-size="12" fill="#33475b">· 基差分解 dev / info / resid</text>
+  <text x="62" y="215" font-size="12" fill="#33475b">· 资金费收入、容量曲线</text>
+  <text x="62" y="234" font-size="12" fill="#33475b">· 费用门槛是否被覆盖</text>
+  <text x="62" y="257" font-size="11.5" fill="#2f6b3f">数据源：我方自采（已有）</text>
+
+  <rect x="344" y="152" width="282" height="120" rx="8" fill="#ffffff" stroke="#a8c6e0"/>
+  <text x="358" y="174" font-size="13.5" font-weight="700" fill="#1b2733">😱 情绪分析师</text>
+  <text x="358" y="196" font-size="12" fill="#33475b">· 恐贪指数、多空比</text>
+  <text x="358" y="215" font-size="12" fill="#33475b">· 资金费率（与我方实测互证）</text>
+  <text x="358" y="234" font-size="12" fill="#33475b">· 持仓拥挤度</text>
+  <text x="358" y="257" font-size="11.5" fill="#7a5b12">数据源：bitget-signal（免 Key）</text>
+
+  <rect x="640" y="152" width="282" height="120" rx="8" fill="#ffffff" stroke="#a8c6e0"/>
+  <text x="654" y="174" font-size="13.5" font-weight="700" fill="#1b2733">📰 新闻分析师</text>
+  <text x="654" y="196" font-size="12" fill="#33475b">· 新闻聚合与叙事合成</text>
+  <text x="654" y="215" font-size="12" fill="#33475b">· 宏观日程（FOMC/NFP/CPI）</text>
+  <text x="654" y="234" font-size="12" fill="#33475b">· <tspan font-weight="700">无来源的条目一律丢弃</tspan></text>
+  <text x="654" y="257" font-size="11.5" fill="#7a5b12">数据源：bitget-signal（免 Key）</text>
+
+  <rect x="936" y="152" width="282" height="120" rx="8" fill="#ffffff" stroke="#a8c6e0"/>
+  <text x="950" y="174" font-size="13.5" font-weight="700" fill="#1b2733">📈 技术面分析师</text>
+  <text x="950" y="196" font-size="12" fill="#33475b">· 23 指标 / 6 大类</text>
+  <text x="950" y="215" font-size="12" fill="#33475b">· <tspan font-weight="700">5 档盘口形状 + 逐笔成交</tspan></text>
+  <text x="950" y="234" font-size="12" fill="#33475b">· 成交率与逆向选择（实测）</text>
+  <text x="950" y="257" font-size="11.5" fill="#2f6b3f">数据源：我方自采（独有，不可回补）</text>
+
+  <!-- ============ 研究员团队 ============ -->
+  <rect x="30" y="304" width="1200" height="150" rx="10" fill="#f6f0fa" stroke="#8e44ad" stroke-width="1.8"/>
+  <text x="48" y="332" font-size="16" font-weight="700" fill="#5b2c6f">② 研究员团队 · 结构化辩论（多空对撞，不许和稀泥）</text>
+  <text x="48" y="352" font-size="12" fill="#6b7b8c">映射：这<tspan font-weight="700">就是我们已经实现的「双档检验」</tspan>（中位档 vs 悲观档 P75）的 agent 化</text>
+
+  <rect x="48" y="366" width="480" height="72" rx="8" fill="#ffffff" stroke="#b8a0cc"/>
+  <text x="62" y="390" font-size="14" font-weight="700" fill="#2f6b3f">🐂 看多研究员 —— 构建「做这笔」的逻辑</text>
+  <text x="62" y="412" font-size="12" fill="#33475b">基差是否够宽？成本是否被覆盖？现在是否无事件？</text>
+  <text x="62" y="430" font-size="12" fill="#33475b">给出：可做、理由、条件点位（价格区间 / 规模上限 / 时段）</text>
+
+  <rect x="552" y="366" width="480" height="72" rx="8" fill="#ffffff" stroke="#b8a0cc"/>
+  <text x="566" y="390" font-size="14" font-weight="700" fill="#8a2b1d">🐻 看空研究员 —— 无情找漏洞，专反驳多头</text>
+  <text x="566" y="412" font-size="12" fill="#33475b">成交率够吗？逆向选择多大？容量会不会不够？腿风险？</text>
+  <text x="566" y="430" font-size="12" fill="#33475b">引用<tspan font-weight="700">悲观档（P75 点差）</tspan>与实测成交率，不是空泛质疑</text>
+
+  <text x="1046" y="400" font-size="12.5" font-weight="700" fill="#5b2c6f">判决并入</text>
+  <text x="1046" y="420" font-size="12" fill="#6b7b8c">两档都过才算</text>
+  <text x="1046" y="436" font-size="12" fill="#6b7b8c">通过（已有规则）</text>
+
+  <!-- ============ 决策团队 ============ -->
+  <rect x="30" y="486" width="1200" height="150" rx="10" fill="#eafaf1" stroke="#1e8449" stroke-width="1.8"/>
+  <text x="48" y="514" font-size="16" font-weight="700" fill="#145a32">③ 决策团队 · 风控与执行（人类仍掌握最终决定权）</text>
+  <text x="48" y="534" font-size="12" fill="#6b7b8c">输出的是<tspan font-weight="700">理由、条件与警告</tspan>，不是订单 —— 全程不自动下单</text>
+
+  <rect x="48" y="548" width="580" height="72" rx="8" fill="#ffffff" stroke="#9fd5b7"/>
+  <text x="62" y="572" font-size="14" font-weight="700" fill="#145a32">💰 交易员 —— 综合研判，制定执行方案</text>
+  <text x="62" y="594" font-size="12" fill="#33475b">吃 / 挂 / 挂哪个价 / 分几笔 —— 由<tspan font-weight="700">确定性成本模型</tspan>算（已有）</text>
+  <text x="62" y="612" font-size="12" fill="#33475b">数值全部可复现、可审计；LLM 不参与数值计算</text>
+
+  <rect x="648" y="548" width="580" height="72" rx="8" fill="#fdedec" stroke="#f1948a"/>
+  <text x="662" y="572" font-size="14" font-weight="700" fill="#8a2b1d">🛡️ 风控官 —— 一票否决，最终审批</text>
+  <text x="662" y="594" font-size="12" fill="#33475b">事件窗口内<tspan font-weight="700">禁止挂单</tspan>（硬规则，已实现）；闸门不可用则降级为 caution</text>
+  <text x="662" y="612" font-size="12" fill="#8a2b1d">置信度受来源约束：无可回溯来源 -> 封顶 0.40</text>
+
+  <!-- 连线 -->
+  <line x1="630" y1="288" x2="630" y2="300" stroke="#5b6b7c" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="630" y1="454" x2="630" y2="482" stroke="#5b6b7c" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="1032" y1="402" x2="1000" y2="402" stroke="#c0392b" stroke-width="1.6" stroke-dasharray="5 3"/>
+  <line x1="338" y1="556" x2="400" y2="556" stroke="#c0392b" stroke-width="2.4" marker-end="url(#ar2)"/>
+  <text x="238" y="546" font-size="12" font-weight="700" fill="#c0392b">可否决</text>
+
+  <!-- ============ 诚实边界 ============ -->
+  <rect x="30" y="652" width="1200" height="146" rx="10" fill="#fdf3e7" stroke="#d9a441" stroke-width="1.8"/>
+  <text x="48" y="678" font-size="15" font-weight="700" fill="#8a6412">⚠️ 诚实边界：多 Agent 最容易变成「看起来严谨的表演」—— 我们用四条规则防住它</text>
+
+  <text x="48" y="704" font-size="12.5" fill="#33475b"><tspan font-weight="700">1. 辩论必须可证伪</tspan>：每个 agent 的结论必须引用一个<tspan font-weight="700">已实测的量</tspan>（点差 / 成交率 / 逆向选择 / 容量），</text>
+  <text x="70" y="722" font-size="12.5" fill="#33475b">不能只给"我觉得风险高"。<tspan fill="#8a2b1d">否则只是把同一个判断换三个说法说出来。</tspan></text>
+
+  <text x="48" y="746" font-size="12.5" fill="#33475b"><tspan font-weight="700">2. Agent 层只影响边际判断，不改量化基线</tspan>：费用门槛、回测、decay 全部由确定性代码给出；</text>
+  <text x="70" y="764" font-size="12.5" fill="#33475b">LLM 有随机性，<tspan fill="#8a2b1d">不能让它改变可复现的结论</tspan>（否则报告数字无法复跑）。</text>
+
+  <text x="690" y="704" font-size="12.5" fill="#33475b"><tspan font-weight="700">3. 不能替代硬门禁</tspan>：总期 ≥60 天 / OOS ≥30 天 / decay ≥0.5</text>
+  <text x="712" y="722" font-size="12.5" fill="#33475b">仍靠回测（我方 decay = 0.896），多 agent 不参与。</text>
+
+  <text x="690" y="746" font-size="12.5" fill="#33475b"><tspan font-weight="700">4. 成本与延迟要算</tspan>：一轮辩论 = 多次 LLM 调用；</text>
+  <text x="712" y="764" font-size="12.5" fill="#33475b">所以只在<tspan font-weight="700">开仓前的少数时点</tspan>触发，不做逐 tick 辩论。</text>
+</svg>
