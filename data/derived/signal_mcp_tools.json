@@ -1,0 +1,816 @@
+{
+  "endpoint": "https://datahub.noxiaohao.com/mcp",
+  "tools": [
+    {
+      "name": "crypto_market",
+      "description": "CoinGecko crypto market data: search coins, get price/OHLCV, market cap rankings, trending coins, global market stats.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "search",
+              "price",
+              "ohlcv",
+              "markets",
+              "trending",
+              "global"
+            ],
+            "description": "Action to perform"
+          },
+          "query": {
+            "type": "string",
+            "description": "Search query (action=search)"
+          },
+          "coin_ids": {
+            "type": "string",
+            "description": "Comma-separated CoinGecko IDs for price, e.g. 'bitcoin,ethereum'"
+          },
+          "coin_id": {
+            "type": "string",
+            "description": "Single CoinGecko ID for ohlcv, e.g. 'bitcoin'"
+          },
+          "vs_currency": {
+            "type": "string",
+            "description": "Quote currency (default: usd)"
+          },
+          "days": {
+            "type": "integer",
+            "description": "Days of OHLCV history (1/7/30/90/180/365, default 180)",
+            "minimum": 1,
+            "maximum": 365
+          },
+          "per_page": {
+            "type": "integer",
+            "description": "Results per page for markets (default 20, max 250)",
+            "minimum": 1,
+            "maximum": 250
+          },
+          "page": {
+            "type": "integer",
+            "description": "Page number (default 1)",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "defi_analytics",
+      "description": "DeFiLlama DeFi data: TVL rankings, protocol details, chain stats, protocol fees/revenue, yield pools, stablecoin market caps.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "tvl_rank",
+              "protocol",
+              "chains",
+              "fees",
+              "yields",
+              "stablecoins"
+            ]
+          },
+          "protocol": {
+            "type": "string",
+            "description": "Protocol slug (action=protocol)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max results (1-100)",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "chain": {
+            "type": "string",
+            "description": "Filter by chain name"
+          },
+          "min_tvl": {
+            "type": "number",
+            "description": "Min TVL filter for yields (default 1000000)"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "dex_market",
+      "description": "DexScreener DEX data: search pairs/tokens, get specific pair info, token details by address, trending token boosts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "search",
+              "pair",
+              "token",
+              "trending"
+            ]
+          },
+          "query": {
+            "type": "string",
+            "description": "Search query (action=search)"
+          },
+          "chain": {
+            "type": "string",
+            "description": "Blockchain ID, e.g. ethereum, solana, bsc"
+          },
+          "pair_address": {
+            "type": "string",
+            "description": "Pair contract address (action=pair)"
+          },
+          "token_address": {
+            "type": "string",
+            "description": "Token address, optionally prefixed with 'chain/' (action=token)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max results (1-30, default 10)",
+            "minimum": 1,
+            "maximum": 30
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "sentiment_index",
+      "description": "Crypto Fear & Greed Index: current value, historical data, and real-time granular readings.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "current",
+              "history",
+              "realtime"
+            ],
+            "description": "current=latest index, history=past N days, realtime=5min intervals"
+          },
+          "days": {
+            "type": "integer",
+            "description": "Days of history (1-365, default 30)",
+            "minimum": 1,
+            "maximum": 365
+          },
+          "hours": {
+            "type": "integer",
+            "description": "Hours of realtime data (1-192, default 24)",
+            "minimum": 1,
+            "maximum": 192
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "tradfi_news",
+      "description": "Finnhub financial data: earnings calendar, general/crypto news, company profiles. Requires FINNHUB_API_KEY.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "earnings",
+              "news",
+              "crypto_news",
+              "company"
+            ]
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Stock symbol for company/earnings filter"
+          },
+          "from_date": {
+            "type": "string",
+            "description": "Start date YYYY-MM-DD (earnings)"
+          },
+          "to_date": {
+            "type": "string",
+            "description": "End date YYYY-MM-DD (earnings)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max results (1-50, default 20)",
+            "minimum": 1,
+            "maximum": 50
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "crypto_price",
+      "description": "FreeCrypto: crypto price data and symbol list (100K req/month free).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "price",
+              "symbols"
+            ],
+            "description": "price=get price for symbols, symbols=list all available"
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Comma-separated base symbols, e.g. 'BTC,ETH,SOL' (max 10)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max symbols returned for action=symbols (1-200, default 50)",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "social_trending",
+      "description": "Social media trending lists: Douyin, Weibo, Bilibili, Zhihu, Baidu, GitHub, Toutiao, 36Kr, CSDN, and more. Three-provider failover.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "trending",
+              "platforms"
+            ],
+            "description": "trending=get hotlist for platform, platforms=list supported platforms"
+          },
+          "platform": {
+            "type": "string",
+            "description": "Platform key. One of: douyin, weibo, bilibili, zhihu, baidu, github, toutiao, hupu, netease, sspai, juejin, csdn, 36kr, ithome, lol, kr36, weread, xueqiu, lushi"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max items (1-50, default 30)",
+            "minimum": 1,
+            "maximum": 50
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "network_status",
+      "description": "On-chain public data (no API key): ETH gas prices, BTC recommended fees, mempool stats, and recent blocks.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "eth_gas",
+              "btc_fees",
+              "btc_mempool",
+              "btc_blocks"
+            ],
+            "description": "eth_gas=Ethereum gas prices, btc_fees=recommended BTC fees, btc_mempool=mempool stats, btc_blocks=recent blocks"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "derivatives_sentiment",
+      "description": "Social sentiment data: Reddit crypto trending (ApeWisdom), Binance futures long/short ratios, open interest history, taker buy/sell ratio.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "reddit_trending",
+              "long_short",
+              "top_ls",
+              "top_position",
+              "open_interest",
+              "taker_ratio"
+            ]
+          },
+          "filter": {
+            "type": "string",
+            "description": "Subreddit filter for reddit_trending (default: all-crypto)"
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Futures symbol for Binance endpoints (default: BTCUSDT)"
+          },
+          "period": {
+            "type": "string",
+            "enum": [
+              "5m",
+              "15m",
+              "30m",
+              "1h",
+              "2h",
+              "4h",
+              "6h",
+              "12h",
+              "1d"
+            ],
+            "description": "Period for Binance endpoints (default: 4h)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max results (1-50, default 20)",
+            "minimum": 1,
+            "maximum": 50
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "global_data",
+      "description": "World data: forex exchange rates (150+ currencies), weather forecast, Wikipedia article summaries, arXiv paper search.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "forex",
+              "weather",
+              "wikipedia",
+              "arxiv"
+            ]
+          },
+          "base": {
+            "type": "string",
+            "description": "Base currency for forex (default: USD)"
+          },
+          "symbols": {
+            "type": "string",
+            "description": "Comma-separated target currencies"
+          },
+          "latitude": {
+            "type": "number",
+            "description": "Latitude for weather"
+          },
+          "longitude": {
+            "type": "number",
+            "description": "Longitude for weather"
+          },
+          "query": {
+            "type": "string",
+            "description": "Search query for wikipedia/arxiv"
+          },
+          "lang": {
+            "type": "string",
+            "enum": [
+              "en",
+              "zh",
+              "ja",
+              "ko",
+              "es",
+              "fr",
+              "de",
+              "ru"
+            ],
+            "description": "Wikipedia language (default: en)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max results (1-20, default 5)",
+            "minimum": 1,
+            "maximum": 20
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "news_feed",
+      "description": "Aggregate news from 44 RSS/Atom feeds: crypto, macro, tech, geopolitics, science. Filter by keyword. No API key required.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "latest",
+              "sources"
+            ],
+            "description": "latest=fetch articles, sources=list available feed keys"
+          },
+          "feeds": {
+            "type": "string",
+            "description": "Comma-separated feed keys, or 'all' (default). See action=sources."
+          },
+          "keyword": {
+            "type": "string",
+            "description": "Case-insensitive keyword filter on title+summary"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Max articles per feed (1-10, default 5)",
+            "minimum": 1,
+            "maximum": 10
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "cn_market",
+      "description": "A-share and HK stock data via AKShare: OHLCV history, current price, symbol search, index daily data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "ohlcv",
+              "price",
+              "search",
+              "index"
+            ]
+          },
+          "symbol": {
+            "type": "string",
+            "description": "A-share code (000001), HK code (00700), index (sh000001)"
+          },
+          "market": {
+            "type": "string",
+            "enum": [
+              "a",
+              "hk"
+            ],
+            "description": "Market: a=A-share (default), hk=Hong Kong"
+          },
+          "period": {
+            "type": "string",
+            "enum": [
+              "daily",
+              "weekly",
+              "monthly",
+              "1",
+              "5",
+              "15",
+              "30",
+              "60"
+            ],
+            "description": "Period (default: daily)"
+          },
+          "days": {
+            "type": "integer",
+            "description": "Calendar days of history (default 365)",
+            "minimum": 1
+          },
+          "adjust": {
+            "type": "string",
+            "enum": [
+              "",
+              "qfq",
+              "hfq"
+            ],
+            "description": "Price adjustment: empty=none, qfq=forward, hfq=backward"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "global_assets",
+      "description": "Yahoo Finance data: OHLCV history and current price for stocks, ETFs, crypto (BTC-USD), forex (EURUSD=X), futures (GC=F). No API key.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "ohlcv",
+              "price"
+            ]
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Yahoo Finance symbol: BTC-USD, AAPL, EURUSD=X, GC=F, SPY"
+          },
+          "period": {
+            "type": "string",
+            "enum": [
+              "1mo",
+              "3mo",
+              "6mo",
+              "1y",
+              "2y",
+              "5y",
+              "max"
+            ],
+            "description": "History period (default: 1y)"
+          },
+          "interval": {
+            "type": "string",
+            "enum": [
+              "1h",
+              "1d",
+              "1wk",
+              "1mo"
+            ],
+            "description": "Bar interval (default: 1d)"
+          }
+        },
+        "required": [
+          "action",
+          "symbol"
+        ]
+      }
+    },
+    {
+      "name": "crypto_derivatives",
+      "description": "Crypto market data via ccxt exchange. Covers: price, klines (OHLCV), 24h ticker, multi-symbol price.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Action to perform: price, klines, ticker_24h, multi_price."
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Trading pair, e.g. BTC/USDT"
+          },
+          "symbols": {
+            "type": "string",
+            "description": "Comma-separated symbols for multi_price"
+          },
+          "exchange": {
+            "type": "string",
+            "description": "Exchange name (default: Binance)"
+          },
+          "timeframe": {
+            "type": "string",
+            "description": "Kline timeframe, e.g. 1h, 4h, 1d (default: 4h)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of results (1-500, default 50)",
+            "minimum": 1,
+            "maximum": 500
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "technical_analysis",
+      "description": "Technical analysis on crypto pairs: RSI, MACD, Bollinger Bands, MA/EMA, ATR, support/resistance levels, full composite analysis, and batch analysis for multiple symbols.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "rsi",
+              "macd",
+              "bollinger",
+              "ma",
+              "ema",
+              "atr",
+              "support_resistance",
+              "full_analysis",
+              "batch_analysis"
+            ]
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Trading pair, e.g. BTC/USDT (required for single-coin actions)"
+          },
+          "symbols": {
+            "type": "string",
+            "description": "Comma-separated pairs for batch_analysis"
+          },
+          "timeframe": {
+            "type": "string",
+            "description": "Candle timeframe: 1h, 4h, 1d, etc. (default: 4h)"
+          },
+          "period": {
+            "type": "integer",
+            "description": "Indicator lookback period (2-500, default: 14)",
+            "minimum": 2,
+            "maximum": 500
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "backtest",
+      "description": "Run historical backtests on trading strategies using VectorBT. Fetches OHLCV from exchange (ccxt), computes indicators (RSI/MACD/BB/EMA/ATR), evaluates entry/exit signals, simulates portfolio, returns structured metrics (return%, Sharpe, max drawdown, win rate, profit factor). Optionally generates equity curve chart. Supports pre-fetched OHLCV via ohlcv_json for coingecko/yfinance data.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "run",
+              "chart"
+            ],
+            "description": "run=execute backtest, chart=regenerate chart from previous metrics"
+          },
+          "strategy_config": {
+            "type": "string",
+            "description": "JSON string with strategy config. Keys: name, symbols (list), timeframe, indicators (list of {name, params, key}), entry_conditions (list of {indicator, field, operator, value}), exit_conditions, direction (long/short/both), stop_loss_pct, take_profit_pct, trade_size_pct, fees."
+          },
+          "period": {
+            "type": "string",
+            "description": "Lookback period, e.g. '6m', '1y', '30d'. Default: 6m"
+          },
+          "exchange": {
+            "type": "string",
+            "enum": [
+              "binance",
+              "bitget",
+              "okx",
+              "bybit",
+              "coinbase",
+              "kraken",
+              "kucoin"
+            ],
+            "description": "Exchange for OHLCV data. Default: binance"
+          },
+          "starting_balance": {
+            "type": "number",
+            "description": "Initial cash. Default: 100000"
+          },
+          "ohlcv_json": {
+            "type": "string",
+            "description": "Pre-fetched OHLCV as JSON string (from coingecko/yfinance tools). Format: {\"SYMBOL\": [{\"timestamp\":ms,\"open\":...,\"close\":...}, ...]}"
+          },
+          "metrics_json": {
+            "type": "string",
+            "description": "For action=chart: JSON metrics from a previous run."
+          },
+          "generate_chart": {
+            "type": "boolean",
+            "description": "Generate equity curve chart (requires playwright). Default: false"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "macro_indicators",
+      "description": "Macro economic calendar and indicators: CPI, Non-Farm Payrolls, FOMC decisions, GDP growth, unemployment, retail sales, PPI, ISM PMI, and more. Data from FRED (Federal Reserve). Set FRED_API_KEY for higher rate limits.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "latest_release",
+              "history",
+              "fomc_news",
+              "multi_indicator",
+              "series_list"
+            ],
+            "description": "latest_release=most recent value for an indicator, history=historical series data, fomc_news=recent Fed monetary policy news from RSS, multi_indicator=key macro snapshot (CPI+NFP+GDP+unemployment), series_list=list available indicator keys"
+          },
+          "indicator": {
+            "type": "string",
+            "description": "Indicator key, e.g. 'cpi', 'nonfarm_payrolls', 'gdp_growth', 'unemployment', 'core_pce', 'ppi', 'consumer_sentiment', 'retail_sales', 'industrial_production'. See action=series_list for full list."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of historical observations (default 12, max 120)",
+            "minimum": 1,
+            "maximum": 120
+          },
+          "indicators": {
+            "type": "string",
+            "description": "Comma-separated indicator keys for multi_indicator action"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "rates_yields",
+      "description": "US interest rates and bond yields: Treasury yield curve (3M/1Y/2Y/5Y/10Y/30Y), Federal funds rate and target bands, SOFR, mortgage rates, credit spreads, 10Y-2Y spread (recession indicator), breakeven inflation. Data from FRED (Federal Reserve). Set FRED_API_KEY for higher rate limits.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "yield_curve",
+              "fed_funds",
+              "rate",
+              "history",
+              "rates_snapshot",
+              "series_list"
+            ],
+            "description": "yield_curve=full Treasury yield curve snapshot, fed_funds=current Fed funds rate + target bands, rate=specific rate by key, history=historical series, rates_snapshot=key rates dashboard (yield curve + Fed + spreads), series_list=list available rate keys"
+          },
+          "rate_key": {
+            "type": "string",
+            "description": "Rate key for rate/history actions: t2y, t10y, t30y, t3m, fed_funds, fed_funds_target_upper, spread_10y2y, breakeven_10y, sofr, prime_rate, mortgage_30y, hy_spread, ig_spread, tips_10y. See action=series_list."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of observations for history (default 30, max 252)",
+            "minimum": 1,
+            "maximum": 252
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "cross_asset",
+      "description": "Rolling cross-asset correlation: BTC vs Gold, DXY, Nasdaq, S&P500, 10Y Treasury yield, EUR/USD, oil, VIX, and any other Yahoo Finance symbol. Returns Pearson correlation (full period + rolling window) with trend and interpretation. No API key required.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "correlation",
+              "assets_list",
+              "heatmap"
+            ],
+            "description": "correlation=compute correlation between base and targets, assets_list=list available asset keys and Yahoo symbols, heatmap=full correlation matrix for a set of assets"
+          },
+          "base": {
+            "type": "string",
+            "description": "Base asset key or Yahoo Finance symbol (default: btc → BTC-USD)"
+          },
+          "targets": {
+            "type": "string",
+            "description": "Comma-separated target asset keys or Yahoo symbols. Default: gold,dxy,ndx,spx,t10y,vix. Use assets_list action to see available keys."
+          },
+          "period": {
+            "type": "string",
+            "enum": [
+              "30d",
+              "90d",
+              "180d",
+              "1y",
+              "2y",
+              "5y"
+            ],
+            "description": "Lookback period (default: 1y)"
+          },
+          "window": {
+            "type": "integer",
+            "description": "Rolling window in trading days (default: 30, range: 5-252)",
+            "minimum": 5,
+            "maximum": 252
+          },
+          "assets": {
+            "type": "string",
+            "description": "Comma-separated assets for heatmap (default: btc,gold,dxy,ndx,spx,t10y,oil)"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    }
+  ]
+}
