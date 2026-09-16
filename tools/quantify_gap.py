@@ -110,17 +110,26 @@ def analyse(prefix, days, label):
     stragglers = sum(1 for t in pts if t > outage_start)
     last_ts = pts[-1]
 
-    # 闭合断口（供对照：历史上有没有别的断口）
+    # 闭合断口：恢复之后，本次断口会变成"内部闭合间隙"。
+    # 此时尾部不再开口，必须改看最大的闭合间隙，否则会漏报整次事故。
     spans = [(uniq[i + 1] - uniq[i]) / 1000.0 for i in range(len(uniq) - 1)]
     closed_max = max(spans) if spans else 0.0
+    if closed_max > trailing_s and closed_max > max(3 * nominal, 300):
+        ci = spans.index(closed_max)
+        outage_start = uniq[ci]
+        trailing_s = closed_max
+        stragglers = sum(1 for t in pts if uniq[ci] < t < uniq[ci + 1])
+        recovered_at = dt.datetime.fromtimestamp(uniq[ci + 1] / 1000).strftime("%m-%d %H:%M:%S")
+    else:
+        recovered_at = None
 
     # 参考速率：断流起点前 2 小时这个**健康窗口**的实测行数
     ref_lo = outage_start - 2 * 3600 * 1000
     ref_rows = sum(1 for t in pts if ref_lo <= t <= outage_start)
     rate = ref_rows / 2.0
 
-    trailing_open = trailing_s > max(3 * nominal, 300)
-    missed_rows = int(round(rate * trailing_s / 3600.0)) if trailing_open else 0
+    trailing_open = (recovered_at is None) and trailing_s > max(3 * nominal, 300)
+    missed_rows = int(round(rate * trailing_s / 3600.0)) if (trailing_open or recovered_at) else 0
 
     return {
         "label": label, "prefix": prefix,
@@ -133,6 +142,7 @@ def analyse(prefix, days, label):
         "ref_rate_per_hour": rate,
         "ref_rows_2h": ref_rows,
         "closed_max_hours": closed_max / 3600.0,
+        "recovered_at": recovered_at,
         "missed_rows": missed_rows,
     }
 
@@ -171,14 +181,18 @@ def main() -> int:
               % (r["last_ts"], r["stragglers"]))
         print("  参考速率        : %s 行/小时（断流前 2 小时健康窗口实测 %s 行）"
               % (format(int(r["ref_rate_per_hour"]), ","), format(r["ref_rows_2h"], ",")))
-        if r["closed_max_hours"] > 0.05:
-            print("  历史最大闭合断口: %.2f 小时（对照，非本次）" % r["closed_max_hours"])
-        if r["trailing_open"]:
+        if r.get("recovered_at"):
+            print("  ✅ 已恢复        : 恢复于 %s ｜ 断口内漏网 %d 行"
+                  % (r["recovered_at"], r["stragglers"]))
+            print("  => 本次断口 %.2f 小时，丢失约 **%s 行**"
+                  % (r["trailing_hours"], format(r["missed_rows"], ",")))
+            tot_rows += r["missed_rows"]
+        elif r["trailing_open"]:
             print("  ⚠️ 开口断口     : **%.2f 小时**（仍在扩大）" % r["trailing_hours"])
             print("  => 已丢失约 **%s 行**" % format(r["missed_rows"], ","))
             tot_rows += r["missed_rows"]
         else:
-            print("  ✅ 无开口断口（尾部滞后 %.1f 分钟，正常范围内）"
+            print("  ✅ 无断口（尾部滞后 %.1f 分钟，正常范围内）"
                   % (r["trailing_hours"] * 60))
     print("-" * 100)
     print("合计丢失约 **%s 行**" % format(tot_rows, ","))
