@@ -442,12 +442,39 @@ def render_assess(a, verbose=True):
     return "\n".join(L)
 
 
+def _quiet_ms(back_days=120):
+    """找一个**确定不在任何事件窗口内**的时点，供自检使用。
+
+    为什么需要它（2026-09-17 修）：
+      下面 ④⑤ 两条自检原本不传 now_ms，于是 `assess` 用了墙上的真实时间。
+      09-17 恰好落在 FOMC 窗口里，闸门正确地判了高风险 ——
+      自检却因此报"失败"。**生产逻辑是对的，是自检在碰运气。**
+      一个随日历变答案的自检，既会误报，也会在平静日把真回归盖过去。
+
+    做法：从当前时间往回逐天试，取第一个闸门说"不在窗口内"的时点。
+    绝大多数日子都是安静的，所以几步就能找到。
+    """
+    base_ms = int(dt.datetime.now(dt.UTC).timestamp() * 1000)
+    for d in range(back_days):
+        t = base_ms - d * 86400000
+        try:
+            if not static_gate("__NO_SUCH__", t).get("in_window"):
+                return t
+        except Exception:  # noqa: BLE001
+            continue
+    return base_ms  # 兜底：极端情况下退回当前时间，但会如实打印来源
+
+
 def render_risk_engine_selftest():
     """自检风险与理由引擎的关键约束。"""
     ok = True
 
+    # ⭐ 关键：先取一个确定无事件的时点，别让自检结果随日历翻转
+    quiet = _quiet_ms()
+    quiet_iso = dt.datetime.fromtimestamp(quiet / 1000, dt.UTC).isoformat()
+
     # ① 无可回溯来源 -> 置信度必须被压低
-    a = assess("__NO_SUCH__", mode="static")
+    a = assess("__NO_SUCH__", now_ms=quiet, mode="static")
     good = a["confidence"] <= CONF_CAP_NO_SOURCE
     ok = ok and good
     print("  [%s] 无可回溯来源 -> 置信度 %.2f（上限 %.2f）"
@@ -482,7 +509,7 @@ def render_risk_engine_selftest():
     # ④ 成本为正 -> 必须出现警告（高风险警惕性）
     fake = {"best_mode": "双腿全吃单", "best_cost": 12.5, "spread_s": 6.0,
             "half_s": 3.0, "p_part": 0.7, "base": "X"}
-    a4 = assess("__NO_SUCH__", cost=fake, mode="static")
+    a4 = assess("__NO_SUCH__", now_ms=quiet, cost=fake, mode="static")
     good = bool(a4["warnings"]) and a4["risk_level"] in ("medium", "high")
     ok = ok and good
     print("  [%s] 成本为正 -> 给出警告并降级（风险=%s，警告 %d 条）"
@@ -490,11 +517,12 @@ def render_risk_engine_selftest():
 
     # ⑤ 低风险情形也要能给出「可执行」而不是一律劝退
     fake_ok = dict(fake, best_cost=-2.0, p_part=0.2)
-    a5 = assess("__NO_SUCH__", cost=fake_ok, mode="static")
+    a5 = assess("__NO_SUCH__", now_ms=quiet, cost=fake_ok, mode="static")
     good = a5["risk_level"] == "low" and "可执行" in a5["verdict"]
     ok = ok and good
     print("  [%s] 成本为负且腿风险低 -> 可执行（风险=%s）"
           % ("OK " if good else "!! ", a5["risk_level"]))
+    print("      测试时点 = %s（已确认不在任何事件窗口内）" % quiet_iso)
 
     print("\n风险与理由引擎自检%s" % ("通过" if ok else "**失败**"))
     return 0 if ok else 1

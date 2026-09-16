@@ -565,17 +565,30 @@ def selftest():
 
     方法：把 `consult_gate` 临时换成"永远 block"，看挂单类方案是否**真的**被剔除。
     只验证"闸门允许时一切正常"，等于没验证闸门起作用。
+
+    ⚠️ 2026-09-17 修：**两条路径都必须注入受控闸门，不能碰真实时钟。**
+    原来"放行"那条用的是真闸门，于是自检结果随日历翻转 ——
+    09-17 正好落在 FOMC 窗口里，真闸门正确地否决了 maker，
+    自检却因此报"失败"。一个随日期变答案的回归门禁，既会误报，
+    也会在平静日把真回归盖过去。
     """
     ok = True
     base = "META"
     real = globals()["consult_gate"]
 
-    r_allow = analyse_two_leg(base, 5000, False, DEFAULT_MISS_BP, gate=True)
+    # ---- 路径 1：受控"放行" ----
+    globals()["consult_gate"] = lambda b, n=None: ("none", "合成测试：无事件",
+                                                   "selftest", True)
+    try:
+        r_allow = analyse_two_leg(base, 5000, False, DEFAULT_MISS_BP, gate=True)
+    finally:
+        globals()["consult_gate"] = real
     good = bool(r_allow) and r_allow["maker_allowed"]
     ok = ok and good
     print("  [%s] 闸门放行：maker_allowed=True，最优=%s"
           % ("OK " if good else "!! ", r_allow["best_mode"] if r_allow else "-"))
 
+    # ---- 路径 2：受控"否决" ----
     globals()["consult_gate"] = lambda b, n=None: ("block", "合成测试：财报窗口",
                                                    "selftest", False)
     try:

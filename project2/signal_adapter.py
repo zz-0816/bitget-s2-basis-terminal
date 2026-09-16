@@ -74,6 +74,7 @@ import json
 import os
 import re
 import sys
+import threading
 
 P2 = os.path.dirname(os.path.abspath(__file__))
 BASE = os.path.dirname(P2)
@@ -178,6 +179,177 @@ def fetch_macro_mcp():
                         "date": v.get("date") if isinstance(v, dict) else None,
                         "source": "datahub.noxiaohao.com/mcp#macro_indicators"})
     return out, None
+
+
+# ---------------------------------------------------------------------------
+# FRED 免 Key 回退源（2026-09-16 新增）
+#
+# 为什么加这个：公开 MCP 实测大面积不可用 —— 服务端自己的错误里写着
+# `Error executing tool crypto_price: ConnectTimeout('')`，而且工具名对不上号
+# （调 defi_analytics 报的是 crypto_price 的错）。那是别人的服务，改不了。
+#
+# 但宏观/利率这一格不该吊死在一棵树上。FRED 有免 Key 的 CSV 直出接口，
+# 实测 7/7 序列可用且是**真数据**。更重要的是：每条都能给出可回溯的 URL，
+# 这正好解掉 CONF_CAP_NO_SOURCE=0.40 那个"没有来源就只能给 0.40 置信度"的上限。
+# ---------------------------------------------------------------------------
+
+FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=%s"
+
+# key 尽量沿用 MCP 那套命名，方便下游不区分来源
+FRED_SERIES = {
+    "cpi": ("CPIAUCSL", "CPI 季调指数", "yoy"),
+    "nonfarm_payrolls": ("PAYEMS", "非农就业人数（千人）", "mom_diff"),
+    "fed_funds_rate": ("FEDFUNDS", "联邦基金有效利率（%）", "level"),
+    "unemployment": ("UNRATE", "失业率（%）", "level"),
+    "gdp_growth": ("GDPC1", "实际 GDP（十亿美元）", "qoq_ann"),
+    "ust10y": ("DGS10", "10 年期美债收益率（%）", "level"),
+    "ust2y": ("DGS2", "2 年期美债收益率（%）", "level"),
+    "term_spread_10y2y": ("T10Y2Y", "10Y-2Y 利差（%，负=倒挂）", "level"),
+    "vix": ("VIXCLS", "VIX 收盘", "level"),
+}
+
+_FRED_CACHE: dict = {}
+
+
+def _fred_get(series, timeout=30):
+    """取一条 FRED 序列。返回 (text, err)。网络走 urllib + 线程（本机 curl 有 schannel 问题）。"""
+    import urllib.request
+    box: dict = {}
+
+    def work():
+        try:
+            req = urllib.request.Request(FRED_URL % series,
+                                         headers={"User-Agent": "basis-terminal/1.0"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                box["body"] = r.read().decode("utf-8", errors="replace")
+        except Exception as exc:  # noqa: BLE001
+            box["err"] = "%s: %s" % (type(exc).__name__, str(exc)[:110])
+
+    t = threading.Thread(target=work)
+    t.start()
+    t.join(timeout + 10)
+    if t.is_alive():
+        return None, "线程超时"
+    return (None, box["err"]) if box.get("err") else (box.get("body"), None)
+
+
+def _fred_parse(text):
+    """解析 FRED CSV -> [(date, value)]。FRED 用单独一个 . 表示该期缺值。"""
+    rows = []
+    for i, ln in enumerate((text or "").splitlines()):
+        ln = ln.strip()
+        if not ln or i == 0:
+            continue
+        parts = ln.split(",")
+        if len(parts) < 2:
+            continue
+        d, v = parts[0].strip(), parts[1].strip()
+        if not d or v in ("", "."):
+            continue
+        try:
+            rows.append((d, float(v)))
+        except ValueError:
+            continue
+    return rows
+
+
+def _fred_change(rows, mode):
+    """按口径算出"变化的那个数"。返回 (显示值, 口径说明) 或 (None, 原因)。"""
+    if not rows:
+        return None, "没有有效观测"
+    latest_d, latest_v = rows[-1]
+    if mode == "level":
+        return latest_v, "最新水平值"
+
+    import datetime as _dt
+    try:
+        ld = _dt.date.fromisoformat(latest_d)
+    except ValueError:
+        return None, "日期解析失败：%s" % latest_d
+
+    if mode == "mom_diff":
+        if len(rows) < 2:
+            return None, "只有一期，算不出环比"
+        return latest_v - rows[-2][1], "较上一期变化"
+
+    if mode == "yoy":
+        target = ld - _dt.timedelta(days=365)
+        best = None
+        for d, v in rows[:-1]:
+            try:
+                dd = _dt.date.fromisoformat(d)
+            except ValueError:
+                continue
+            gap = abs((dd - target).days)
+            if best is None or gap < best[0]:
+                best = (gap, dd, v)
+        # 月度序列里 12 个月前那期通常差 0~3 天；放宽到 45 天仍算得住
+        if best is None or best[0] > 45:
+            return None, "找不到一年前的可比观测"
+        if best[2] == 0:
+            return None, "去年同期为 0，算不出同比"
+        return (latest_v / best[2] - 1.0) * 100.0, "同比（对比 %s）" % best[1].isoformat()
+
+    if mode == "qoq_ann":
+        # ⚠️ 这里踩过坑：季度序列里 rows[-5] 是**一年前**（4 个季度），不是上一季度。
+        # 拿它算"环比年化"会得到一个毫无意义的数（实测吐出 8.66%）。
+        # 正确做法是按日期回溯约 90 天，而不是按行数偏移 —— 这样缺季度也不会错位。
+        target = ld - _dt.timedelta(days=91)
+        best = None
+        for d, v in rows[:-1]:
+            try:
+                dd = _dt.date.fromisoformat(d)
+            except ValueError:
+                continue
+            gap = abs((dd - target).days)
+            if best is None or gap < best[0]:
+                best = (gap, dd, v)
+        if best is None or best[0] > 45:
+            return None, "找不到上一季度的可比观测"
+        if best[2] == 0:
+            return None, "上一季度为 0"
+        return ((latest_v / best[2]) ** 4 - 1.0) * 100.0, "环比年化（对比 %s）" % best[1].isoformat()
+
+    return latest_v, "未知口径按水平值处理"
+
+
+def fetch_macro_fred(only=None):
+    """从 FRED 免 Key CSV 取宏观/利率实测值。返回 (list, err)。
+
+    与 fetch_macro_mcp() 返回**同一种形状**，下游不必区分来源：
+        {"indicator", "value", "date", "source", "note"}
+
+    关键差别在 source：每条都是可点开的 FRED URL，
+    所以新闻分析师的置信度不必再被 0.40 死死压住。
+    """
+    keys = [k for k in (only or FRED_SERIES) if k in FRED_SERIES]
+    out, failed = [], []
+    for key in keys:
+        sid, label, mode = FRED_SERIES[key]
+        if sid in _FRED_CACHE:
+            text, err = _FRED_CACHE[sid]
+        else:
+            text, err = _fred_get(sid)
+            if not err:
+                _FRED_CACHE[sid] = (text, None)
+        if err:
+            failed.append("%s(%s)" % (key, err))
+            continue
+        rows = _fred_parse(text)
+        val, note = _fred_change(rows, mode)
+        if val is None:
+            failed.append("%s(%s)" % (key, note))
+            continue
+        out.append({
+            "indicator": key,
+            "label": label,
+            "value": ("%.4f" % val).rstrip("0").rstrip("."),
+            "date": rows[-1][0],
+            "note": note,
+            "observations": len(rows),
+            "source": FRED_URL % sid,
+        })
+    return out, ("；".join(failed) if failed else None)
 
 
 # 严重度关键词（**粗筛**，真正的判断交给模型；这里的规则只用于兜底与自检）
@@ -366,6 +538,8 @@ def main(argv=None):
     ap.add_argument("--fetch-mcp", action="store_true",
                     help="从公开 MCP 取真实新闻/宏观数据（无需 Key）")
     ap.add_argument("--per-feed", type=int, default=5)
+    ap.add_argument("--fetch-fred", action="store_true",
+                    help="从 FRED 免 Key CSV 取宏观/利率（MCP 挂掉时的回退源）")
     args = ap.parse_args(argv)
 
     if args.selftest:
@@ -373,6 +547,26 @@ def main(argv=None):
         print("bitget-signal 适配器自检")
         print("=" * 88)
         return selftest()
+
+    if args.fetch_fred:
+        print("=" * 92)
+        print("从 FRED 免 Key CSV 取宏观/利率实测值")
+        print("=" * 92)
+        rows, ferr = fetch_macro_fred()
+        if ferr:
+            print("\n  [!!] 部分序列取不到：%s" % ferr)
+        if not rows:
+            print("\n  [!!] 一条都没取到 —— 如实记录，不编数")
+            return 1
+        print("\n取到 **%d** 条，每条都带可回溯来源：" % len(rows))
+        for m in rows:
+            print("  %-20s %-12s %-12s %s" % (m["indicator"], m["value"],
+                                              m["date"], m["note"]))
+            print("      %s" % m["label"])
+            print("      来源: %s" % m["source"])
+        print("\n  ⚠️ 边界：这些是**宏观与利率**，不是我们这个套利策略的收益证据；")
+        print("     它们只用于事件闸门判断『当下是不是该暂停开新仓』。")
+        return 0
 
     bases = [b.strip() for b in args.bases.split(",") if b.strip()]
 
@@ -406,14 +600,20 @@ def main(argv=None):
 
         macro, err2 = fetch_macro_mcp()
         print("\n【宏观】macro_indicators")
-        if err2:
-            print("  [!!] 取数失败：%s" % err2)
-        else:
+        if err2 or not macro:
+            # 回退：MCP 的宏观接口实测大面积失败（服务端 ConnectTimeout），
+            # 但没必要因此让这一格空着 —— FRED 免 Key CSV 实测可用且带来源。
+            print("  MCP 取数失败/为空：%s" % (err2 or "返回空"))
+            print("  -> 回退到 FRED 免 Key CSV")
+            macro, err2 = fetch_macro_fred()
+            if err2:
+                print("  [!!] FRED 也部分失败：%s" % err2)
+        if macro:
             for m in macro:
-                print("     %-20s %-14s %s" % (m["indicator"], m["value"][:14],
+                print("     %-20s %-14s %s" % (m["indicator"], str(m["value"])[:14],
                                                m.get("date") or ""))
-            if not macro:
-                print("  （返回为空 —— 如实记录，不编数）")
+        else:
+            print("  （两个源都取不到 —— 如实记录，不编数）")
         print("\n  ⚠️ 边界：新闻的**严重度判定**仍由 classify()+模型做，MCP 只提供原文；")
         print("     而『无可回溯来源即丢弃』这条约束继续生效（url 缺失的条目照样丢）。")
         return 0
