@@ -46,6 +46,26 @@ MCP / Skill 的安装是**使用者的一步操作**（见下面的安装说明�
   python project2/signal_adapter.py --selftest          # 自检（不需要网络/Key）
   python project2/signal_adapter.py --demo              # 用合成样例演示规整效果
   python project2/signal_adapter.py --from-json x.json  # 规整真实输出并写回日历
+  python project2/signal_adapter.py --fetch-mcp         # 直连公开 MCP 取真实数据
+
+━━ ⚠️ 直连公开 MCP 的实测状态（2026-09-16，如实记录）━━
+
+`bitget-signal` 的 npm 包只是 skill 安装器；真数据来自公开 MCP
+`https://datahub.noxiaohao.com/mcp`（**无需账号/Key**）。实测结果：
+
+  ✅ `initialize`            HTTP 200，server = market-data-mcp v1.26.0
+  ✅ `tools/list`            **19 个工具**
+  ✅ `news_feed` action=sources  返回 **44 个 RSS 源**（含 `fed` 美联储、cnbc、bbc_world）
+  ❌ `news_feed` action=latest   **44 个源全部返回 `items: []`** ——
+                                服务端可达但**不给内容**，不能当作"没有新闻"
+  ❌ `tradfi_news` action=earnings  返回 `{"error":""}`（空错误，疑似服务端缺 key）
+  ⚠️ `macro_indicators`      可列出 available_indicators，但取具体值返回空
+
+**因此本适配器把这种情况判为「取不到」而不是「没有事件」** ——
+静默把空结果当成"无事件"会让闸门放行，那正是本项目一直在防的假阴性。
+
+**降级路径（当前生效）**：MCP 取不到时，新闻分析师继续用确定性日历，
+置信度保持 0.40，并在输出里明说「无可回溯来源」。**不编数、不假装能用。**
 """
 
 import argparse
@@ -63,6 +83,102 @@ from common.console import install  # noqa: E402
 install()
 
 CALENDAR = os.path.join(P2, "events_calendar.json")
+
+# 我们把哪些 RSS 源当作"会影响股价"的输入。
+# `fed` 是美联储官方源 —— 宏观事件的第一手来源，比二手转载可靠。
+NEWS_FEEDS = "fed,cnbc,bbc_world,npr,guardian,aljazeera,reddit_economics"
+
+
+def fetch_news_mcp(per_feed=5, keyword=None):
+    """从公开 MCP 的 `news_feed` 取新闻，规整成适配器输入。
+
+    ⚠️ 实测：该 MCP **无需鉴权**（见 `project2/mcp_client.py`），
+    但它是**外部服务** —— 取不到就返回 ([], 原因)，**绝不抛异常**：
+    一个外部服务挂掉不该把整条分析链弄崩。
+    """
+    try:
+        from mcp_client import SignalMCP
+    except ImportError:
+        try:
+            from project2.mcp_client import SignalMCP
+        except ImportError:
+            return [], "mcp_client 不可用"
+    args = {"action": "latest", "feeds": NEWS_FEEDS, "limit": per_feed}
+    if keyword:
+        args["keyword"] = keyword
+    data, err = SignalMCP().call_json("news_feed", args)
+    if err:
+        return [], err
+    arts = []
+    if isinstance(data, dict):
+        arts = data.get("articles") or data.get("items") or []
+        if not arts:                      # 有些实现按 feed 分组返回
+            for k, v in data.items():
+                if isinstance(v, list):
+                    for a in v:
+                        if isinstance(a, dict):
+                            a.setdefault("feed", k)
+                            arts.append(a)
+    items = []
+    for a in arts[:200]:
+        if not isinstance(a, dict):
+            continue
+        items.append({
+            "title": a.get("title") or a.get("headline") or "",
+            "ts": a.get("published") or a.get("ts") or a.get("date"),
+            "url": a.get("link") or a.get("url") or "",
+            "_feed": a.get("feed") or "",
+        })
+
+    # 🔴 关键判断：**空结果 ≠ 没有新闻**。
+    # 实测（2026-09-16）：`news_feed action=latest` 对**全部 44 个 feed** 都返回
+    # `{"feed": X, "error": "", "items": []}` —— 服务端可达但不给内容。
+    # 如果这里静默返回空列表，下游会把它当成"没有事件"，
+    # 于是闸门放行 —— **这正是本项目一直在防的假阴性**。
+    # 所以必须显式区分"取到 0 条"与"压根没取到"。
+    if not items:
+        if isinstance(data, list) and data and all(
+                isinstance(x, dict) and "items" in x for x in data):
+            n = len(data)
+            print("  [诊断] news_feed 对 %d 个源**全部返回空 items**（不是\"没有新闻\"）"
+                  % n)
+            return [], ("服务端返回空内容：%d 个源全部 items=[] ——"
+                        "**应视为『取不到』而非『没有事件』**" % n)
+        return [], "返回结构里没有可识别条目：%s" % str(data)[:120]
+    return items, None
+
+
+def fetch_macro_mcp():
+    """从公开 MCP 的 `macro_indicators` 取宏观指标最新值（带来源）。
+
+    用途：把"手敲的宏观日历"换成**有可回溯来源的实测值** ——
+    这正是新闻分析师置信度被压在 0.40 的原因（`docs/22` 局限 9）。
+    """
+    try:
+        from mcp_client import SignalMCP
+    except ImportError:
+        try:
+            from project2.mcp_client import SignalMCP
+        except ImportError:
+            return [], "mcp_client 不可用"
+    keys = "cpi,nonfarm_payrolls,fed_funds_rate,unemployment,gdp_growth"
+    data, err = SignalMCP().call_json(
+        "macro_indicators", {"action": "multi_indicator", "indicators": keys})
+    if err:
+        return [], err
+    out = []
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if k == "available_indicators":
+                continue
+            val = v.get("value") if isinstance(v, dict) else v
+            if val is None:
+                continue
+            out.append({"indicator": k, "value": str(val),
+                        "date": v.get("date") if isinstance(v, dict) else None,
+                        "source": "datahub.noxiaohao.com/mcp#macro_indicators"})
+    return out, None
+
 
 # 严重度关键词（**粗筛**，真正的判断交给模型；这里的规则只用于兜底与自检）
 BLOCK_PAT = re.compile(
@@ -247,6 +363,9 @@ def main(argv=None):
     ap.add_argument("--from-json", default=None, help="真实输出的 JSON 路径")
     ap.add_argument("--bases", default="TSLA,NVDA,AAPL,META,GOOGL,SPY,QQQ,SOXL,HOOD,MRVL")
     ap.add_argument("--write", action="store_true", help="写回事件日历")
+    ap.add_argument("--fetch-mcp", action="store_true",
+                    help="从公开 MCP 取真实新闻/宏观数据（无需 Key）")
+    ap.add_argument("--per-feed", type=int, default=5)
     args = ap.parse_args(argv)
 
     if args.selftest:
@@ -256,6 +375,48 @@ def main(argv=None):
         return selftest()
 
     bases = [b.strip() for b in args.bases.split(",") if b.strip()]
+
+    # ---- 从公开 MCP 取真实数据 ----
+    if args.fetch_mcp:
+        print("=" * 92)
+        print("从公开 MCP 取真实新闻与宏观数据（无需账号/Key）")
+        print("=" * 92)
+        news, err = fetch_news_mcp(per_feed=args.per_feed)
+        print("\n【新闻】news_feed（源：%s）" % NEWS_FEEDS)
+        if err:
+            print("  [!!] 取数失败：%s" % err)
+        else:
+            print("  取到 **%d** 条原始条目" % len(news))
+            kept, dropped = normalize(news, bases=bases)
+            print("  规整后：保留 **%d** 条 / 丢弃 %d 条" % (len(kept), len(dropped)))
+            if dropped:
+                reasons = {}
+                for _t, r in dropped:
+                    reasons[r] = reasons.get(r, 0) + 1
+                for r, n in sorted(reasons.items(), key=lambda z: -z[1]):
+                    print("     丢弃 %2d 条：%s" % (n, r))
+            for e in kept[:6]:
+                print("     [%-7s] %-6s %s" % (e["severity"], e["base"],
+                                               e["label"][:52]))
+            if kept and args.write:
+                n = merge_into_calendar(kept, write=True)
+                print("  -> 已并入日历 %d 条（来源可回溯，置信度上限可提高）" % n)
+            elif kept:
+                print("  -> 加 --write 才会写回日历")
+
+        macro, err2 = fetch_macro_mcp()
+        print("\n【宏观】macro_indicators")
+        if err2:
+            print("  [!!] 取数失败：%s" % err2)
+        else:
+            for m in macro:
+                print("     %-20s %-14s %s" % (m["indicator"], m["value"][:14],
+                                               m.get("date") or ""))
+            if not macro:
+                print("  （返回为空 —— 如实记录，不编数）")
+        print("\n  ⚠️ 边界：新闻的**严重度判定**仍由 classify()+模型做，MCP 只提供原文；")
+        print("     而『无可回溯来源即丢弃』这条约束继续生效（url 缺失的条目照样丢）。")
+        return 0
 
     if args.demo or not args.from_json:
         print("=" * 88)
