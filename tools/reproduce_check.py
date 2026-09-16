@@ -381,6 +381,9 @@ def check_features():
         ("project2/signal_adapter.py", "def normalize(", "bitget-signal 事件源适配器"),
         ("project2/agent_team.py", "def validate(", "分析师层·证据铁律"),
         ("project2/agent_team.py", "def run_team(", "分析师层·四维度汇总"),
+        ("project2/agent_team.py", "def falsifier_for(", "辩论层·可证伪"),
+        ("project2/agent_team.py", "def direction_conflict(", "辩论层·方向一致性"),
+        ("project2/agent_team.py", "def adjudicate(", "辩论层·确定性裁决"),
         ("server/app.py", "/api/assess", "风险与理由接口"),
         ("project2/execution_cost.py", "def consult_gate(", "执行成本·闸门联动"),
         ("project2/execution_cost.py", "def selftest(", "执行成本·闸门否决自检"),
@@ -479,6 +482,24 @@ def check_features():
                 (r.stdout or "").strip().splitlines()[-1] if r.stdout else "")
     except Exception as exc:  # noqa: BLE001
         bad("分析师层自检无法运行", repr(exc))
+
+    # ---- 多空辩论层：可证伪 + 防灌水 + 方向一致性 + 硬闸门优先 ----
+    # 这四条是多 agent 最容易退化成「表演」的地方，必须每次回归都验：
+    #   没有证伪条件的论点作废 / 同一证伪条件不得重复计分 /
+    #   方向自相矛盾的论据要点名并扣分 / 闸门 block 时不得给出 proceed。
+    try:
+        r = subprocess.run([sys.executable, "project2/agent_team.py",
+                            "--debate-selftest"],
+                           cwd=BASE, capture_output=True, text=True, timeout=180)
+        if r.returncode == 0:
+            tail = [ln for ln in (r.stdout or "").splitlines() if "自检" in ln]
+            ok("多空辩论层自检通过（%s）"
+               % (tail[-1].strip() if tail else "可证伪/防灌水/方向/闸门"))
+        else:
+            bad("辩论层自检失败",
+                (r.stdout or "").strip().splitlines()[-1] if r.stdout else "")
+    except Exception as exc:  # noqa: BLE001
+        bad("辩论层自检无法运行", repr(exc))
 
 
 # ---------------------------------------------------------------- 主流程
