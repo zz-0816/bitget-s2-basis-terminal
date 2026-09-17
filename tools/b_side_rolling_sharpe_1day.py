@@ -61,6 +61,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_DEFAULT = os.environ.get('BASIS_REPO') or os.path.dirname(HERE)
 OUT = HERE
 
+# ---- 控制台编码兜底（2026-09-17 由 A 补）----
+# 本项目在 Windows GBK 控制台上，print 里出现 ⚠️ / − 这类字符会抛
+# UnicodeEncodeError 并**中断整个脚本**（已被咬过三次：kline_accumulator /
+# make_sample_bundle / precheck_window）。本脚本 L331 的 print 带 ⚠️ 且原先
+# 没有任何兜底 —— 乙那边能跑通只是因为控制台恰好是 UTF-8，
+# 但"可复现"要求评委在中文 Windows 上也能跑，所以必须补。
+sys.path.insert(0, REPO_DEFAULT)
+try:
+    from common.console import install as _install_console
+    _install_console()
+except Exception:  # noqa: BLE001  兜底失败也不能让脚本起不来
+    pass
+
 DAY_MS = 86400000
 BARS_PER_YEAR = 252
 ANN = math.sqrt(BARS_PER_YEAR)      # 15.87
