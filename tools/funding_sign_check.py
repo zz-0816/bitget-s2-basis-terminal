@@ -67,7 +67,20 @@ def get(url, timeout=30):
     return box.get("r") if "r" in box else {"_err": box.get("e")}
 
 
-def main():
+def main(argv=None):
+    # ⚠️ 2026-09-18 修：本脚本原先**没有任何参数解析**，于是 `--help` 不是打印帮助，
+    # 而是被忽略后**直接跑完整联网分析**。reproduce_check 的第 3 层用 `--help`
+    # 做 60 秒超时的健康检查，之前能过只是因为跑得够快；采样器改走代理后
+    # 网络变慢，这条就超时失败 —— 失败原因与"代码健康"其实无关，是检查与被检
+    # 双方都没把这件事说清。
+    # 加最小 argparse 后：`--help` 立即返回，且不改变无参数时的原有行为。
+    import argparse
+    ap = argparse.ArgumentParser(
+        description="资金费率符号约定诊断（需联网取 history-fund-rate）")
+    ap.add_argument("--pairs", default="",
+                    help="逗号分隔的 base 代号，默认用内置 PAIRS 全量")
+    args, _unknown = ap.parse_known_args(argv)   # 容忍历史调用方式，不因多余参数报错
+
     print("=" * 96)
     print("资金费率符号约定诊断")
     print("=" * 96)
