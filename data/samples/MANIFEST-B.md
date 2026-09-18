@@ -1,6 +1,6 @@
 # 乙侧数据包清单（复核索引）
 
-- 生成时间：**2026-09-18 11:28 UTC**（北京 2026-09-18 19:28）
+- 生成时间：**2026-09-18 11:39 UTC**（北京 2026-09-18 19:39）
 - 生成脚本：`python tools\b_side_data_pack.py`（可重跑；只读、不搬家、不压缩）
 - 配套：`docs/30-给乙侧的数据与复核清单（0918）.md`（说明每份数据配哪个任务）
 
@@ -44,13 +44,13 @@
 | `data/spread/2026-09-15.csv` | 3,156,614 | 23,436 | 2026-09-14 16:00 ~ 2026-09-15 15:59 | `6776f80661d6f9c3` | 核心 10 配对点差/中间价（60 秒节奏） | route 对照、点差分布 | `python tools\precheck_window.py` |
 | `data/spread/2026-09-16.csv` | 2,953,184 | 21,998 | 2026-09-15 16:00 ~ 2026-09-16 10:19 | `72b14e07c0eb281b` | 核心 10 配对点差/中间价（60 秒节奏） | route 对照、点差分布 | `python tools\precheck_window.py` |
 | `data/spread/2026-09-17.csv` | 2,922,199 | 21,740 | 2026-09-16 18:19 ~ 2026-09-17 15:59 | `a6da268ef35b03b1` | 核心 10 配对点差/中间价（60 秒节奏） | route 对照、点差分布 | `python tools\precheck_window.py` |
-| `data/spread/2026-09-18.csv` | 2,352,493 | 17,469 | 2026-09-17 16:00 ~ 2026-09-18 10:20 | `8535bc67f39cf3f4` | 核心 10 配对点差/中间价（60 秒节奏） | route 对照、点差分布 | `python tools\precheck_window.py` |
+| `data/spread/2026-09-18.csv` | 2,370,362 | 17,602 | 2026-09-17 16:00 ~ 2026-09-18 11:39 | `26fdcf359b753d1e` | 核心 10 配对点差/中间价（60 秒节奏） | route 对照、点差分布 | `python tools\precheck_window.py` |
 | `data/spread/orderbook-2026-09-13.csv` | 56,218,963 | 515,070 | 2026-09-12 17:25 ~ 2026-09-13 15:59 | `f33e07586d62c53c` | 5 档盘口（30 秒节奏，190 行/轮） | 容量与深度 | `python tools\capacity_curve.py` |
 | `data/spread/orderbook-2026-09-14.csv` | 59,334,622 | 542,690 | 2026-09-13 16:00 ~ 2026-09-14 15:59 | `12b8410ca29e5dca` | 5 档盘口（30 秒节奏，190 行/轮） | 容量与深度 | `python tools\capacity_curve.py` |
 | `data/spread/orderbook-2026-09-15.csv` | 48,735,233 | 444,910 | 2026-09-14 16:00 ~ 2026-09-15 15:59 | `0995bd21c7c0db4e` | 5 档盘口（30 秒节奏，190 行/轮） | 容量与深度 | `python tools\capacity_curve.py` |
 | `data/spread/orderbook-2026-09-16.csv` | 45,734,655 | 417,950 | 2026-09-15 16:00 ~ 2026-09-16 10:19 | `9e0341864b5a885f` | 5 档盘口（30 秒节奏，190 行/轮） | 容量与深度 | `python tools\capacity_curve.py` |
 | `data/spread/orderbook-2026-09-17.csv` | 46,293,748 | 422,220 | 2026-09-16 18:20 ~ 2026-09-17 15:59 | `fc4cb4bac88c70db` | 5 档盘口（30 秒节奏，190 行/轮） | 容量与深度 | `python tools\capacity_curve.py` |
-| `data/spread/orderbook-2026-09-18.csv` | 36,534,462 | 333,310 | 2026-09-17 16:00 ~ 2026-09-18 10:21 | `6096dafb862e81bd` | 5 档盘口（30 秒节奏，190 行/轮） | 容量与深度 | `python tools\capacity_curve.py` |
+| `data/spread/orderbook-2026-09-18.csv` | 36,809,365 | 335,820 | 2026-09-17 16:00 ~ 2026-09-18 11:39 | `cb6fe69e7ae89cda` | 5 档盘口（30 秒节奏，190 行/轮） | 容量与深度 | `python tools\capacity_curve.py` |
 | `data/spread/trades-2026-08-22.csv` | 17,863 | 152 | 2026-08-22 15:37 ~ 2026-08-22 00:14 | `80bae8b7864d8d28` | 逐笔成交（60 秒节奏）—— **现货侧 09-14 后为 0** | 成交率/逆向选择/联合分布 | `python tools\joint_fill_analysis.py --date-from 2026-09-12` |
 | `data/spread/trades-2026-08-23.csv` | 54,310 | 465 | 2026-08-23 15:35 ~ 2026-08-22 16:24 | `9b87df87f0db8ac8` | 逐笔成交（60 秒节奏）—— **现货侧 09-14 后为 0** | 成交率/逆向选择/联合分布 | `python tools\joint_fill_analysis.py --date-from 2026-09-12` |
 | `data/spread/trades-2026-08-24.csv` | 11,741 | 100 | 2026-08-23 22:27 ~ 2026-08-23 16:16 | `629b913f11b3d5cc` | 逐笔成交（60 秒节奏）—— **现货侧 09-14 后为 0** | 成交率/逆向选择/联合分布 | `python tools\joint_fill_analysis.py --date-from 2026-09-12` |
@@ -71,14 +71,14 @@
 | `data/spread/trades-2026-09-15.csv` | 39,158,093 | 342,523 | 2026-09-14 16:00 ~ 2026-09-15 15:59 | `2466594814b46f23` | 逐笔成交（60 秒节奏）—— **现货侧 09-14 后为 0** | 成交率/逆向选择/联合分布 | `python tools\joint_fill_analysis.py --date-from 2026-09-12` |
 | `data/spread/trades-2026-09-16.csv` | 18,267,933 | 159,906 | 2026-09-15 16:00 ~ 2026-09-16 15:48 | `af1141878cf51432` | 逐笔成交（60 秒节奏）—— **现货侧 09-14 后为 0** | 成交率/逆向选择/联合分布 | `python tools\joint_fill_analysis.py --date-from 2026-09-12` |
 | `data/spread/trades-2026-09-17.csv` | 43,542,832 | 381,514 | 2026-09-16 18:20 ~ 2026-09-17 15:58 | `810ec7ac8cc68610` | 逐笔成交（60 秒节奏）—— **现货侧 09-14 后为 0** | 成交率/逆向选择/联合分布 | `python tools\joint_fill_analysis.py --date-from 2026-09-12` |
-| `data/spread/trades-2026-09-18.csv` | 19,517,491 | 170,729 | 2026-09-17 16:00 ~ 2026-09-18 10:19 | `1d41ef43bd5cd8f4` | 逐笔成交（60 秒节奏）—— **现货侧 09-14 后为 0** | 成交率/逆向选择/联合分布 | `python tools\joint_fill_analysis.py --date-from 2026-09-12` |
+| `data/spread/trades-2026-09-18.csv` | 20,537,272 | 179,631 | 2026-09-17 16:00 ~ 2026-09-18 11:38 | `b24e77271ee84da9` | 逐笔成交（60 秒节奏）—— **现货侧 09-14 后为 0** | 成交率/逆向选择/联合分布 | `python tools\joint_fill_analysis.py --date-from 2026-09-12` |
 | `data/spread/universe-2026-09-12.csv` | 2,539,353 | 17,351 | 2026-09-12 14:02 ~ 2026-09-12 15:59 | `84b939cfb6f9b842` | 全池 213 配对轮转（约 9 分钟/圈） | 全池覆盖 | `python tools\coverage_report.py` |
 | `data/spread/universe-2026-09-13.csv` | 20,171,932 | 138,282 | 2026-09-12 16:00 ~ 2026-09-13 15:59 | `684fc0279a37a695` | 全池 213 配对轮转（约 9 分钟/圈） | 全池覆盖 | `python tools\coverage_report.py` |
 | `data/spread/universe-2026-09-14.csv` | 19,783,487 | 136,351 | 2026-09-13 16:00 ~ 2026-09-14 15:59 | `dac0a4aefec9c6e8` | 全池 213 配对轮转（约 9 分钟/圈） | 全池覆盖 | `python tools\coverage_report.py` |
 | `data/spread/universe-2026-09-15.csv` | 16,387,080 | 111,400 | 2026-09-14 16:00 ~ 2026-09-15 15:59 | `b0aa56421c1c7b12` | 全池 213 配对轮转（约 9 分钟/圈） | 全池覆盖 | `python tools\coverage_report.py` |
 | `data/spread/universe-2026-09-16.csv` | 15,437,183 | 105,084 | 2026-09-15 16:00 ~ 2026-09-16 14:38 | `e1fef63d22f3d82c` | 全池 213 配对轮转（约 9 分钟/圈） | 全池覆盖 | `python tools\coverage_report.py` |
 | `data/spread/universe-2026-09-17.csv` | 11,954,577 | 81,426 | 2026-09-16 17:46 ~ 2026-09-17 15:59 | `c5286c0b6a488fe4` | 全池 213 配对轮转（约 9 分钟/圈） | 全池覆盖 | `python tools\coverage_report.py` |
-| `data/spread/universe-2026-09-18.csv` | 3,362,111 | 22,851 | 2026-09-17 16:02 ~ 2026-09-18 10:20 | `78c2e580b63eae33` | 全池 213 配对轮转（约 9 分钟/圈） | 全池覆盖 | `python tools\coverage_report.py` |
+| `data/spread/universe-2026-09-18.csv` | 3,409,049 | 23,171 | 2026-09-17 16:02 ~ 2026-09-18 11:38 | `28e809177aaeda5b` | 全池 213 配对轮转（约 9 分钟/圈） | 全池覆盖 | `python tools\coverage_report.py` |
 
 ## D. 面板与样本包
 
@@ -111,6 +111,6 @@ python tools\recover_sampling.py               # 采样新鲜度 + 代理诊断
 
 ## G. 统计
 
-- 本清单收录文件 **62** 个，合计 **603.7 MB**
+- 本清单收录文件 **62** 个，合计 **605.0 MB**
 - 路径一律相对仓库根；`SHA256(16)` 为前 16 位，全量可用 `python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <file>`
 

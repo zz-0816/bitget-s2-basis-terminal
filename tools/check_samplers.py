@@ -44,30 +44,59 @@ SAMPLERS = {
 FAIL = 0
 
 
-def sh(cmd):
+def _run(cmd):
+    """返回 (stdout, returncode)。stderr 也并进来 —— 拒绝访问是写在 stderr 的。"""
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, shell=False, timeout=30)
-        return out.stdout
+        p = subprocess.run(cmd, capture_output=True, text=True, shell=False,
+                           timeout=30)
+        return (p.stdout or "") + "\n" + (p.stderr or ""), p.returncode
     except Exception:  # noqa: BLE001
-        return ""
+        return "", -1
+
+
+def sh(cmd):
+    return _run(cmd)[0]
 
 
 def list_python():
-    """返回 [(pid, cmdline)]。用 wmic 兼容性好；失败则回退 tasklist。"""
+    """返回 (rows, usable)。``rows`` = [(pid, cmdline)]，``usable`` = 进程枚举是否可用。
+
+    ⚠️ 2026-09-18 新增 ``usable``：在**受限会话**里
+    `Get-CimInstance Win32_Process` 与 `tasklist` 都会被拒绝访问
+    （实测：CIM 抛"拒绝访问"，tasklist 打印 `ERROR: Access denied`）。
+    此时 rows 为空，旧代码会把它读成"实例=0"并报**假警报** ——
+    而采样器其实正在正常写文件（文件 mtime 是秒级新鲜的）。
+    这正是本项目最怕的一类错误：**把观测能力受限当成被观测对象出问题**。
+    所以现在把"测不到"和"确实是 0 个"分开：
+      * usable=False -> 退化为**数据新鲜度**判据，并明确标注"实例数不可用"
+      * usable=True  -> 按原判据（实例数必须为 1）
+    """
     rows = []
-    try:
-        import csv as _csv
-        ps = ("Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
-              "Select-Object ProcessId,CommandLine | ConvertTo-Csv -NoTypeInformation")
-        out = sh(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps])
-        for r in _csv.DictReader(out.splitlines()):
-            try:
-                rows.append((int(r["ProcessId"]), r.get("CommandLine") or ""))
-            except (KeyError, ValueError, TypeError):
-                continue
-    except Exception:  # noqa: BLE001
-        pass
-    return rows
+    import csv as _csv
+    ps = ("Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+          "Select-Object ProcessId,CommandLine | ConvertTo-Csv -NoTypeInformation")
+    out, rc = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps])
+    if "denied" in out.lower() or "拒绝访问" in out:
+        return [], False          # 明确拒绝 -> 观测能力受限
+    for r in _csv.DictReader(out.splitlines()):
+        try:
+            rows.append((int(r["ProcessId"]), r.get("CommandLine") or ""))
+        except (KeyError, ValueError, TypeError):
+            continue
+    if rows:
+        return rows, True
+    alt, rc2 = _run(["tasklist", "/FI", "IMAGENAME eq python.exe", "/NH"])
+    if "denied" in alt.lower() or "拒绝访问" in alt or rc2 != 0:
+        return [], False          # 两条路都被拒 -> 受限会话
+    if "python.exe" in alt.lower():
+        for line in alt.splitlines():
+            parts = line.split()
+            if parts and parts[0].lower().startswith("python"):
+                try:
+                    rows.append((int(parts[1]), ""))
+                except (IndexError, ValueError):
+                    continue
+    return rows, True
 
 
 def main(argv=None):
@@ -95,7 +124,7 @@ def main(argv=None):
     _print("采样健康检查    %s" % dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     _print("=" * 80)
 
-    procs = list_python()
+    procs, enum_ok = list_python()
     _print("\n【1】进程实例数（每个采样脚本只允许 1 个）")
     counts = collections.Counter()
     for pid, cl in procs:
@@ -103,23 +132,39 @@ def main(argv=None):
             if name + ".py" in cl:
                 counts[name] += 1
     ok = True
-    for name, lock in SAMPLERS.items():
-        n = counts.get(name, 0)
-        lock_path = os.path.join(SPREAD, lock)
-        holder = None
-        if os.path.exists(lock_path):
-            try:
-                holder = json.load(open(lock_path, encoding="utf-8")).get("pid")
-            except (OSError, json.JSONDecodeError):
-                pass
-        flag = "OK " if n == 1 else "!! "
-        if n != 1:
-            ok = False
-            FAIL += 1
-        _print("  [%s] %-20s 实例=%d  锁持有者=%s" % (flag, name, n, holder))
-    if not ok:
-        _print("       -> 实例数异常！多实例会重复写同一文件（且完全相等键检测不出）")
-        _print("       -> 处置：保留持锁者，杀掉其余（taskkill /F）")
+    if not enum_ok:
+        # 受限会话：进程枚举被拒绝。**不能**把"测不到"读成"实例=0"。
+        _print("  [!] **进程枚举不可用**（本会话拒绝访问 CIM 与 tasklist）")
+        _print("      -> 实例数**无法判定**，退化为按『数据新鲜度』判断是否在采：")
+        for name, lock in SAMPLERS.items():
+            lock_path = os.path.join(SPREAD, lock)
+            holder = None
+            if os.path.exists(lock_path):
+                try:
+                    holder = json.load(open(lock_path, encoding="utf-8")).get("pid")
+                except (OSError, json.JSONDecodeError):
+                    pass
+            _print("         %-20s 锁持有者=%s（未校验存活）" % (name, holder))
+        _print("      ⚠️ 这一项不计入失败：观测能力受限 ≠ 采样出问题。")
+        _print("         要确认在采，看下面【3】最后写入时间（秒级新鲜即在采）。")
+    else:
+        for name, lock in SAMPLERS.items():
+            n = counts.get(name, 0)
+            lock_path = os.path.join(SPREAD, lock)
+            holder = None
+            if os.path.exists(lock_path):
+                try:
+                    holder = json.load(open(lock_path, encoding="utf-8")).get("pid")
+                except (OSError, json.JSONDecodeError):
+                    pass
+            flag = "OK " if n == 1 else "!! "
+            if n != 1:
+                ok = False
+                FAIL += 1
+            _print("  [%s] %-20s 实例=%d  锁持有者=%s" % (flag, name, n, holder))
+        if not ok:
+            _print("       -> 实例数异常！多实例会重复写同一文件（且完全相等键检测不出）")
+            _print("       -> 处置：保留持锁者，杀掉其余（taskkill /F）")
 
     _print("\n【2】采样节奏（每分钟轮数 / 轮间隔 / 每轮行数）")
     # 各文件的正常节奏不同（universe/orderbook 按设计就是"轮转/多档"，轮数天然 >1/分钟）：
