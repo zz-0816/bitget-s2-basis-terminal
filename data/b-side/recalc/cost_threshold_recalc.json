@@ -1,0 +1,478 @@
+{
+  "window_cn": [
+    "2026-09-12 08:00",
+    "2026-09-14 08:00"
+  ],
+  "fee_source": {
+    "files": [
+      "data/research/_fetch_report.txt",
+      "data/research/_key_extracts.txt",
+      "data/research/fee_promo_extension.clean.txt",
+      "data/research/fee_promo_extension.txt",
+      "data/research/fee_sentences.txt",
+      "data/research/fee_timing_rules.txt",
+      "data/research/fee_upgrade_vip.clean.txt",
+      "data/research/fee_upgrade_vip.txt"
+    ],
+    "spot_maker_bp": 5.0,
+    "perp_maker_bp": 2.0,
+    "perp_taker_bp": null,
+    "evidences": [
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "续费五折活动延期 9 月份起，rToken 现货交易将继续享受手续费五折优惠（即基础费率维持在 Maker/Taker 0.05%）。 活动结束时间： 本次延期结束时间暂不确定。后续如需恢复原费率或进行调整，我们将提前另行公告通知。在此期间，您可以继"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "中心 / 维护/系统升级 / 现货维护 / 关于 rToken 现货手续费五折活动延期及扣费逻辑优化的公告...   [0.05%] ...予以延期 。同时，我们对 rToken 买入交易的手续费扣除逻辑进行了全面升级。 具体安排如下： 一、 rTo"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "续费五折活动延期 9 月份起，rToken 现货交易将继续享受手续费五折优惠（即基础费率维持在 Maker/Taker 0.05%）。 活动结束时间： 本次延期结束时间暂不确定。后续如需恢复原费率或进行调整，我们将提前另行公告通知。在此期间，您可以继"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "续费五折活动延期 9 月份起，rToken 现货交易将继续享受手续费五折优惠（即基础费率维持在 Maker/Taker 0.05%）。 活动结束时间： 本次延期结束时间暂不确定。后续如需恢复原费率或进行调整，我们将提前另行公告通知。在此期间，您可以继"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "续费五折活动延期 9 月份起，rToken 现货交易将继续享受手续费五折优惠（即基础费率维持在 Maker/Taker 0.05%）。 活动结束时间： 本次延期结束时间暂不确定。后续如需恢复原费率或进行调整，我们将提前另行公告通知。在此期间，您可以继"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "Bitget 股票现货（rToken）费率全面升级及 VIP...   [手续费] ...5 折优惠基准（即基础费率 0.05%），高等级 VIP 及 PRO 用户还将享受更低的专属折扣。 一、 最新 VIP 阶梯费率表 VIP 等级 挂单 (Ma"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "BGB 抵扣手续费 (-20%) 挂单 (Maker) / 吃单 (Taker) 及 StockRoute VIP 0 0.05% / 0.05% 0.04% / 0.04% VIP 1 0.05% / 0.05% 0.04% / 0.04% VIP"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "费 (-20%) 挂单 (Maker) / 吃单 (Taker) 及 StockRoute VIP 0 0.05% / 0.05% 0.04% / 0.04% VIP 1 0.05% / 0.05% 0.04% / 0.04% VIP 2 0.05%"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "Taker) 及 StockRoute VIP 0 0.05% / 0.05% 0.04% / 0.04% VIP 1 0.05% / 0.05% 0.04% / 0.04% VIP 2 0.05% / 0.05% 0.04% / 0.04%..."
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "StockRoute VIP 0 0.05% / 0.05% 0.04% / 0.04% VIP 1 0.05% / 0.05% 0.04% / 0.04% VIP 2 0.05% / 0.05% 0.04% / 0.04%...   [0.05%"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "0.05% 0.04% / 0.04% VIP 1 0.05% / 0.05% 0.04% / 0.04% VIP 2 0.05% / 0.05% 0.04% / 0.04%...   [0.05%] ...成本，Bitget 将于 2026年8月6"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "04% / 0.04% VIP 1 0.05% / 0.05% 0.04% / 0.04% VIP 2 0.05% / 0.05% 0.04% / 0.04%...   [0.05%] ...成本，Bitget 将于 2026年8月6日 19:00（"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "0.05% 0.04% / 0.04% VIP 2 0.05% / 0.05% 0.04% / 0.04%...   [0.05%] ...成本，Bitget 将于 2026年8月6日 19:00（UTC+8） 对 rToken 费率结构进行全面升级"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "VIP/ PRO 阶梯费率 及 BGB 抵扣优惠 。 本次升级后，不仅保留了正在进行中的 5 折优惠基准（即基础费率 0.05%），高等级 VIP 及 PRO 用户还将享受更低的专属折扣。 一、 最新 VIP 阶梯费率表 VIP 等级 挂单 (Ma"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "aker) / 吃单 (Taker) 及 StockRou...   [0.02%] .../ 0.04% VIP 3 0.05% / 0.05% 0.04% / 0.04% VIP 4 0.04% / 0.05% 0.032% / 0.04% VI"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "吃单 (Taker) 及 StockRou...   [0.02%] .../ 0.04% VIP 3 0.05% / 0.05% 0.04% / 0.04% VIP 4 0.04% / 0.05% 0.032% / 0.04% VIP 5 0.03"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": ".../ 0.04% VIP 3 0.05% / 0.05% 0.04% / 0.04% VIP 4 0.04% / 0.05% 0.032% / 0.04% VIP 5 0.03% / 0.04% 0.024% / 0.032% VIP 6 0."
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "...P/ PRO 阶梯费率 及 BGB 抵扣优惠 。 本次升级后，不仅保留了正在进行中的 5 折优惠基准（即基础费率 0.05%），高等级 VIP 及 PRO 用户还将享受更低的专属折扣。 一、 最新 VIP 阶梯费率表 VIP 等级 挂单 (Ma"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "BGB 抵扣手续费 (-20%) 挂单 (Maker) / 吃单 (Taker) 及 StockRoute VIP 0 0.05% / 0.05% 0.04% / 0.04% VIP 1 0.05% / 0.05% 0.04%...   [Taker"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "费 (-20%) 挂单 (Maker) / 吃单 (Taker) 及 StockRoute VIP 0 0.05% / 0.05% 0.04% / 0.04% VIP 1 0.05% / 0.05% 0.04%...   [Taker] ...BGB"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "Taker) 及 StockRoute VIP 0 0.05% / 0.05% 0.04% / 0.04% VIP 1 0.05% / 0.05% 0.04%...   [Taker] ...BGB 抵扣优惠 。 本次升级后，不仅保留了正在进行中的"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "StockRoute VIP 0 0.05% / 0.05% 0.04% / 0.04% VIP 1 0.05% / 0.05% 0.04%...   [Taker] ...BGB 抵扣优惠 。 本次升级后，不仅保留了正在进行中的 5 折优惠基准（"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "...   [Taker] ...BGB 抵扣优惠 。 本次升级后，不仅保留了正在进行中的 5 折优惠基准（即基础费率 0.05%），高等级 VIP 及 PRO 用户还将享受更低的专属折扣。 一、 最新 VIP 阶梯费率表 VIP 等级 挂单 (Ma"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "BGB 抵扣手续费 (-20%) 挂单 (Maker) / 吃单 (Taker) 及 StockRoute VIP 0 0.05% / 0.05% 0.04% / 0.04% VIP 1 0.05% / 0.05% 0.04% / 0.04% VIP"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "费 (-20%) 挂单 (Maker) / 吃单 (Taker) 及 StockRoute VIP 0 0.05% / 0.05% 0.04% / 0.04% VIP 1 0.05% / 0.05% 0.04% / 0.04% VIP 2..."
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "Taker) 及 StockRoute VIP 0 0.05% / 0.05% 0.04% / 0.04% VIP 1 0.05% / 0.05% 0.04% / 0.04% VIP 2...   [VIP] ...et Support Center"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "spot 0.05%",
+        "ctx": "StockRoute VIP 0 0.05% / 0.05% 0.04% / 0.04% VIP 1 0.05% / 0.05% 0.04% / 0.04% VIP 2...   [VIP] ...et Support Center Bitget"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "perp maker 0.0002",
+        "ctx": "费 (-20%) 挂单 (Maker) / 吃单 (Taker) 及 StockRou...   [0.02%] .../ 0.04% VIP 3 0.05% / 0.05% 0.04% / 0.04% VIP"
+      },
+      {
+        "file": "_key_extracts.txt",
+        "kind": "perp maker 0.0002",
+        "ctx": "/ 0.04% VIP 5 0.03% / 0.04% 0.024% / 0.032% VIP 6 0.02% / 0.035% 0.016% / 0.028% VIP 7 0 / 0.03% 0 / 0.02"
+      },
+      {
+        "file": "fee_promo_extension.clean.txt",
+        "kind": "spot 0.05%",
+        "ctx": "五折活动延期   9 月份起，rToken 现货交易将继续享受手续费五折优惠（即基础费率维持在 Maker/Taker 0.05%）。   活动结束时间： 本次延期结束时间暂不确定。后续如需恢复原费率或进行调整，我们将提前另行公告通知。在此期间，您可"
+      },
+      {
+        "file": "fee_promo_extension.clean.txt",
+        "kind": "spot 0.05%",
+        "ctx": "T 的 rNVDA 时，系统除了冻结 10,000 USDT 的委托资金外，还会 额外预先冻结 5 USDT（即预估的 0.05% 手续费） 。       订单撮合时，10,000 USDT 将全额用于买入 rNVDA，确保您获得足额的股票代币；"
+      },
+      {
+        "file": "fee_promo_extension.txt",
+        "kind": "spot 0.05%",
+        "ctx": "五折活动延期   9 月份起，rToken 现货交易将继续享受手续费五折优惠（即基础费率维持在 Maker/Taker 0.05%）。   活动结束时间： 本次延期结束时间暂不确定。后续如需恢复原费率或进行调整，我们将提前另行公告通知。在此期间，您可"
+      },
+      {
+        "file": "fee_promo_extension.txt",
+        "kind": "spot 0.05%",
+        "ctx": "T 的 rNVDA 时，系统除了冻结 10,000 USDT 的委托资金外，还会 额外预先冻结 5 USDT（即预估的 0.05% 手续费） 。       订单撮合时，10,000 USDT 将全额用于买入 rNVDA，确保您获得足额的股票代币；"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "spot 0.05%",
+        "ctx": "tension] 9 月份起，rToken 现货交易将继续享受手续费五折优惠（即基础费率维持在 Maker/Taker 0.05%）。 [fee_promo_extension] 活动结束时间： 本次延期结束时间暂不确定。 [fee_promo_ex"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "spot 0.05%",
+        "ctx": "T 的 rNVDA 时，系统除了冻结 10,000 USDT 的委托资金外，还会 额外预先冻结 5 USDT（即预估的 0.05% 手续费） 。 [fee_promo_extension] 卖出交易的手续费扣除逻辑保持不变（即从卖出所得的 USDT"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "spot 0.05%",
+        "ctx": "GB 抵扣优惠 。 [fee_upgrade_vip] 本次升级后，不仅保留了正在进行中的 5 折优惠基准（即基础费率 0.05%），高等级 VIP 及 PRO 用户还将享受更低的专属折扣。 [fee_upgrade_vip] 一、 最新 VIP 阶"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "spot 0.05%",
+        "ctx": "vip] 挂单 (Maker) / 吃单 (Taker) 及 StockRoute [fee_upgrade_vip] 0.05% / 0.05% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "spot 0.05%",
+        "ctx": "(Maker) / 吃单 (Taker) 及 StockRoute [fee_upgrade_vip] 0.05% / 0.05% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0.05% / 0"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% / 0.05% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0.05% / 0.05% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0.05% / 0.05% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0.05% / 0"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% / 0.05% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0.05% / 0.05% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0.05% / 0.05% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0.05% / 0"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% / 0.05% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0.05% / 0.05% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0.05% / 0.05% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0.04% / 0"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% [fee_upgrade_vip] 0.04% / 0.04% [fee_upgrade_vip] 0.04% / 0.05% [fee_upgrade_vip] 0.032% / 0.04% [fee_upgrade_vip] 0.03% /"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "perp maker 0.0002",
+        "ctx": "[fee_upgrade_vip] 0.03% / 0.04% [fee_upgrade_vip] 0.02% / 0.035% [fee_upgrade_vip] 0 / 0.03% [fee_upgrade"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "perp maker 0.0002",
+        "ctx": "fee_upgrade_vip] 0.025% / 0.04% [fee_upgrade_vip] 0.02% / 0.03200% [fee_upgrade_vip] 0.02% / 0.0375% [fee"
+      },
+      {
+        "file": "fee_sentences.txt",
+        "kind": "perp maker 0.0002",
+        "ctx": "e_upgrade_vip] 0.02% / 0.03200% [fee_upgrade_vip] 0.02% / 0.0375% [fee_upgrade_vip] 0.01% / 0.0238% [fee_"
+      },
+      {
+        "file": "fee_upgrade_vip.clean.txt",
+        "kind": "spot 0.05%",
+        "ctx": "/ PRO 阶梯费率 及 BGB 抵扣优惠 。     本次升级后，不仅保留了正在进行中的 5 折优惠基准（即基础费率 0.05%），高等级 VIP 及 PRO 用户还将享受更低的专属折扣。     一、 最新 VIP 阶梯费率表"
+      },
+      {
+        "file": "fee_upgrade_vip.clean.txt",
+        "kind": "spot 0.05%",
+        "ctx": "挂单 (Maker) / 吃单 (Taker) 及 StockRoute           VIP 0       0.05% / 0.05%       0.04% / 0.04%           VIP 1       0.05% / 0"
+      },
+      {
+        "file": "fee_upgrade_vip.clean.txt",
+        "kind": "spot 0.05%",
+        "ctx": "er) / 吃单 (Taker) 及 StockRoute           VIP 0       0.05% / 0.05%       0.04% / 0.04%           VIP 1       0.05% / 0.05%"
+      },
+      {
+        "file": "fee_upgrade_vip.clean.txt",
+        "kind": "spot 0.05%",
+        "ctx": "0.05% / 0.05%       0.04% / 0.04%           VIP 1       0.05% / 0.05%       0.04% / 0.04%           VIP 2       0.05% / 0"
+      },
+      {
+        "file": "fee_upgrade_vip.clean.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% / 0.05%       0.04% / 0.04%           VIP 1       0.05% / 0.05%       0.04% / 0.04%           VIP 2       0.05% / 0.05%"
+      },
+      {
+        "file": "fee_upgrade_vip.clean.txt",
+        "kind": "spot 0.05%",
+        "ctx": "0.05% / 0.05%       0.04% / 0.04%           VIP 2       0.05% / 0.05%       0.04% / 0.04%           VIP 3       0.05% / 0"
+      },
+      {
+        "file": "fee_upgrade_vip.clean.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% / 0.05%       0.04% / 0.04%           VIP 2       0.05% / 0.05%       0.04% / 0.04%           VIP 3       0.05% / 0.05%"
+      },
+      {
+        "file": "fee_upgrade_vip.clean.txt",
+        "kind": "spot 0.05%",
+        "ctx": "0.05% / 0.05%       0.04% / 0.04%           VIP 3       0.05% / 0.05%       0.04% / 0.04%           VIP 4       0.04% / 0"
+      },
+      {
+        "file": "fee_upgrade_vip.clean.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% / 0.05%       0.04% / 0.04%           VIP 3       0.05% / 0.05%       0.04% / 0.04%           VIP 4       0.04% / 0.05%"
+      },
+      {
+        "file": "fee_upgrade_vip.clean.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% / 0.05%       0.04% / 0.04%           VIP 4       0.04% / 0.05%       0.032% / 0.04%           VIP 5       0.03% / 0.04%"
+      },
+      {
+        "file": "fee_upgrade_vip.clean.txt",
+        "kind": "perp maker 0.0002",
+        "ctx": "0.04%       0.024% / 0.032%           VIP 6       0.02% / 0.035%       0.016% / 0.028%           VIP 7"
+      },
+      {
+        "file": "fee_upgrade_vip.clean.txt",
+        "kind": "perp maker 0.0002",
+        "ctx": "kRoute           PRO 1       0.025% / 0.04%       0.02% / 0.03200%           PRO 2       0.02% / 0.0375%"
+      },
+      {
+        "file": "fee_upgrade_vip.clean.txt",
+        "kind": "perp maker 0.0002",
+        "ctx": ".04%       0.02% / 0.03200%           PRO 2       0.02% / 0.0375%       0.016% / 0.0300%           PRO 3"
+      },
+      {
+        "file": "fee_upgrade_vip.txt",
+        "kind": "spot 0.05%",
+        "ctx": "/ PRO 阶梯费率 及 BGB 抵扣优惠 。     本次升级后，不仅保留了正在进行中的 5 折优惠基准（即基础费率 0.05%），高等级 VIP 及 PRO 用户还将享受更低的专属折扣。     一、 最新 VIP 阶梯费率表"
+      },
+      {
+        "file": "fee_upgrade_vip.txt",
+        "kind": "spot 0.05%",
+        "ctx": "挂单 (Maker) / 吃单 (Taker) 及 StockRoute           VIP 0       0.05% / 0.05%       0.04% / 0.04%           VIP 1       0.05% / 0"
+      },
+      {
+        "file": "fee_upgrade_vip.txt",
+        "kind": "spot 0.05%",
+        "ctx": "er) / 吃单 (Taker) 及 StockRoute           VIP 0       0.05% / 0.05%       0.04% / 0.04%           VIP 1       0.05% / 0.05%"
+      },
+      {
+        "file": "fee_upgrade_vip.txt",
+        "kind": "spot 0.05%",
+        "ctx": "0.05% / 0.05%       0.04% / 0.04%           VIP 1       0.05% / 0.05%       0.04% / 0.04%           VIP 2       0.05% / 0"
+      },
+      {
+        "file": "fee_upgrade_vip.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% / 0.05%       0.04% / 0.04%           VIP 1       0.05% / 0.05%       0.04% / 0.04%           VIP 2       0.05% / 0.05%"
+      },
+      {
+        "file": "fee_upgrade_vip.txt",
+        "kind": "spot 0.05%",
+        "ctx": "0.05% / 0.05%       0.04% / 0.04%           VIP 2       0.05% / 0.05%       0.04% / 0.04%           VIP 3       0.05% / 0"
+      },
+      {
+        "file": "fee_upgrade_vip.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% / 0.05%       0.04% / 0.04%           VIP 2       0.05% / 0.05%       0.04% / 0.04%           VIP 3       0.05% / 0.05%"
+      },
+      {
+        "file": "fee_upgrade_vip.txt",
+        "kind": "spot 0.05%",
+        "ctx": "0.05% / 0.05%       0.04% / 0.04%           VIP 3       0.05% / 0.05%       0.04% / 0.04%           VIP 4       0.04% / 0"
+      },
+      {
+        "file": "fee_upgrade_vip.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% / 0.05%       0.04% / 0.04%           VIP 3       0.05% / 0.05%       0.04% / 0.04%           VIP 4       0.04% / 0.05%"
+      },
+      {
+        "file": "fee_upgrade_vip.txt",
+        "kind": "spot 0.05%",
+        "ctx": "% / 0.05%       0.04% / 0.04%           VIP 4       0.04% / 0.05%       0.032% / 0.04%           VIP 5       0.03% / 0.04%"
+      },
+      {
+        "file": "fee_upgrade_vip.txt",
+        "kind": "perp maker 0.0002",
+        "ctx": "0.04%       0.024% / 0.032%           VIP 6       0.02% / 0.035%       0.016% / 0.028%           VIP 7"
+      },
+      {
+        "file": "fee_upgrade_vip.txt",
+        "kind": "perp maker 0.0002",
+        "ctx": "kRoute           PRO 1       0.025% / 0.04%       0.02% / 0.03200%           PRO 2       0.02% / 0.0375%"
+      },
+      {
+        "file": "fee_upgrade_vip.txt",
+        "kind": "perp maker 0.0002",
+        "ctx": ".04%       0.02% / 0.03200%           PRO 2       0.02% / 0.0375%       0.016% / 0.0300%           PRO 3"
+      }
+    ]
+  },
+  "b_spread": {
+    "files_scanned": [
+      "2026-09-12.csv",
+      "2026-09-13.csv",
+      "2026-09-14.csv",
+      "2026-09-15.csv",
+      "2026-09-18.csv",
+      "2026-09-19.csv"
+    ],
+    "dates_seen": [
+      "2026-09-12",
+      "2026-09-13",
+      "2026-09-14",
+      "2026-09-15",
+      "2026-09-18",
+      "2026-09-19"
+    ],
+    "window": [
+      "2026-09-12 08:00",
+      "2026-09-14 08:00"
+    ],
+    "n_spot": 14113,
+    "n_perp": 14118,
+    "spot_full_spread_med_bp": 8.5504,
+    "perp_full_spread_med_bp": 0.4383,
+    "perp_half_spread_med_bp": 0.2192,
+    "spot_full_spread_med_pb_bp": 6.7262,
+    "perp_full_spread_med_pb_bp": 0.3735,
+    "perp_half_spread_med_pb_bp": 0.1867,
+    "spot_per_base_bp": {
+      "AAPL": 27.983,
+      "GOOGL": 4.9965,
+      "HOOD": 28.518,
+      "META": 25.7623,
+      "MRVL": 5.5486,
+      "NVDA": 2.7615,
+      "QQQ": 7.9037,
+      "SOXL": 0.8178,
+      "SPY": 18.0385,
+      "TSLA": 5.4438
+    },
+    "perp_per_base_bp": {
+      "AAPL": 0.2998,
+      "GOOGL": 0.2965,
+      "HOOD": 1.7913,
+      "META": 0.309,
+      "MRVL": 0.4381,
+      "NVDA": 0.4589,
+      "QQQ": 0.14,
+      "SOXL": 0.8251,
+      "SPY": 0.1307,
+      "TSLA": 0.5439
+    }
+  },
+  "funding": {
+    "n": 10,
+    "per_base": {
+      "TSLA": 2.4067,
+      "NVDA": 1.5707,
+      "AAPL": 2.312,
+      "META": 3.7147,
+      "GOOGL": 3.9213,
+      "SPY": 0.4067,
+      "QQQ": 4.6147,
+      "SOXL": 1.7133,
+      "HOOD": 1.2547,
+      "MRVL": 2.892
+    },
+    "median_bp": 2.3594,
+    "source": "data/derived/funding_rates.csv (A 侧派生；此处只重算中位)"
+  },
+  "chain": {
+    "roundtrip_maker_bp": 14.0,
+    "perp_half_spread_med_bp": 0.1867,
+    "hurdle_gross_bp": 13.6266,
+    "funding_median_bp": 2.3594,
+    "hurdle_net_bp": 11.2672
+  },
+  "verdict": {
+    "matches": false,
+    "dev_gross_bp": 0.0734,
+    "dev_net_bp": 0.0728,
+    "mode": "独立复算（乙侧原始盘口）",
+    "note": "独立复算（乙侧原始盘口）：存在差异"
+  }
+}

@@ -1,0 +1,350 @@
+{
+  "_note": "参数冻结快照。任何被冻文件改动都会让 --verify 报分叉；报告数字只对这些哈希负责。",
+  "hash_convention": "SHA256 只对文本内容计算：哈希前把 CRLF 全部换成 LF（.py/.md/.txt/.csv/.json/.yml/.ini/.cfg/.tsv 等文本后缀）；二进制文件仍取原始字节。原因是仓库 core.autocrlf=true 且无 .gitattributes，同一 blob 在 Windows 与 Linux 上 checkout出的工作区字节不同，不归一化会让换平台 clone 后的 --verify全部误报。每条另记 eol 字段仅供参考，eol 不同不影响比对结果。",
+  "frozen_at": "2026-09-19 01:11:53 +08:00",
+  "repo": {
+    "base_commit": "18fb5d18e47cdbaedffd3e529cc0811c3d2c3081",
+    "branch": "main",
+    "tag": "freeze-20260919"
+  },
+  "criteria_source": "docs/21 §「冻结前必须知道的事」 + docs/28 §T1/§T0",
+  "files": {
+    "common/market_calendar.py": {
+      "sha256": "63bb1ac54b464f41aafc6405af8b925689952b6c8106e42814c3b1f2c151d994",
+      "bytes": 7398,
+      "eol": "crlf",
+      "last_commit": "51cbd3b",
+      "last_commit_time": "2026-09-13 01:42"
+    },
+    "build_panel.py": {
+      "sha256": "cb1b57003ceb37e5fbc0728aa46c742bc18483335c8155d8a21f493b51983ef0",
+      "bytes": 20658,
+      "eol": "crlf",
+      "last_commit": "bdb0e90",
+      "last_commit_time": "2026-09-14 18:07"
+    },
+    "data/panel/1h_10pairs.csv": {
+      "sha256": "287e070965318b78e3441e175b4ea305bc51946f88f5c5003ef4f8b9188b8ae1",
+      "bytes": 2119705,
+      "eol": "crlf",
+      "last_commit": "bdb0e90",
+      "last_commit_time": "2026-09-14 18:07"
+    },
+    "tools/reproduce_check.py": {
+      "sha256": "b979ecb1a15495a555694596fb70cb4fc5efc9e5a90bc51ad9f67a4bbd2f461b",
+      "bytes": 25724,
+      "eol": "crlf",
+      "last_commit": "c70ddcb",
+      "last_commit_time": "2026-09-17 02:45"
+    },
+    "data/derived/basis_5m_AAPLUSDT.csv": {
+      "sha256": "6d3a84203e1db66bde25e0aed3ecd12ee9ae4687abdad3b9711f948f7288f87e",
+      "bytes": 245515,
+      "eol": "crlf",
+      "last_commit": "7260511",
+      "last_commit_time": "2026-09-12 23:51"
+    },
+    "data/derived/basis_5m_GOOGLUSDT.csv": {
+      "sha256": "5b60b74333eb21c94d67f7f36bb02eadc25c49e5406e185d841835336d7f12ef",
+      "bytes": 265132,
+      "eol": "crlf",
+      "last_commit": "7260511",
+      "last_commit_time": "2026-09-12 23:51"
+    },
+    "data/derived/basis_5m_HOODUSDT.csv": {
+      "sha256": "eb11a0722cb8f05e7a4e1e0ea14330a2a27c38a9468846cf89c6ac14b8cd8021",
+      "bytes": 254989,
+      "eol": "crlf",
+      "last_commit": "7260511",
+      "last_commit_time": "2026-09-12 23:51"
+    },
+    "data/derived/basis_5m_METAUSDT.csv": {
+      "sha256": "ea4ee70427f6fddb24209a008192bb2c5cfb999c768429e49b8952452b23304c",
+      "bytes": 236176,
+      "eol": "crlf",
+      "last_commit": "7260511",
+      "last_commit_time": "2026-09-12 23:51"
+    },
+    "data/derived/basis_5m_MRVLUSDT.csv": {
+      "sha256": "d736fa2dec107939cfc158a5d1758923488a19890c3a9daa949fc78fbb27dd41",
+      "bytes": 246722,
+      "eol": "crlf",
+      "last_commit": "7260511",
+      "last_commit_time": "2026-09-12 23:51"
+    },
+    "data/derived/basis_5m_NVDAUSDT.csv": {
+      "sha256": "e7981d8b2cbab3dff317d8e4532f36b3dfab905daa77c3e50c07aeabde3ec4b9",
+      "bytes": 314121,
+      "eol": "crlf",
+      "last_commit": "7260511",
+      "last_commit_time": "2026-09-12 23:51"
+    },
+    "data/derived/basis_5m_QQQUSDT.csv": {
+      "sha256": "cd67d497c1eacc41cecbbeac96b91e9e406cd8adba9c848e4c37db11476fd86a",
+      "bytes": 261352,
+      "eol": "crlf",
+      "last_commit": "7260511",
+      "last_commit_time": "2026-09-12 23:51"
+    },
+    "data/derived/basis_5m_SOXLUSDT.csv": {
+      "sha256": "2527e73873a76b75b72f7664ba6bdf00b71fb76756e646d8aac6d0a5059a00fb",
+      "bytes": 186741,
+      "eol": "crlf",
+      "last_commit": "7260511",
+      "last_commit_time": "2026-09-12 23:51"
+    },
+    "data/derived/basis_5m_SPYUSDT.csv": {
+      "sha256": "40b29e5bf8c40e846f5fe85561f4fb4ddf518c308e4674376928ecf573c47eb6",
+      "bytes": 217718,
+      "eol": "crlf",
+      "last_commit": "7260511",
+      "last_commit_time": "2026-09-12 23:51"
+    },
+    "data/derived/basis_5m_TSLAUSDT.csv": {
+      "sha256": "165fac2f5ba6151937ff576306c6cba349db0303c2a680c233107157e64b4016",
+      "bytes": 274937,
+      "eol": "crlf",
+      "last_commit": "7260511",
+      "last_commit_time": "2026-09-12 23:51"
+    },
+    "data/derived/basis_decomposition.csv": {
+      "sha256": "2162f4c3932f26fc6c32305b38e356a0b52cd2669ff4da38d770d7695d74970f",
+      "bytes": 1639623,
+      "eol": "crlf",
+      "last_commit": "b6e137c",
+      "last_commit_time": "2026-09-13 22:42"
+    },
+    "data/derived/capacity_perp_2026-09-13.csv": {
+      "sha256": "c553533760e908819f9d1ece5c05ac077aadaf33756638cc1df8a31dcd0be342",
+      "bytes": 4575414,
+      "eol": "crlf",
+      "last_commit": "b8909ef",
+      "last_commit_time": "2026-09-13 15:14"
+    },
+    "data/derived/friction_budget.csv": {
+      "sha256": "def40160fbbe897cfb587959364ecc4738d4dbb8b7b1173ae798060a68c131a0",
+      "bytes": 903,
+      "eol": "crlf",
+      "last_commit": "a2651a5",
+      "last_commit_time": "2026-09-14 00:05"
+    },
+    "data/derived/funding_rates.csv": {
+      "sha256": "f5c2b1723f1663269d09d271c1c0a9b1a68a55150de7e3216a79b36dbac3250f",
+      "bytes": 889,
+      "eol": "crlf",
+      "last_commit": "2205d94",
+      "last_commit_time": "2026-09-14 19:04"
+    },
+    "data/derived/maker_fill_model_perp.csv": {
+      "sha256": "15f2a290cf8bdfe0d4db94380ff40d9b37ceabbd5521013eabaa798e48db660c",
+      "bytes": 900,
+      "eol": "crlf",
+      "last_commit": "2935392",
+      "last_commit_time": "2026-09-13 23:51"
+    },
+    "data/derived/maker_fill_model_spot.csv": {
+      "sha256": "9224fbd7b34d64e1ab953aac1cb6c4f1a2bf3360ba216546f597811c22eea593",
+      "bytes": 793,
+      "eol": "crlf",
+      "last_commit": "a2651a5",
+      "last_commit_time": "2026-09-14 00:05"
+    },
+    "data/derived/precise_fill_perp_ask.csv": {
+      "sha256": "4560da8888a63491b4196ae970b4144788be58598d79664979b0e9a70be611c9",
+      "bytes": 2379,
+      "eol": "crlf",
+      "last_commit": "a2651a5",
+      "last_commit_time": "2026-09-14 00:05"
+    },
+    "data/derived/precise_fill_spot_bid.csv": {
+      "sha256": "a598325d839cc61a05c855d24a8056b90174669ed8a05b1dff0a1b2389b1ea02",
+      "bytes": 2053,
+      "eol": "crlf",
+      "last_commit": "a2651a5",
+      "last_commit_time": "2026-09-14 00:05"
+    }
+  },
+  "b_side_deliverables": {
+    "tools/b_side_rolling_sharpe_1h.py": {
+      "sha256": "67c513b4ce5c687fba1d12dfe9d8086627ad46b909bb7ef3003df76aa95fcf02",
+      "bytes": 19877,
+      "eol": "crlf",
+      "last_commit": "9ec5f8b",
+      "last_commit_time": "2026-09-18 01:50"
+    },
+    "tools/b_side_rolling_sharpe_1day.py": {
+      "sha256": "7bd5f3c638a7d8bffafb4f58635e8a979e15cd5e041e7fea457afd48d8ff6205",
+      "bytes": 19397,
+      "eol": "crlf",
+      "last_commit": "9ec5f8b",
+      "last_commit_time": "2026-09-18 01:50"
+    },
+    "tools/b_side_rolling_sharpe_plot.py": {
+      "sha256": "4d7018d3caafbb83afb829fb18cbe74064d63f2d586fe9116bb57e9d4aea527f",
+      "bytes": 8569,
+      "eol": "lf",
+      "last_commit": "545b2ae",
+      "last_commit_time": "2026-09-18 01:18"
+    },
+    "tools/b_side_backtest_basis_timing.py": {
+      "sha256": "bc1912b1db89d15523479d0fe9bfb7b4d04ccc7ab53d0b4bba3a56009ae96668",
+      "bytes": 19573,
+      "eol": "lf",
+      "last_commit": "e3ee705",
+      "last_commit_time": "2026-09-15 17:28"
+    },
+    "tools/b_side_backtest_fee_sensitivity.py": {
+      "sha256": "2d30d9ed9a5386da05e1fbcf4192edfdfda771b1b02546912be42d3f10ae63cd",
+      "bytes": 3434,
+      "eol": "lf",
+      "last_commit": "e3ee705",
+      "last_commit_time": "2026-09-15 17:28"
+    },
+    "tools/b_side_cost_threshold_recalc.py": {
+      "sha256": "20883682547229c91e55e2265904cb5e00a98b31d47e5ba0873247f339153415",
+      "bytes": 16326,
+      "eol": "crlf",
+      "last_commit": "",
+      "last_commit_time": ""
+    },
+    "tools/b_side_verify_panel.py": {
+      "sha256": "35bcb72ed25d7512a9ba12c27b968d3da0ed4127fece577df7f8a5040147f9a6",
+      "bytes": 12178,
+      "eol": "crlf",
+      "last_commit": "f5daec5",
+      "last_commit_time": "2026-09-13 00:36"
+    },
+    "data/b-side/rolling/rolling_sharpe_1h.json": {
+      "sha256": "7b77817ed9dc5655d3d2a1a035dad01c4807a27e93c96fe9bb34d8c4e0006fd7",
+      "bytes": 13688,
+      "eol": "crlf",
+      "last_commit": "545b2ae",
+      "last_commit_time": "2026-09-18 01:18"
+    },
+    "data/b-side/rolling/rolling_sharpe_1day.json": {
+      "sha256": "c0b4d3a1d1c331cc246caec49a8d4759abb6856fb5c7631312c55abea26f6e64",
+      "bytes": 52189,
+      "eol": "crlf",
+      "last_commit": "545b2ae",
+      "last_commit_time": "2026-09-18 01:18"
+    },
+    "data/b-side/rolling/rolling_sharpe_1h.csv": {
+      "sha256": "286afe4493bda9b5ff84bb61ddd651587bc39fb8dfcca5df0d5f8baf384f0977",
+      "bytes": 1594,
+      "eol": "lf",
+      "last_commit": "545b2ae",
+      "last_commit_time": "2026-09-18 01:18"
+    },
+    "data/b-side/rolling/rolling_sharpe_1day.csv": {
+      "sha256": "cd9cfad6d039db3024e085f9692064a76d76d697dea04bde13bb4b1d5486d5ba",
+      "bytes": 8615,
+      "eol": "lf",
+      "last_commit": "545b2ae",
+      "last_commit_time": "2026-09-18 01:18"
+    },
+    "data/b-side/backtest/backtest_result.json": {
+      "sha256": "2c43421efc51989c5e9a490d2310a2af2f26d9cc2d00c7159df6fea50fd1e0eb",
+      "bytes": 10414,
+      "eol": "crlf",
+      "last_commit": "e3ee705",
+      "last_commit_time": "2026-09-15 17:28"
+    },
+    "data/b-side/backtest/trades.csv": {
+      "sha256": "3a2cb074a1ee88f07d8f55eddd659d5e26619f18281b8442ce35ba38890c79cd",
+      "bytes": 13644,
+      "eol": "lf",
+      "last_commit": "e3ee705",
+      "last_commit_time": "2026-09-15 17:28"
+    }
+  },
+  "amended": [
+    {
+      "file": "tools/reproduce_check.py",
+      "changed_at": "2026-09-17 02:45 +08:00",
+      "commit": "c70ddcb",
+      "nature": "只新增断言（辩论层自检 + 3 项源码特征检查），自检项数 83 -> 87",
+      "conclusion_unchanged": true,
+      "evidence": "复跑 python tools/reproduce_check.py：原 83 项一项没少，没有任何一项从通过变成失败",
+      "note": "A 自立于 docs/21 的边界「09-16 之后不改冻结清单里的任何文件」，本次改动违反了该边界；因性质是「只加断言、不改数字」，此处如实记录而不回退。"
+    }
+  ],
+  "strategy_params": {
+    "entry_threshold_bp": 11.34,
+    "exit_threshold_bp": 0.0,
+    "max_hold_hours_1h_axis": 48,
+    "max_hold_days_1day_axis": 7,
+    "roll_days": 30,
+    "bars_per_year_1h": 2496,
+    "bars_per_year_1day": 252,
+    "pool_1h_axis": 9,
+    "pool_1day_axis": 30,
+    "cost_full_maker_roundtrip_bp": 14.0,
+    "cost_perp_taker_roundtrip_bp": 22.0,
+    "rolling_sharpe_1h.json": {
+      "config": {
+        "entry": 11.34,
+        "exit": 0.0,
+        "max_hold": 48
+      },
+      "days": 30,
+      "symbols": 9,
+      "bars_per_year": 2496
+    },
+    "rolling_sharpe_1day.json": {
+      "main": {
+        "entry": 11.34,
+        "exit": 0.0,
+        "max_hold": 7
+      },
+      "days": 30,
+      "pool_size": 30,
+      "bars_per_year": 252
+    }
+  },
+  "frozen_results": {
+    "sharpe_pooled_single_symbol_ann": 3.64,
+    "sharpe_portfolio_ann": 8.71,
+    "sharpe_1day_segments_nonoverlap": [
+      13.16,
+      11.96,
+      14.98,
+      4.08,
+      3.59,
+      9.28,
+      8.21
+    ],
+    "sharpe_1day_segment_median": 9.28,
+    "sharpe_1h_head_tail": [
+      10.03,
+      8.36
+    ],
+    "decay_is_oos": 0.896,
+    "sharpe_is": 4.23,
+    "sharpe_oos": 3.79,
+    "note": "Sharpe 必须标口径，见 docs/b-side/09；1day 轴为毛收益（面板无点差列）"
+  },
+  "gates": {
+    "total_span_days": {
+      "1h_axis": 58.38,
+      "1day_axis": 221.0,
+      "threshold": 60,
+      "verdict": "1h 轴未达 / 1day 轴达标 3.7 倍 -> 待 A 裁定认哪条轴"
+    },
+    "out_of_sample_days": {
+      "value": null,
+      "threshold": 30,
+      "verdict": "待口径确定"
+    },
+    "decay": {
+      "value": 0.896,
+      "threshold": 0.5,
+      "verdict": "达标"
+    }
+  },
+  "totals": {
+    "n_files": 35,
+    "bytes": 11099340,
+    "n_missing": 0,
+    "missing": []
+  }
+}
