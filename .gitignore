@@ -74,3 +74,7 @@ data/spread/*.csv
 MSG_ARCH.txt
 
 PERFMSG.txt
+
+# 密钥配置（09-18 增）：key 绝不入库，只提交模板
+*.env
+!.env.example

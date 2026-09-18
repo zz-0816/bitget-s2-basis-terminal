@@ -157,6 +157,15 @@ def static_gate(base, now_ms):
 
 # ---------------------------------------------------------------- LLM 路径
 
+PROMPT_VERSION = "v2-2026-09-18"    # prompt 改动必须升版本号，否则日志分不清新旧判断
+
+# 🔴 用户明确选择（2026-09-18）：**保守优先** ——
+# LLM 调用失败时**暂停挂单**，而不是退回确定性日历继续做。
+# 理由（用户原话）："我希望的是更保守，稳定资金增长，而不因为 LLM 问题
+# 导致资金不必要的减少"。
+# 代价：LLM 抖动时会放弃一些本可做的机会 —— 这个代价是**明知且接受**的。
+FAIL_CLOSED_ON_LLM_ERROR = True
+
 LLM_PROMPT = """你是交易系统的事件风险过滤器。你的**唯一**任务是判断：
 给定的新闻标题里，是否存在会让我方"挂单被逆向选择"的信息事件。
 
@@ -165,55 +174,91 @@ LLM_PROMPT = """你是交易系统的事件风险过滤器。你的**唯一**任
  "reason": "一句话理由", "confidence": 0.0-1.0}
 
 判断标准：
-- 财报、业绩预告、重大合同、监管处罚、并购、退市风险 -> severity="block"
+- 财报、业绩预告、重大合同、监管处罚、并购、退市风险、**监管新规** -> severity="block"
 - 宏观数据（CPI/非农/利率决议）、行业级重大新闻 -> severity="caution"
-- 与标的无关的普通新闻、营销内容 -> severity="none"
-保守原则：不确定时给 "caution"，不要给 "none"。
+- 与标的无关的普通新闻、营销内容、例行内部人交易 -> severity="none"
+
+三条硬要求：
+1. **只看给定标题里的事实**，不许补充标题之外的背景或推测；
+   若标题不足以判断，给 "caution" 并在 reason 里说明"信息不足"。
+2. 若给了「我方策略口径与历史案例」，**只用于理解我方在做什么**，
+   不得据此编造不存在的事件。
+3. 保守原则：不确定时给 "caution"，不要给 "none"。
 """
 
 
-def llm_gate(base, now_ms, headlines, model, api_key, base_url):
-    """调 OpenAI 兼容端点做新闻分类。失败时**回退到 static**，绝不抛异常。"""
+def llm_gate(base, now_ms, headlines, model, api_key, base_url,
+             timeout=45, max_retry=2, thinking=False, rag_context=None):
+    """调 OpenAI 兼容端点做事件分类（DeepSeek 官方端点即兼容）。
+
+    2026-09-18 增强（用户明确要求）：
+      * **重试**：`max_retry` 次（网络抖动常见；一次失败不该直接降级）；
+      * **思考模式**：`thinking=False` 时显式关闭。事件判断是**分类任务**，
+        默认开启的思考链会带来延迟与抖动，分类要的是**稳定**；
+      * **RAG 上下文**：`rag_context` 可注入我们自己的口径与历史案例，
+        让模型判断时知道"我们这条策略的边界在哪"；
+      * 🔴 **失败语义交给调用方**：本函数只如实返回 `source`（含错误原因），
+        **是否 fail-closed（暂停挂单）由 `assess()` / `analyst_news` 决定** ——
+        用户选择是**保守**（止损优先），见 `FAIL_CLOSED_ON_LLM_ERROR`。
+
+    失败时回退到 static，但会把失败原因写进 `source`，**绝不静默**。
+    """
     import urllib.request
     import threading
 
-    body = json.dumps({
+    user_msg = ("标的：%s\n时间：%s\n"
+                % (base, dt.datetime.fromtimestamp(now_ms / 1000, dt.UTC).isoformat()))
+    if rag_context:
+        user_msg += "【我方策略口径与历史案例（供参考，不得据此编造事实）】\n%s\n" % rag_context
+    user_msg += "新闻标题：\n%s" % ("\n".join("- " + h for h in headlines) or "（无）")
+
+    payload = {
         "model": model,
         "messages": [
             {"role": "system", "content": LLM_PROMPT},
-            {"role": "user", "content": "标的：%s\n时间：%s\n新闻标题：\n%s"
-             % (base,
-                dt.datetime.fromtimestamp(now_ms / 1000, dt.UTC).isoformat(),
-                "\n".join("- " + h for h in headlines) or "（无）")},
+            {"role": "user", "content": user_msg},
         ],
         "temperature": 0,
         "response_format": {"type": "json_object"},
-    }).encode("utf-8")
+    }
+    if not thinking:
+        # DeepSeek V4 系列默认开启思考模式；事件分类不需要，显式关掉
+        payload["thinking"] = {"type": "disabled"}
+    body = json.dumps(payload).encode("utf-8")
 
-    box = {}
+    box = {"attempts": 0, "errors": []}
 
     def work():
-        try:
-            req = urllib.request.Request(
-                base_url.rstrip("/") + "/chat/completions", data=body,
-                headers={"Content-Type": "application/json",
-                         "Authorization": "Bearer " + api_key})
-            with urllib.request.urlopen(req, timeout=45) as r:
-                box["r"] = json.loads(r.read().decode("utf-8"))
-        except Exception as exc:  # noqa: BLE001
-            box["e"] = "%s: %s" % (type(exc).__name__, exc)
+        for i in range(max(1, int(max_retry) + 1)):
+            box["attempts"] = i + 1
+            try:
+                req = urllib.request.Request(
+                    base_url.rstrip("/") + "/chat/completions", data=body,
+                    headers={"Content-Type": "application/json",
+                             "Authorization": "Bearer " + api_key})
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    box["r"] = json.loads(r.read().decode("utf-8"))
+                return
+            except Exception as exc:  # noqa: BLE001
+                box["errors"].append("%s: %s" % (type(exc).__name__, str(exc)[:80]))
 
     # 本机实测：urllib 必须在线程里跑（否则偶发挂起）
     t = threading.Thread(target=work)
     t.start()
     t.join()
 
-    if "e" in box:
+    if "r" not in box:
         fallback = static_gate(base, now_ms)
-        fallback["source"] = "static(LLM 失败回退: %s)" % box["e"][:60]
+        fallback["source"] = ("static(LLM 失败 %d 次: %s)"
+                              % (box["attempts"], box["errors"][-1][:60]
+                                 if box["errors"] else "unknown"))
+        fallback["llm_ok"] = False
+        fallback["llm_attempts"] = box["attempts"]
+        fallback["llm_errors"] = box["errors"][-3:]
         return fallback
     try:
         content = box["r"]["choices"][0]["message"]["content"]
+        usage = (box["r"].get("usage") or {})
         d = json.loads(content)
         sev = d.get("severity", "caution")
         return {"in_window": bool(d.get("is_event_window")),
@@ -221,11 +266,18 @@ def llm_gate(base, now_ms, headlines, model, api_key, base_url):
                 "reason": str(d.get("reason", ""))[:200],
                 "confidence": float(d.get("confidence", 0.0)),
                 "source": "llm",
-                "prompt_version": "v1",
-                "headlines": headlines}
+                "prompt_version": PROMPT_VERSION,
+                "headlines": headlines,
+                "llm_ok": True,
+                "llm_attempts": box["attempts"],
+                # 记 token 用量：成本可控是"每轮都调"能否接受的前提
+                "llm_usage": {"prompt_tokens": usage.get("prompt_tokens"),
+                              "completion_tokens": usage.get("completion_tokens"),
+                              "model": box["r"].get("model", model)}}
     except (KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
         fallback = static_gate(base, now_ms)
         fallback["source"] = "static(LLM 响应解析失败: %r)" % (exc,)
+        fallback["llm_ok"] = False
         return fallback
 
 
@@ -302,7 +354,8 @@ def _sources_of(records):
 
 
 def assess(base, now_ms=None, cost=None, size_usd=None, mode="auto",
-           model=None, api_key=None, base_url=None, headlines=None):
+           model=None, api_key=None, base_url=None, headlines=None,
+           rag_context=None):
     """⭐ 风险与理由引擎 —— 大模型在运行期的核心职责。
 
     回答用户下单前最需要的三件事（**输出理由与条件，不是订单**）：
@@ -333,29 +386,59 @@ def assess(base, now_ms=None, cost=None, size_usd=None, mode="auto",
 
     confidence = CONF_CAP_STATIC if not sources else 0.85
     llm_err = None
+    llm_meta = {}
+    _rag_default_used = {"v": False}
     if mode == "llm":
         try:
-            key = (api_key or os.environ.get("OPENAI_API_KEY")
+            cfg = {}
+            try:
+                from common import config as _cfg          # noqa: N813
+                cfg = _cfg.llm_kwargs()
+            except Exception:  # noqa: BLE001
+                pass
+            key = (api_key or cfg.get("api_key")
+                   or os.environ.get("OPENAI_API_KEY")
                    or os.environ.get("LLM_API_KEY"))
             if not key:
-                # 没有 key：**如实记录"没跑成"**，不要静默退回 static 假装跑过
-                llm_err = "未配置 OPENAI_API_KEY / LLM_API_KEY"
+                llm_err = "未配置 LLM_API_KEY（`.env` 里填；见 .env.example）"
             else:
+                # RAG：把我们的口径与历史案例注入，让模型知道策略边界
+                rag = rag_context
+                if rag is None:
+                    try:
+                        from common import rag_memory as _rag
+                        rag = _rag.build_context(base)
+                        _rag_default_used["v"] = bool(rag)
+                    except Exception:  # noqa: BLE001
+                        rag = None
                 llm = llm_gate(base, now_ms, list(headlines or []),
-                               model or "gpt-4o-mini", key,
-                               base_url or os.environ.get(
-                                   "LLM_BASE_URL", "https://api.openai.com/v1"))
+                               (model or cfg.get("model") or "deepseek-v4-pro"), key,
+                               (base_url or cfg.get("base_url")
+                                or "https://api.deepseek.com"),
+                               timeout=cfg.get("timeout", 45),
+                               max_retry=cfg.get("max_retry", 2),
+                               thinking=cfg.get("thinking", False),
+                               rag_context=rag)
+                llm_meta = {k: llm.get(k) for k in
+                            ("llm_ok", "llm_attempts", "llm_usage", "prompt_version")
+                            if k in llm}
                 if llm.get("source") == "llm":
                     ev = llm
                     confidence = float(llm.get("confidence", 0.5))
                 else:
-                    llm_err = str(llm.get("source", ""))[:80]
+                    llm_err = str(llm.get("source", ""))[:110]
         except Exception as exc:  # noqa: BLE001
             llm_err = "%s: %s" % (type(exc).__name__, str(exc)[:60])
     if llm_err and mode == "llm":
-        # 请求了 LLM 但没成功 —— 必须让调用方看得见（否则又是"说了没做"）
         ev = dict(ev)
         ev["source"] = "static(LLM 未执行: %s)" % llm_err
+        # 🔴 保守优先（用户选择）：LLM 不可用 -> **暂停挂单**，而不是退回日历继续做。
+        #    退回日历只能挡"可计算事件"，挡不住突发新闻 —— 那正是挂单被逆向选择的场景。
+        if FAIL_CLOSED_ON_LLM_ERROR:
+            ev["severity"] = "block"
+            ev["reason"] = ("LLM 事件判断不可用（%s）——按保守原则暂停挂单"
+                            "（FAIL_CLOSED_ON_LLM_ERROR=True）" % llm_err[:60])
+            ev["fail_closed"] = True
 
     # ⚠️ 「真实」要求：没有可回溯来源时，**不允许**给出高置信度。
     if not sources:
@@ -420,7 +503,8 @@ def assess(base, now_ms=None, cost=None, size_usd=None, mode="auto",
         "base": base, "ts": now_ms, "mode": mode,
         "event": {"in_window": bool(ev.get("in_window")),
                   "severity": sev, "reason": ev.get("reason", ""),
-                  "source": ev.get("source", "")},
+                  "source": ev.get("source", ""),
+                  "fail_closed": bool(ev.get("fail_closed"))},
         "confidence": round(confidence, 2),
         "sources": sources,
         "risk_level": risk,
@@ -428,6 +512,11 @@ def assess(base, now_ms=None, cost=None, size_usd=None, mode="auto",
         "rationale": rationale,
         "warnings": warnings,
         "conditions": conditions,
+        # LLM 执行留痕：这次到底用没用 LLM、用了几次、花了多少 token
+        "llm": {"used": ev.get("source", "").startswith("llm"),
+                "err": llm_err, "fail_closed": bool(ev.get("fail_closed")),
+                "prompt_version": PROMPT_VERSION, **llm_meta},
+        "rag_used": bool(rag_context is not None or _rag_default_used.get("v")),
     }
 
 

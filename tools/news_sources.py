@@ -207,6 +207,59 @@ def rss_source(source_id, name, url, base=None, limit=8):
 
 # ---------------------------------------------------------------- 分类与筛选
 
+STATE_FILE = os.path.join(BASE, "data", "derived", "news_state.json")
+
+
+def _load_state():
+    try:
+        with open(STATE_FILE, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {"seen": {}, "last_poll": None, "calls": 0}
+
+
+def _save_state(st):
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    with open(STATE_FILE, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(st, fh, ensure_ascii=False, indent=1, sort_keys=True)
+
+
+def _item_key(it):
+    return it.get("url") or ("%s|%s" % (it.get("source", ""), it.get("title", "")))
+
+
+def event_driven_check(items, state=None):
+    """**事件驱动**：判断本轮有没有"新条目"值得调 LLM。
+
+    用户选择（2026-09-18 第 1 条）：「我主要是需要新新闻的解读，
+    不需要过多的旧新闻新解读」。所以规则很直接：
+
+      * 首次运行（没有状态）-> **要调**（否则第一轮会漏掉所有现存事件）
+      * 出现**没见过的条目** -> **要调**
+      * 全是见过的 -> **不调**（省下一次 LLM 调用）
+
+    返回 ``(should_call, fresh_items, state)``。
+    这一条把 LLM 调用从"每轮一次"降到"有新东西才一次" ——
+    是**成本可控的主要手段**（配套：`docs/33` §1 的成本估算）。
+    """
+    st = state if state is not None else _load_state()
+    seen = st.setdefault("seen", {})
+    fresh = []
+    now = dt.datetime.now(dt.UTC).isoformat()
+    for it in items:
+        k = _item_key(it)
+        if not k:
+            continue
+        if k not in seen:
+            seen[k] = now
+            fresh.append(it)
+    # 状态文件只保留最近 3000 条 key —— 防止它自己无限增长（也是一种"上下文膨胀"）
+    if len(seen) > 3000:
+        for k in sorted(seen, key=lambda z: seen[z])[:len(seen) - 3000]:
+            seen.pop(k, None)
+    st["last_poll"] = now
+    return (bool(fresh) or not st.get("bootstrapped")), fresh, st
+
 def classify_item(it):
     """给条目打标签：macro / earnings / filing / other。
 
@@ -262,6 +315,8 @@ def main(argv=None):
     ap.add_argument("--rounds", type=int, default=1)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--save", action="store_true", help="落盘 data/derived/news_latest.json")
+    ap.add_argument("--event-driven", action="store_true",
+                    help="只在出现**新条目**时才建议调 LLM（省成本主手段）")
     args = ap.parse_args(argv)
 
     base = (args.base or "").upper()
@@ -371,6 +426,34 @@ def main(argv=None):
           "不是把全部新闻倒进去：" % len(heads))
     for h in heads[:6]:
         print("     · %s" % h[:92])
+
+    # ---- 事件驱动：只有"新条目"才值得调 LLM ----
+    if args.event_driven:
+        state = _load_state()
+        first = not state.get("bootstrapped")
+        should, fresh, state = event_driven_check(result["items"], state)
+        result["event_driven"] = {"should_call_llm": should,
+                                  "n_total": len(result["items"]),
+                                  "n_fresh": len(fresh),
+                                  "first_run": first}
+        print()
+        print("  事件驱动判定：%s"
+              % ("**需要调 LLM**（%s，新条目 %d 条）"
+                 % ("首次运行" if first else "出现新条目", len(fresh))
+                 if should else
+                 "**本轮不需要调 LLM**（%d 条全是已见过的）" % len(result["items"])))
+        if fresh:
+            result["fresh_headlines"] = [
+                "[%s] %s" % (i.get("date", "")[:10], i.get("title", ""))
+                for i in fresh[:12]]
+            print("     新条目（交给 LLM 的那一批）：")
+            for h in result["fresh_headlines"][:4]:
+                print("       · %s" % h[:90])
+        state["bootstrapped"] = True
+        state["calls"] = int(state.get("calls", 0)) + (1 if should else 0)
+        _save_state(state)
+        print("     累计建议调用次数：%d（状态存 %s，不会无限增长）"
+              % (state["calls"], os.path.relpath(STATE_FILE, BASE)))
 
     if args.interval and args.rounds > 1:
         print()

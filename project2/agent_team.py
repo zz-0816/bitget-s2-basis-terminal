@@ -189,32 +189,79 @@ def analyst_basis(base, cost=None):
 # ---------------------------------------------------------------- ② 情绪
 
 def analyst_sentiment(base):
-    """😱 情绪分析师 —— 只拿情绪/拥挤度数据。
+    """😱 情绪分析师 —— 持仓拥挤度。
 
-    数据源优先级：`bitget-signal/sentiment-analyst`（免 Key）> 我方实测资金费。
-    ⚠️ 未接 MCP 时**如实降级**：只用我们能实测的资金费，并**压低置信度**。
+    2026-09-18 升级：此前**只能用资金费当代理**（置信度压到 0.45）。
+    现在读 `tools/sentiment_sampler.py` 采到的**实测拥挤度量**：
+      OI 规模与变化（加仓/减仓）、当期资金费率、**历史百分位**、正费率占比。
+
+    ⚠️ 仍然拿不到多空比：Bitget 公开 API 的
+    `account-long-short` / `position-long-short` 返回 **400**，
+    `taker-buy-sell-volume` / `elite-*` 返回 **404**（实测）。
+    **不用别的量假装成多空比** —— 这条限制写在 notes 里。
     """
     e = []
-    f_rows = {x.get("base"): x for x in _read_csv(os.path.join(DERIVED, "funding_rates.csv"))}
-    fr = f_rows.get(base)
+    src = "data/spread/sentiment-*.csv"
+    row = _latest_sentiment(base)
+    fr = {x.get("base"): x for x in _read_csv(
+        os.path.join(DERIVED, "funding_rates.csv"))}.get(base)
+    if row:
+        if row.get("oi_size") is not None:
+            e.append(ev("合约持仓量 OI", "%.0f" % float(row["oi_size"]), src))
+        if row.get("oi_delta_pct") not in (None, ""):
+            e.append(ev("OI 变化（相对上一轮）", "%+.3f%%" % float(row["oi_delta_pct"]),
+                        src))
+        if row.get("funding_bp") not in (None, ""):
+            e.append(ev("当期资金费率", "%+.3f bp" % float(row["funding_bp"]), src))
+        if row.get("funding_pctile") not in (None, ""):
+            e.append(ev("资金费率历史百分位", "%.0f%%" % float(row["funding_pctile"]), src))
+        if row.get("funding_positive_share") not in (None, ""):
+            e.append(ev("历史正费率占比", "%.1f%%" % float(row["funding_positive_share"]),
+                        src))
     if fr:
-        pos = _f(fr, "income_positive_share", 0.0)
-        med = _f(fr, "income_med_bp", 0.0)
-        e.append(ev("资金费为正的比例", "%.1f%%" % (100 * pos),
+        e.append(ev("48h 窗口资金费收入", "%+.3f bp" % _f(fr, "window_income_bp", 0.0),
                     "data/derived/funding_rates.csv"))
-        e.append(ev("非零结算的费率中位", "%+.3f bp" % med,
-                    "data/derived/funding_rates.csv"))
-        e.append(ev("持仓拥挤度代理", "正费率占比越高 = 多头越拥挤（空头收费）",
-                    "机制推断（非实测）"))
-
     if not e:
         return report("sentiment", "neutral", 0.0, [], "无情绪数据")
-    # 资金费为正 -> 多头拥挤 -> 站在空头一侧有利
-    pos = _f(fr, "income_positive_share", 0.0)
-    verdict = "favorable" if pos > 0.5 else "neutral"
-    return report("sentiment", verdict, 0.45, e,
-                  "⚠️ 未接入 bitget-signal/sentiment-analyst，"
-                  "本项仅用我方实测资金费代理，置信度已压低")
+
+    # ---- 判据：都基于实测值 ----
+    pos_share = _f(row, "funding_positive_share") if row else None
+    pctile = _f(row, "funding_pctile") if row else None
+    oi_delta = _f(row, "oi_delta_pct") if row else None
+    verdict, conf, bits = "neutral", 0.45, []
+    if pos_share is not None:
+        bits.append("历史正费率占比 %.1f%%" % pos_share)
+        if pos_share > 60:
+            verdict, conf = "favorable", 0.6      # 多头常付费 -> 站空头一侧有利
+        elif pos_share < 40:
+            verdict, conf = "unfavorable", 0.6    # 空头常付费 -> 站空头一侧要付钱
+    if pctile is not None:
+        bits.append("当期费率处于历史 %.0f%% 分位" % pctile)
+        if pctile >= 90 and verdict == "favorable":
+            # 极度拥挤：短期可能反转，把结论压回中性 —— **这是风险提示，不是方向判断**
+            verdict, conf = "neutral", 0.5
+            bits.append("（分位 ≥90%：拥挤已极端，不给方向）")
+    if oi_delta is not None:
+        bits.append("OI 环比 %+.2f%%" % oi_delta)
+    return report("sentiment", verdict, conf, e,
+                  "实测拥挤度：" + " ｜ ".join(bits)
+                  + "。⚠️ 多空比不可得（公开 API 400/404），未用其它量替代")
+
+
+def _latest_sentiment(base):
+    """取当天情绪采样里该标的**最后一行**。"""
+    files = sorted(glob.glob(os.path.join(SPREAD, "sentiment-*.csv")))
+    if not files:
+        return None
+    last = None
+    try:
+        with open(files[-1], newline="", encoding="utf-8") as fh:
+            for r in csv.DictReader(fh):
+                if r.get("base") == base:
+                    last = r
+    except OSError:
+        return None
+    return last
 
 
 # ---------------------------------------------------------------- ③ 新闻
