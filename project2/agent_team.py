@@ -76,11 +76,17 @@ HYPOTHESIS_ACTIONS = {
     "leg_risk": {"level": "caution", "action": "require_taker",
                  "measure": "P(只成交一腿) > 50%"},
     "stale_quotes": {"level": "veto", "action": "no_new_position",
-                     "measure": "逐笔成交停滞 >= %d 分钟" % 30},
+                     "measure": "逐笔成交停滞 >= 30 分钟"},
     "thin_capacity": {"level": "caution", "action": "cap_size",
                       "measure": "可捕获名义额不足"},
     "adverse_selection": {"level": "veto", "action": "no_new_position",
                           "measure": "f_dmid <= -3.0 bp"},
+    # ⭐ 2026-09-18 新增（用户确认）：停牌 / 报价冻结。
+    # 依据不是猜的：SEC「创新豁免」明文要求
+    # 「底层股票在主交易所停牌时，TSV 必须同时停止交易」（docs/32）。
+    # 判据沿用 audit_samples.py 的口径：**价格跨度 == 0 = 报价完全冻结**。
+    "quote_frozen": {"level": "veto", "action": "no_new_position",
+                     "measure": "报价完全冻结（一段时间内价格跨度 = 0）"},
 }
 
 
@@ -270,7 +276,7 @@ def _latest_sentiment(base):
 CONF_CAP_NO_SOURCE = 0.4
 
 
-def analyst_news(base, now_ms=None, mode="auto", headlines=None):
+def analyst_news(base, now_ms=None, mode="auto", headlines=None, auto_fetch=True):
     """📰 新闻/事件分析师 —— 这一段是**大模型在运行期的唯一职责**。
 
     ⚠️ 2026-09-18 修一个**实现缺口**：此前这里**硬编码 `mode="static"`**，
@@ -278,16 +284,25 @@ def analyst_news(base, now_ms=None, mode="auto", headlines=None):
     （日志里 `gate.source` 一直是 `static`）。而报告里写的是
     "LLM 在运行期的唯一职责 = 事件判断" —— 那就是**说了没做**。
 
-    现在按 `mode` 分三条路：
+    第二个缺口（同日再修）：LLM 跑起来后收到的是**空标题**，只能凭日历判断，
+    理由是"未提供任何新闻标题"。现在 `auto_fetch=True` 时会从
+    `tools/news_sources.py` 的落盘结果取**真实候选标题**（SEC 申报 / 官方 RSS /
+    财报日历），且只认新鲜结果（默认 30 分钟内），**不拿旧闻当新闻**。
+
+    按 `mode` 分三条路：
       * ``static``：只用确定性日历（**无 LLM 也能跑**，回退路径）
       * ``llm``   ：把标题喂给 OpenAI 兼容端点分类（需要 key）
-      * ``auto``  ：有 key 用 llm，没有就用 static —— **绝不因为没有 key 就崩**，
+      * ``auto``  ：有 key（含 `.env` 里的）就用 llm，否则 static ——
                     但会在 notes 里**明确写出"本次未使用 LLM"**，不含糊。
-
-    ``headlines`` 可以外部传入（例如来自 `signal_adapter` 的新闻源）。
     """
     e = []
     note = ""
+    if headlines is None and auto_fetch:
+        headlines, hsrc = _headlines_from_news(base)
+        if headlines:
+            note = "标题来源：%s。" % hsrc
+        elif hsrc:
+            note = "（%s）" % hsrc
     try:
         import event_gate as _eg
         sev = None
@@ -303,19 +318,26 @@ def analyst_news(base, now_ms=None, mode="auto", headlines=None):
             if a["event"].get("reason"):
                 e.append(ev("事件理由", a["event"]["reason"][:60],
                             "project2/event_gate.py"))
+            if headlines:
+                e.append(ev("交给 LLM 的候选标题", "%d 条" % len(headlines),
+                            "data/derived/news_latest.json"))
             for line in _eg.calendar_quality():
                 if "已复核" in line:
                     e.append(ev("日历已复核条数", line.strip()[:60],
                                 "project2/events_calendar.json"))
             used_llm = str(src).startswith("llm")
+            n_tok = ((a.get("llm") or {}).get("llm_usage") or {})
             if used_llm:
-                note = ("✅ 本次由 **LLM** 判事件（来源=%s，置信度 %.2f）——"
-                        "大模型的运行期职责已真实执行" % (src, a["confidence"]))
+                note += ("✅ 本次由 **LLM** 判事件（来源=%s，tokens 输入 %s / 输出 %s）"
+                         "—— 运行期职责已真实执行。"
+                         "⚠️ 置信度被压到 %.2f 不是 LLM 的问题："
+                         "日历里**没有一条带可回溯来源**，按 CONF_CAP_NO_SOURCE 封顶"
+                         % (src, n_tok.get("prompt_tokens"),
+                            n_tok.get("completion_tokens"), a["confidence"]))
             else:
-                note = ("⚠️ **本次未使用 LLM**（来源=%s）："
-                        "事件判断退化为确定性日历，只能挡可计算事件"
-                        "（期权到期/休市），**挡不住突发新闻与财报**"
-                        % src)
+                note += ("⚠️ **本次未使用 LLM**（来源=%s）："
+                         "事件判断退化为确定性日历，只能挡可计算事件"
+                         "（期权到期/休市），**挡不住突发新闻与财报**" % src)
         except Exception as exc:  # noqa: BLE001
             e.append(ev("闸门调用异常", repr(exc)[:60], "project2/event_gate.py"))
     except ImportError:
@@ -325,8 +347,8 @@ def analyst_news(base, now_ms=None, mode="auto", headlines=None):
         return report("news", "neutral", 0.0, [], "无事件数据")
     verdict = "unfavorable" if sev == "block" else (
         "neutral" if sev == "caution" else "favorable")
-    # 置信度：有可回溯来源才允许高；否则封顶 0.40
-    conf = 0.4 if "llm" not in note else 0.85
+    # 置信度：有可回溯来源（LLM 判断成功）才允许高；否则封顶 0.40
+    conf = 0.85 if "✅ 本次由" in note else 0.4
     return report("news", verdict, conf, e, note)
 
 
@@ -401,6 +423,66 @@ def analyst_technical(base):
 # 才能发现 —— 这正是"多一个分析师"的价值，而不是多一层包装。
 STALE_TRADE_MIN = 30.0      # 分钟
 MAX_HYPOTHESES = 3          # 最多带进辩论/风控的假设条数（防止刷屏式围堵）
+FROZEN_LOOKBACK = 10        # 报价冻结判定：最近 N 轮快照
+FROZEN_MAX_DISTINCT = 1     # 不同中间价个数 <= 它 = 冻结（与 audit_samples.py 同口径）
+
+
+def frozen_quote(base, lookback=FROZEN_LOOKBACK):
+    """报价是否**完全冻结**（停牌 / 死报价）—— 返回 (是否冻结, 说明, 明细)。
+
+    口径与 `tools/audit_samples.py` 一致：**价格跨度 == 0 判死**。
+    这里用逐轮**中间价**：若最近 N 轮快照里不同中间价个数 <= 1，就是冻结。
+
+    为什么需要它（不是凑维度）：SEC「创新豁免」明文要求
+    「底层股票在主交易所停牌时，TSV 必须同时停止交易」（`docs/32`）。
+    停牌期间**挂单挂着也不会成交**，而且一旦复牌价格可能跳空 ——
+    这是"报价看起来正常、但市场已经停了"的情形，与"行情停滞"（有报价没成交）不同：
+      · 行情停滞：报价在动、成交不动  -> 挂单不成交
+      · 报价冻结：报价也不动了        -> 市场可能停了
+    """
+    files = sorted(glob.glob(os.path.join(SPREAD, "orderbook-*.csv")))
+    if not files:
+        return None, "无盘口数据", []
+    rows = []
+    try:
+        with open(files[-1], newline="", encoding="utf-8") as fh:
+            for r in csv.DictReader(fh):
+                if r.get("base") != base or r.get("level") != "1":
+                    continue
+                if r.get("side") not in ("bid", "ask"):
+                    continue
+                try:
+                    rows.append((int(r["ts_ms"]), r["venue"], r["side"],
+                                 float(r["price"])))
+                except (KeyError, ValueError, TypeError):
+                    continue
+    except OSError:
+        return None, "盘口文件读不到", []
+    if not rows:
+        return None, "该标的无最新盘口", []
+    rows.sort()
+    # 按时间戳把最新 lookback 轮分组
+    stamps = sorted({t for t, _v, _s, _p in rows}, reverse=True)[:lookback]
+    if len(stamps) < 2:
+        return None, "盘口轮次不足（%d 轮）" % len(stamps), []
+    by = collections.defaultdict(dict)
+    for t, v, s, p in rows:
+        if t in stamps:
+            by[t][(v, s)] = p
+    mids = []
+    for t in sorted(stamps):
+        b = by[t].get(("perp", "bid"))
+        a = by[t].get(("perp", "ask"))
+        if b and a:
+            mids.append(round((a + b) / 2.0, 8))
+    if len(mids) < 2:
+        return None, "可用中间价轮次不足", mids
+    distinct = len(set(mids))
+    span = max(mids) - min(mids)
+    detail = ("最近 %d 轮中间价：不同值 %d 个 ｜ 跨度 %.8f ｜ 区间 [%.4f, %.4f]"
+              % (len(mids), distinct, span, min(mids), max(mids)))
+    frozen = distinct <= FROZEN_MAX_DISTINCT
+    return frozen, detail, mids
 
 
 def _last_trade_ts(venue, base):
@@ -424,6 +506,41 @@ def _last_trade_ts(venue, base):
     return None
 
 
+def _headlines_from_news(base, max_age_min=30, max_items=12):
+    """从 `tools/news_sources.py` 的落盘结果里取**交给 LLM 的候选标题**。
+
+    ⚠️ 这一步补的是**闭环缺口**：初版 LLM 确实跑了，但 `assess()` 收到的是**空标题**，
+    于是它只能凭日历判断，理由写着"未提供任何新闻标题，无事件信息可判断" ——
+    LLM 在跑、却没有输入，等于白跑（实测踩到）。
+
+    取用规则（避免"旧闻当新闻"，也避免凭空造标题）：
+      · 只认 ≤ `max_age_min` 分钟内抓到的结果；过期就返回 None，让 LLM 按"无标题"判
+      · 优先用 `fresh_headlines`（事件驱动那批），退回 `headlines_for_gate`
+    """
+    p = os.path.join(DERIVED, "news_latest.json")
+    if not os.path.exists(p):
+        return None, "无消息面落盘（先跑 python tools\\news_sources.py --save）"
+    try:
+        with open(p, encoding="utf-8-sig") as fh:
+            d = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, "消息面落盘不可读：%s" % str(exc)[:50]
+    try:
+        t = dt.datetime.fromisoformat(d.get("probed_at", ""))
+        age = (dt.datetime.now(dt.UTC) - t).total_seconds() / 60.0
+    except (TypeError, ValueError):
+        age = 9e9
+    if age > max_age_min:
+        return None, ("消息面已过期 %.1f 分钟（阈值 %d 分钟）—— 不拿旧闻当新闻"
+                      % (age, max_age_min))
+    heads = d.get("fresh_headlines") or d.get("headlines_for_gate") or []
+    heads = [h for h in heads[:max_items] if h]
+    if not heads:
+        return None, "消息面里没有候选标题（当日无重大申报/事件）"
+    return heads, ("来自 data/derived/news_latest.json（%.1f 分钟前抓取，%d 条）"
+                   % (age, len(heads)))
+
+
 def analyst_execution_risk(base, cost=None, now_ms=None, size_usd=None):
     """🛡️ **执行风险分析师** —— agent 做的风险评估层。
 
@@ -436,11 +553,14 @@ def analyst_execution_risk(base, cost=None, now_ms=None, size_usd=None):
     只有四样齐全的假设才会被带进辩论层与风控层；缺证的直接丢弃并留痕
     （与 `docs/25` §2.1 的"可证伪"铁律同源）。
 
-    目前覆盖四类（全部来自实测踩过的坑）：
+    目前覆盖五类（全部来自实测踩过的坑或已核实的规则依据）：
       1. **单腿裸露**：P(只成交一腿) 高 -> 只成交一边 = 裸露方向敞口
       2. **行情停滞**：逐笔成交长时间无新打印 -> 挂单不会成交（报价在动也没用）
       3. **容量约束**：可捕获名义额 / 首档深度 -> 规模撑不住
       4. **逆向选择**：现货腿 f_dmid 负向加深 -> 挂单被系统性挑选
+      5. **停牌/报价冻结**（2026-09-18 新增）：报价跨度归零 -> 可能已停牌；
+         依据是 SEC「创新豁免」明文要求"底层股票停牌时 TSV 必须同时停止交易"
+         （`docs/32`），判据沿用 `audit_samples.py` 的"价格跨度 == 0 判死"口径
     """
     now_ms = now_ms or int(dt.datetime.now(dt.UTC).timestamp() * 1000)
     e, hyps, dropped = [], [], []
@@ -530,6 +650,26 @@ def analyst_execution_risk(base, cost=None, now_ms=None, size_usd=None):
                 "f_dmid(现货腿,k6)", "%+.2f bp" % adv, "<=-3.0 bp",
                 "若 f_dmid 回升到 -3.0 bp 以上，本条不成立",
                 "不做 maker（挂单等于把成交让给知情方）"))
+
+    # ---- ⑤ 停牌 / 报价冻结（依据 docs/32 的豁免条款 + audit_samples 口径）----
+    froz, fdetail, _mids = frozen_quote(base)
+    if froz is not None:
+        e.append(ev("报价活性（最近 %d 轮中间价）" % FROZEN_LOOKBACK, fdetail,
+                    "data/spread/orderbook-*.csv"))
+        if froz:
+            hyps.append(H(
+                "quote_frozen",
+                "报价**完全冻结**（不同中间价 <= %d 个）—— 可能已停牌或成死报价；"
+                "停牌期间挂单不会成交，且复牌可能跳空"
+                % FROZEN_MAX_DISTINCT,
+                "最近 %d 轮中间价跨度" % FROZEN_LOOKBACK, fdetail[:80],
+                "不同中间价 <= %d" % FROZEN_MAX_DISTINCT,
+                "若报价恢复变动（不同中间价 > %d），本条不成立"
+                % FROZEN_MAX_DISTINCT,
+                "不下新单；已挂的撤掉（停牌期间挂着无意义且承担跳空风险）"))
+        else:
+            dropped.append({"id": "quote_frozen", "reason": "报价仍在变动",
+                            "metric": "中间价跨度", "value": fdetail[:60]})
 
     hyps = hyps[:MAX_HYPOTHESES]
     if not e:
@@ -2657,6 +2797,23 @@ def decision_selftest():
     chk(any(h["id"] == "stale_quotes" for h in hyps_r),
         "抓到「现货腿长时间无成交」：%s"
         % next((h["value"] for h in hyps_r if h["id"] == "stale_quotes"), "未触发"))
+    # ⭐ 停牌/报价冻结：正反两面都要测
+    froz, fdet, _m = frozen_quote("NVDA")
+    chk(froz is False, "活市场不误报『报价冻结』（%s）" % fdet[:56])
+    _orig = globals()["frozen_quote"]
+    globals()["frozen_quote"] = lambda b, lookback=FROZEN_LOOKBACK: (
+        True, "合成：最近 10 轮中间价完全相同（跨度 0）", [1.0] * 10)
+    try:
+        _rep_f, _h_f, _d_f = analyst_execution_risk("NVDA", cost=_synthetic_cost())
+    finally:
+        globals()["frozen_quote"] = _orig
+    froz_h = [h for h in _h_f if h["id"] == "quote_frozen"]
+    chk(bool(froz_h), "报价冻结时提出 quote_frozen 假设（%s）"
+        % ("、".join(h["id"] for h in _h_f) or "无"))
+    chk(bool(froz_h) and froz_h[0].get("falsifier"),
+        "停牌假设带**证伪条件**（报价恢复变动即撤销）")
+    chk(HYPOTHESIS_ACTIONS.get("quote_frozen", {}).get("level") == "veto",
+        "停牌假设在风控里是**否决级**（依据 docs/32 的豁免条款）")
     # agent 的假设必须**变成风控规则**（否则就是装饰）
     fo = {"order": {"kind": "taker", "mode": "双腿全吃单", "qty_usd": 5000.0,
                     "slices": 3, "slice_usd": 2000.0, "cost_bp": 12.0,

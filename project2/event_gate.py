@@ -390,8 +390,18 @@ def assess(base, now_ms=None, cost=None, size_usd=None, mode="auto",
     now_ms = now_ms or int(dt.datetime.now(dt.UTC).timestamp() * 1000)
     mode = (mode or "auto").lower()
     if mode == "auto":
-        mode = "llm" if (api_key or os.environ.get("OPENAI_API_KEY")
-                         or os.environ.get("LLM_API_KEY")) else "static"
+        # ⚠️ 必须把 `.env` 也算进来：初版只看 os.environ，
+        #    于是"key 填在 .env 里"时 auto 判定为 static ——
+        #    **配了却没生效**，而且日志里只显示 static，看不出原因（实测踩到）。
+        has_key = bool(api_key) or bool(os.environ.get("OPENAI_API_KEY")) \
+            or bool(os.environ.get("LLM_API_KEY"))
+        if not has_key:
+            try:
+                from common import config as _cfgmod      # noqa: N813
+                has_key = _cfgmod.llm_ready()
+            except Exception:  # noqa: BLE001
+                has_key = False
+        mode = "llm" if has_key else "static"
 
     # ---- 事件层：确定性日历（永远可跑）----
     ev = static_gate(base, now_ms)
