@@ -114,6 +114,48 @@ Bitget 上同一个标的（如 TSLA）同时存在于**两个场所**：rToken 
 ### 第 0 步（强烈建议）：先跑自检
 
 ```powershell
+python tools\judge_precheck.py      # ← 用**你自己的 key（或干脆不配 key）**先跑这个
+python tools\reproduce_check.py    # 全仓库结论级自检（87 项）
+```
+
+**`tools/judge_precheck.py` 是给"别人拿自己的 key 来跑"设计的**：它按最坏情况检查
+（没配 key / 配了别家的 OpenAI 兼容端点 / key 写错），并把结果分成三类
+**通过 / 降级 / 失败**，每条失败都给可操作的修复指引。实测（不配 key）：
+
+```
+结论：19 通过 ｜ 1 降级 ｜ 0 失败
+```
+
+### 🔑 关于大模型：**本项目不依赖 LLM 才能跑**
+
+| | 谁来提供 | 不配会怎样 |
+|---|---|---|
+| **LLM（事件判断）** | **由使用者自己配**（`http://127.0.0.1:3080` 之外的任何 OpenAI 兼容端点） | 事件判断退化为**确定性日历**（只挡期权到期/休市等可计算事件），并且因为**保守优先**，**挂单会被暂停** —— 这是设计选择，输出里会标注 |
+| 成本模型 / 双腿联合分布 / 风控规则表 | 仓库自带实测数据 | **完全不受影响** —— 核心结论都跑在确定性路径上 |
+
+配置（key **不会入库**，`.env` 已在 `.gitignore`）：
+
+```powershell
+Copy-Item .env.example .env
+# 编辑 .env：LLM_API_KEY / LLM_BASE_URL / LLM_MODEL
+python common\config.py --check        # 确认生效（key 会打码显示）
+```
+
+支持**任意 OpenAI 兼容端点**，不绑定某一家：
+
+| 供应商 | `LLM_BASE_URL` | `LLM_MODEL` 示例 |
+|---|---|---|
+| DeepSeek（默认） | `https://api.deepseek.com` | `deepseek-flash`（平价，默认）/ `deepseek-v4-pro` |
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` 等 |
+| **本地 Ollama（零成本）** | `http://127.0.0.1:11434/v1` | `qwen2.5:7b`（`LLM_API_KEY` 随便填，如 `ollama`） |
+
+> 想换模型又不想靠感觉？`python tools\model_compare.py` 会用**我们自己的 7 个边界案例**
+> （财报应 block、例行内部人交易应 none、纯营销应 none…）横向比一致率、延迟与 token 用量。
+> 判据写在工具里：**偏保守可接受，偏激进不可接受**。
+
+### 第 1 步：全仓库结论级自检
+
+```powershell
 python tools\reproduce_check.py
 ```
 
