@@ -19,6 +19,7 @@
 退出码：0 = 健康；1 = 发现重复或异常
 """
 
+import argparse
 import collections
 import csv
 import datetime as dt
@@ -69,14 +70,33 @@ def list_python():
     return rows
 
 
-def main():
+def main(argv=None):
+    """采样健康检查。
+
+    ⚠️ 2026-09-18 补最小 argparse：此前**没有 argparse**，于是
+    `--help` 会跑完整套健康检查（还因为采样异常返回退出码 1），
+    `tools/reproduce_check.py` 把它当成"工具坏了"报失败 ——
+    实际是**环境故障**（采样停摆）被误报成代码故障。
+    同一类事故在本仓库出现过两次：`tools/funding_sign_check.py` 的 `--help`
+    原本也会跑完整联网分析（见 `18fb5d1`）。凡是"会被自动化调用的工具"，
+    都必须有 argparse，且 `--help` 不得有副作用。
+    """
+    ap = argparse.ArgumentParser(
+        description="采样健康检查（实例数 / 节奏 / 重复写入 / 数据量）")
+    ap.add_argument("--quiet", action="store_true",
+                    help="只在异常时输出（给自动化调用；正常时无输出、退出码 0）")
+    ap.add_argument("--json", action="store_true", help="输出机器可读结果")
+    args = ap.parse_args(argv)
+
     global FAIL
-    print("=" * 80)
-    print("采样健康检查    %s" % dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    print("=" * 80)
+    buf = []
+    _print = buf.append if (args.quiet or args.json) else print
+    _print("=" * 80)
+    _print("采样健康检查    %s" % dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    _print("=" * 80)
 
     procs = list_python()
-    print("\n【1】进程实例数（每个采样脚本只允许 1 个）")
+    _print("\n【1】进程实例数（每个采样脚本只允许 1 个）")
     counts = collections.Counter()
     for pid, cl in procs:
         for name in SAMPLERS:
@@ -96,12 +116,12 @@ def main():
         if n != 1:
             ok = False
             FAIL += 1
-        print("  [%s] %-20s 实例=%d  锁持有者=%s" % (flag, name, n, holder))
+        _print("  [%s] %-20s 实例=%d  锁持有者=%s" % (flag, name, n, holder))
     if not ok:
-        print("       -> 实例数异常！多实例会重复写同一文件（且完全相等键检测不出）")
-        print("       -> 处置：保留持锁者，杀掉其余（taskkill /F）")
+        _print("       -> 实例数异常！多实例会重复写同一文件（且完全相等键检测不出）")
+        _print("       -> 处置：保留持锁者，杀掉其余（taskkill /F）")
 
-    print("\n【2】采样节奏（每分钟轮数 / 轮间隔 / 每轮行数）")
+    _print("\n【2】采样节奏（每分钟轮数 / 轮间隔 / 每轮行数）")
     # 各文件的正常节奏不同（universe/orderbook 按设计就是"轮转/多档"，轮数天然 >1/分钟）：
     #   core 采样      20 行/轮，60 秒  -> 期望 ~1 轮/分钟
     #   universe 轮转  48 行/轮，30 秒  -> 期望 ~2 轮/分钟（24 配对 × 现货/永续）
@@ -144,13 +164,13 @@ def main():
             note = "   (历史文件，含早期多实例时段，不作判据)"
         elif bad:
             note = "   <- 疑似多实例（轮间隔过短）"
-        print("  [%s] %-28s 轮数/分钟=%.2f  间隔中位=%.1fs  每轮行数=%s%s"
+        _print("  [%s] %-28s 轮数/分钟=%.2f  间隔中位=%.1fs  每轮行数=%s%s"
               % (tag, name, per_min, med, sizes, note))
 
-    print("\n【2b】成交流水：重复 trade_id 检测（多实例的确凿证据）")
+    _print("\n【2b】成交流水：重复 trade_id 检测（多实例的确凿证据）")
     tfiles = [f for f in files if f.startswith("trades-")]
     if not tfiles:
-        print("  (无成交流水文件)")
+        _print("  (无成交流水文件)")
     for name in tfiles:
         path = os.path.join(SPREAD, name)
         seen = set()
@@ -175,20 +195,28 @@ def main():
             note = "   (历史文件，不作判据)"
         elif bad:
             note = "   <- 同一 trade_id 重复写入，疑似多实例！"
-        print("  [%s] %-28s 行数=%7d  重复 trade_id=%d%s"
+        _print("  [%s] %-28s 行数=%7d  重复 trade_id=%d%s"
               % (tag, name, n, dup, note))
 
-    print("\n【3】当前数据量")
+    _print("\n【3】当前数据量")
     for name in files:
         path = os.path.join(SPREAD, name)
         with open(path, encoding="utf-8") as fh:
             n = sum(1 for _ in fh) - 1
         mt = dt.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%H:%M:%S")
-        print("  %-30s %8d 行   最后写入 %s" % (name, max(0, n), mt))
+        _print("  %-30s %8d 行   最后写入 %s" % (name, max(0, n), mt))
 
-    print("\n" + "=" * 80)
-    print("结论：%s" % ("健康" if FAIL == 0 else "发现 %d 项异常，见上" % FAIL))
-    print("=" * 80)
+    _print("\n" + "=" * 80)
+    _print("结论：%s" % ("健康" if FAIL == 0 else "发现 %d 项异常，见上" % FAIL))
+    _print("=" * 80)
+
+    if args.json:
+        print(json.dumps({"healthy": FAIL == 0, "issues": FAIL},
+                         ensure_ascii=False))
+    elif args.quiet:
+        # 给自动化调用：正常时**无输出**；异常时把缓存的内容一次性打出来
+        if FAIL:
+            print("\n".join(buf))
     return 1 if FAIL else 0
 
 
