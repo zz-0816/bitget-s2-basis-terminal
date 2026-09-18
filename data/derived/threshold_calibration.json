@@ -1,0 +1,177 @@
+{
+  "current": 0.25,
+  "candidates": {
+    "0.10": {
+      "flips": 2,
+      "rate": 40.0,
+      "ci95": {
+        "median": 2,
+        "lo95": 0,
+        "hi95": 4
+      },
+      "flipped": [
+        {
+          "base": "NVDA",
+          "diff": 0.2,
+          "from": "caution",
+          "to": "proceed"
+        },
+        {
+          "base": "NVDA",
+          "diff": 0.15,
+          "from": "caution",
+          "to": "proceed"
+        }
+      ]
+    },
+    "0.15": {
+      "flips": 2,
+      "rate": 40.0,
+      "ci95": {
+        "median": 2,
+        "lo95": 0,
+        "hi95": 4
+      },
+      "flipped": [
+        {
+          "base": "NVDA",
+          "diff": 0.2,
+          "from": "caution",
+          "to": "proceed"
+        },
+        {
+          "base": "NVDA",
+          "diff": 0.15,
+          "from": "caution",
+          "to": "proceed"
+        }
+      ]
+    },
+    "0.20": {
+      "flips": 1,
+      "rate": 20.0,
+      "ci95": {
+        "median": 1,
+        "lo95": 0,
+        "hi95": 3
+      },
+      "flipped": [
+        {
+          "base": "NVDA",
+          "diff": 0.2,
+          "from": "caution",
+          "to": "proceed"
+        }
+      ]
+    },
+    "0.25": {
+      "flips": 0,
+      "rate": 0.0,
+      "ci95": {
+        "median": 0,
+        "lo95": 0,
+        "hi95": 0
+      },
+      "flipped": []
+    },
+    "0.30": {
+      "flips": 2,
+      "rate": 40.0,
+      "ci95": {
+        "median": 2,
+        "lo95": 0,
+        "hi95": 4
+      },
+      "flipped": [
+        {
+          "base": "NVDA",
+          "diff": -0.25,
+          "from": "stand_down",
+          "to": "caution"
+        },
+        {
+          "base": "NVDA",
+          "diff": -0.25,
+          "from": "stand_down",
+          "to": "caution"
+        }
+      ]
+    },
+    "0.40": {
+      "flips": 2,
+      "rate": 40.0,
+      "ci95": {
+        "median": 2,
+        "lo95": 0,
+        "hi95": 4
+      },
+      "flipped": [
+        {
+          "base": "NVDA",
+          "diff": -0.25,
+          "from": "stand_down",
+          "to": "caution"
+        },
+        {
+          "base": "NVDA",
+          "diff": -0.25,
+          "from": "stand_down",
+          "to": "caution"
+        }
+      ]
+    },
+    "0.50": {
+      "flips": 2,
+      "rate": 40.0,
+      "ci95": {
+        "median": 2,
+        "lo95": 0,
+        "hi95": 4
+      },
+      "flipped": [
+        {
+          "base": "NVDA",
+          "diff": -0.25,
+          "from": "stand_down",
+          "to": "caution"
+        },
+        {
+          "base": "NVDA",
+          "diff": -0.25,
+          "from": "stand_down",
+          "to": "caution"
+        }
+      ]
+    }
+  },
+  "n_rows": 6,
+  "n_real": 5,
+  "caveat": "无事后对错标签，非有监督校准",
+  "gaps": [
+    {
+      "gap": 0.45,
+      "lo": -0.7,
+      "hi": -0.25
+    },
+    {
+      "gap": 0.4,
+      "lo": -0.25,
+      "hi": 0.15
+    },
+    {
+      "gap": 0.05,
+      "lo": 0.15,
+      "hi": 0.2
+    },
+    {
+      "gap": 0.0,
+      "lo": -0.25,
+      "hi": -0.25
+    }
+  ],
+  "blank_band": {
+    "lo": 0.2,
+    "hi": 0.7,
+    "width": 0.49999999999999994
+  }
+}

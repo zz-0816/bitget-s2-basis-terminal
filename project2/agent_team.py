@@ -297,6 +297,10 @@ def analyst_news(base, now_ms=None, mode="auto", headlines=None, auto_fetch=True
     """
     e = []
     note = ""
+    # ⚠️ `headlines=None` = 调用方没指定 -> 自动取消息面；
+    #    `headlines=[]`   = 调用方**显式要求不带标题**（自检/复跑要冻结外部输入）-> 不取。
+    #    初版写成 `if headlines is None and auto_fetch` 之后再判 `if headlines`，
+    #    于是显式传 [] 也会去自动抓 —— 真 LLM 接上后**自检变得间歇性失败**（踩到）。
     if headlines is None and auto_fetch:
         headlines, hsrc = _headlines_from_news(base)
         if headlines:
@@ -694,6 +698,11 @@ def run_team(base, cost=None, now_ms=None, news_mode="auto", headlines=None,
 
     第 5 个（`execution_risk`）是**agent 做的风险评估层** —— 它不碰数字，
     只把"这一单可能怎么死"组织成可证伪的假设，交给辩论层与风控官。
+
+    ⚠️ 外部输入的可控性：`news_mode="llm"` 与自动抓新闻都是**活的输入**
+    （LLM 输出有随机性、新闻每天在变），所以**确定性自检/复跑必须显式冻结**：
+    传 `news_mode="static"` + `headlines=[]`（见 `run_decision(freeze_news=True)`）。
+    真 LLM 接上后，不冻结会让"端到端复跑一致"这条断言**间歇性失败**（实测踩到）。
     """
     risk_rep, hyps, dropped = analyst_execution_risk(
         base, cost=cost, now_ms=now_ms, size_usd=size_usd)
@@ -745,6 +754,43 @@ def render_team(base, items, verbose=True):
 BULL = "bull"
 BEAR = "bear"
 STANCES = ("proceed", "caution", "stand_down")
+
+# ---- ⭐ 证据强度加权（2026-09-18 新增，用户第 15 条要求）----
+#
+# 为什么要它：辩论得分原来是 `Σ 置信度`，于是**一条"机制推断"和一条"实测"等权**。
+# 例：情绪分析师的「持仓拥挤度代理 = 正费率占比越高 = 多头越拥挤（机制推断，非实测）」
+# 与「现货腿成交率 = 46.9%（逐笔实测）」本来不是一回事，却按同样权重计分。
+#
+# 权重怎么定（**不是拍的**，按"这条证据错了，我们多久能发现、代价多大"排序）：
+#
+#   | 强度 | 权重 | 什么算 | 判据 |
+#   |---|---|---|---|
+#   | **measured** | 1.00 | 我方自采/自算的实测量 | 来源指向 data/spread、data/derived、或我方的分析脚本 |
+#   | **verified** | 0.85 | 外部可回溯来源 | 来源带 URL 或指向已归档的外部记录 |
+#   | **derived**  | 0.60 | 由实测量再计算出的量 | 来源是我方**其它脚本的产出**（中间层，可被上游改动影响） |
+#   | **inference**| 0.30 | 机制推断 / 非实测 | 来源里明写"非实测""机制推断"，或无来源 |
+#
+# 为什么 inference 压到 0.30：它**无法被证伪**（没有可测的量可对照），
+# 而本层的铁律就是"给不出证伪条件的论点作废"。既然它还能进来（因为没被没收），
+# 那就让它的**计分权重**反映"不可证伪"这件事。
+STRENGTH_WEIGHTS = {"measured": 1.0, "verified": 0.85, "derived": 0.6,
+                    "inference": 0.3}
+
+# 来源 -> 强度。**先匹配先赢**；匹配不到按 derived（保守中间值）。
+#
+# ⚠️ 顺序有讲究，踩过：URL 里常带 `2026-`（如 SEC 新闻稿链接
+# `.../press-releases/2026-90-...`），若把 `2026-` 放在 URL 之前，
+# **外部可回溯来源会被误判成 measured** —— 那等于把"别人说的话"当成"我们实测"。
+# 所以 `http(s)://` 必须排在具体度量名之前。
+STRENGTH_RULES = (
+    (("非实测", "机制推断", "假设值", "推断"), "inference"),
+    (("http://", "https://"), "verified"),
+    (("friction_budget.csv", "funding_rates.csv", "precise_fill_",
+      "joint_fill_", "orderbook-", "trades-", "sentiment-",
+      "news_latest.json"), "measured"),
+    (("data/spread", "data/derived"), "measured"),
+    (("project2/", "tools/", "common/", "docs/"), "derived"),
+)
 
 # 这些阈值全部来自已实测的结论，不是这里新编的
 COST_THRESHOLD_BP = 11.34   # docs/14：扣掉资金费收入后的成本阈值
@@ -837,12 +883,41 @@ def _arg_ok(a):
             and a.get("falsifier"))
 
 
+def strength_of(source):
+    """给一条证据的**来源**定强度等级。见 STRENGTH_WEIGHTS 的推导表。"""
+    s = str(source or "")
+    for keys, level in STRENGTH_RULES:
+        if any(k in s for k in keys):
+            return level
+    return "derived"
+
+
+def weighted_weight(evidence, confidence):
+    """一条论点的加权得分 = **最高强度证据的权重** × 置信度。
+
+    为什么取"最高强度"而不是平均：一条论点可以打包多条证据（同一证伪条件分组），
+    其中只要有一条是实测，这条论点的**可证伪性**就成立了 ——
+    用平均会把"1 条实测 + 3 条推断"压得比"1 条实测"还低，那是错的。
+    """
+    levels = [strength_of(e.get("source")) for e in (evidence or [])]
+    if not levels:
+        return 0.0, None
+    best = max(levels, key=lambda l: STRENGTH_WEIGHTS.get(l, 0.0))
+    return float(confidence) * STRENGTH_WEIGHTS.get(best, 0.0), best
+
+
 def argue(side, reports):
-    """一方立论。返回该方的论点、让步与**被没收的论点**（如实记录，不藏）。"""
+    """一方立论。返回该方的论点、让步与**被没收的论点**（如实记录，不藏）。
+
+    得分有两套，**都保留**（这样"加权改变了什么"永远可审计）：
+      * ``raw_weight``  = Σ 置信度（旧口径，逐条等权）
+      * ``weight``      = Σ（置信度 × **证据强度权重**）（现口径，用户第 15 条）
+    """
     want = "favorable" if side == BULL else "unfavorable"
     other = "unfavorable" if side == BULL else "favorable"
 
-    args, dropped, weight = [], [], 0.0
+    args, dropped = [], []
+    weight, raw_weight = 0.0, 0.0
     for r in reports:
         ok, _why = validate(r)
         if not ok or r["verdict"] != want:
@@ -870,23 +945,39 @@ def argue(side, reports):
                    "；".join("%s = %s" % (x["metric"], x["value"]) for x in evs)),
                 evs, f)
             a["direction_conflicts"] = direction_conflict(side, evs)
+            _sc, _lvl = weighted_weight(evs, r["confidence"])
+            a["score"] = round(_sc, 4)
+            a["strength"] = _lvl
             args.append(a)
             got = True
         if got:
-            weight += r["confidence"]
+            # ⭐ 按强度加权（一条报告的论点共享同一置信度，所以简单相加即可）
+            raw_weight += r["confidence"]
+            sc, lvl = weighted_weight(
+                [e for f, evs in groups.items() for e in evs], r["confidence"])
+            weight += sc
+            if lvl:
+                r.setdefault("_strength_used", lvl)
 
     # 让步：必须承认对方最强的一条，否则就是立稻草人
     concessions = []
     for r in reports:
         ok, _ = validate(r)
         if ok and r["verdict"] == other and r["evidence"]:
-            e = r["evidence"][0]
+            e = max(r["evidence"], key=lambda x: STRENGTH_WEIGHTS.get(
+                strength_of(x.get("source")), 0.0))
             concessions.append({"dimension": r["dimension"],
                                 "metric": e["metric"], "value": e["value"],
-                                "confidence": r["confidence"]})
-    concessions.sort(key=lambda c: -c["confidence"])
+                                "confidence": r["confidence"],
+                                "strength": strength_of(e.get("source"))})
+    # 让步顺序：先按强度、再按置信度（"对方最强的一条"应当指**最硬**的那条）
+    concessions.sort(key=lambda c: (-STRENGTH_WEIGHTS.get(c["strength"], 0.0),
+                                    -c["confidence"]))
     conflicts = [c for a in args for c in a.get("direction_conflicts", [])]
     return {"side": side, "arguments": args, "weight": round(weight, 2),
+            "raw_weight": round(raw_weight, 2),
+            "strength_mix": collections.Counter(
+                a.get("strength") for a in args if a.get("strength")),
             "concessions": concessions[:2], "dropped": dropped,
             "direction_conflicts": conflicts}
 
@@ -939,6 +1030,20 @@ def adjudicate(bull, bear, gate=None, cost=None):
     else:
         base, why = "caution", "两侧相差仅 %.2f，未超过僵持阈值 %.2f" % (abs(diff), DEBATE_MARGIN)
 
+    # 强度加权的**可审计性**：同时给出旧口径（逐条等权）会得出什么结论。
+    # 两者不一致时必须在输出里说清"是加权改变了结论"，否则读者无法归因。
+    raw_bull = float(bull.get("raw_weight", bull["weight"]))
+    raw_bear = float(bear.get("raw_weight", bear["weight"]))
+    raw_diff = raw_bull - raw_bear
+    if raw_bull <= 0 and raw_bear <= 0:
+        raw_base = "caution"
+    elif raw_diff >= DEBATE_MARGIN:
+        raw_base = "proceed"
+    elif raw_diff <= -DEBATE_MARGIN:
+        raw_base = "stand_down"
+    else:
+        raw_base = "caution"
+
     stance, cap_reason = base, None
     if gate:
         sev = gate[0]
@@ -960,6 +1065,13 @@ def adjudicate(bull, bear, gate=None, cost=None):
         "bear_weight": rw,
         "raw_bull_weight": bull["weight"],
         "raw_bear_weight": bear["weight"],
+        # ⭐ 证据强度加权（用户第 15 条）：两套口径并存，便于审计归因
+        "raw_weights_old_scale": {"bull": raw_bull, "bear": raw_bear,
+                                  "stance": raw_base, "diff": round(raw_diff, 2)},
+        "weighting_changed_stance": bool(raw_base != base and not cap_reason),
+        "strength_weights": dict(STRENGTH_WEIGHTS),
+        "strength_mix": {"bull": dict(bull.get("strength_mix") or {}),
+                         "bear": dict(bear.get("strength_mix") or {})},
         "direction_penalty": DIRECTION_PENALTY,
         "direction_conflicts": (bull.get("direction_conflicts") or [])
                                + (bear.get("direction_conflicts") or []),
@@ -992,18 +1104,25 @@ def render_debate(d, verbose=True):
     L = ["  %s —— 多空辩论" % d["base"]]
     for side, tag in ((BULL, "多头"), (BEAR, "空头")):
         s = d[side]
-        L.append("    [%s] 论点 %d 条 ｜ 得分 %.2f ｜ 被没收 %d 条"
-                 % (tag, len(s["arguments"]), s["weight"], len(s["dropped"])))
+        mix = s.get("strength_mix") or {}
+        mix_txt = "、".join("%s×%d" % (k, v) for k, v in sorted(mix.items())) or "无"
+        L.append("    [%s] 论点 %d 条 ｜ 得分 %.2f（原始 Σ置信度 %.2f）｜ 被没收 %d 条"
+                 % (tag, len(s["arguments"]), s["weight"],
+                    s.get("raw_weight", s["weight"]), len(s["dropped"])))
+        L.append("        证据强度构成：%s（measured1.00 / verified0.85 / "
+                 "derived0.60 / inference0.30）" % mix_txt)
         for a in s["arguments"][:3]:
             e = a["evidence"][0]
             L.append("        · %s" % a["claim"])
-            L.append("          证据: %s = %s  [%s]"
-                     % (e["metric"], e["value"], e["source"]))
+            L.append("          证据: %s = %s  [%s]  强度=%s 得分=%.3f"
+                     % (e["metric"], e["value"], e["source"],
+                        a.get("strength"), a.get("score", 0.0)))
             L.append("          证伪: %s" % a["falsifier"])
         if s["concessions"]:
             c = s["concessions"][0]
-            L.append("        让步: 承认 %s 的 %s = %s（置信度 %.2f）"
-                     % (c["dimension"], c["metric"], c["value"], c["confidence"]))
+            L.append("        让步: 承认 %s 的 %s = %s（置信度 %.2f，强度 %s）"
+                     % (c["dimension"], c["metric"], c["value"], c["confidence"],
+                        c.get("strength", "?")))
     v = d["verdict"]
     L.append("    ==> 裁决: %s（原始倾向 %s）" % (v["stance"], v["base_stance"]))
     L.append("        得分: 多头 %.2f ｜ 空头 %.2f（含方向矛盾扣分 %.2f/条）"
@@ -1092,6 +1211,31 @@ def debate_selftest():
         ev("48h 窗口资金费收入", "-0.800 bp", "data/derived/funding_rates.csv")]),
         "多头引用负的资金费收入被判定为方向矛盾（反向也成立）")
 
+    # ④d ⭐ 证据强度加权（用户第 15 条）：实测与推断**不得等权**
+    chk(strength_of("data/derived/precise_fill_spot_bid.csv") == "measured",
+        "实测来源判为 measured")
+    chk(strength_of("机制推断（非实测）") == "inference",
+        "写明『机制推断（非实测）』的判为 inference")
+    chk(strength_of("https://www.sec.gov/newsroom/press-releases/2026-90") == "verified",
+        "外部可回溯 URL 判为 verified")
+    chk(strength_of("project2/execution_cost.py") == "derived",
+        "我方脚本产出判为 derived")
+    s_m, l_m = weighted_weight(
+        [ev("往返净收益（全挂单）", "-12.41 bp", "data/derived/friction_budget.csv")], 0.8)
+    s_i, l_i = weighted_weight(
+        [ev("持仓拥挤度代理", "正费率占比高", "机制推断（非实测）")], 0.8)
+    chk(s_m > s_i and l_m == "measured" and l_i == "inference",
+        "同置信度下 实测(%.3f) > 推断(%.3f) —— 等权问题已修" % (s_m, s_i))
+    # 一条实测 + 三条推断 = 该论点仍按**最高强度**计（可证伪性由那条实测成立）
+    s_best, l_best = weighted_weight(
+        [ev("持仓拥挤度代理", "x", "机制推断（非实测）"),
+         ev("往返净收益（全挂单）", "-12.41 bp", "data/derived/friction_budget.csv")], 1.0)
+    chk(l_best == "measured" and abs(s_best - 1.0) < 1e-9,
+        "论点内取**最高强度**而非平均（否则'1 实测+3 推断'会比'1 实测'还低）")
+    chk(STRENGTH_WEIGHTS["inference"] < STRENGTH_WEIGHTS["derived"]
+        < STRENGTH_WEIGHTS["verified"] <= STRENGTH_WEIGHTS["measured"],
+        "权重单调：inference < derived < verified <= measured")
+
     # ⑤ 交叉质证必须指名对方最强的一条
     cx = cross_examine(bull, bear)
     chk(cx["bull_rebuts"] and cx["bear_rebuts"],
@@ -1105,6 +1249,12 @@ def debate_selftest():
     # ⑦ 闸门 caution 时 proceed 被降级
     v_cau = adjudicate(bull, bear, gate=("caution", "合成测试", "selftest", True))
     chk(v_cau["stance"] in ("caution", "stand_down"), "闸门 caution 时不会给出 proceed")
+
+    # ⑦b 加权可审计：裁决必须同时给出新旧两套口径
+    chk(v_cau.get("raw_weights_old_scale") is not None
+        and "weighting_changed_stance" in v_cau,
+        "裁决同时保留新旧两套口径（加权改变了什么可审计：旧口径倾向 %s）"
+        % (v_cau.get("raw_weights_old_scale") or {}).get("stance"))
 
     # ⑧ 不碰量化基线：必须显式声明，且不含任何可写回基线的字段
     chk(v_block["does_not_alter"] and len(v_block["does_not_alter"]) >= 3,
@@ -2437,7 +2587,8 @@ def selftest():
 # ------------------------------------------------- 单次决策（CLI 与复跑共用）
 
 def run_decision(base, *, qty_usd=5000.0, miss_bp=None, urgent=False,
-                 now_ms=None, gate=True, scenario=None, fresh=True):
+                 now_ms=None, gate=True, scenario=None, fresh=True,
+                 freeze_news=False):
     """端到端跑一次：分析师 -> 辩论 -> 闸门 -> 交易员 -> 风控官 -> 最终决策。
 
     返回 ``(cost, items, debate, decision, book)``。
@@ -2471,7 +2622,10 @@ def run_decision(base, *, qty_usd=5000.0, miss_bp=None, urgent=False,
         cost = _atl(base, qty_usd, urgent, miss, gate=gate, now_ms=now_ms)
         book = trader_book(base, cost=cost, force=fresh)
     items, hyps, dropped = run_team(base, cost=cost, now_ms=now_ms,
-                                    size_usd=qty_usd)
+                                    size_usd=qty_usd,
+                                    # 冻结模式：显式空标题 + static，**不碰 LLM、不抓新闻**
+                                    headlines=([] if freeze_news else None),
+                                    news_mode=("static" if freeze_news else "auto"))
     try:
         g = _cg(base, now_ms)
     except Exception as exc:  # noqa: BLE001
@@ -2859,7 +3013,10 @@ def repro_selftest(write=True, outdir=None):
 
     base = "NVDA"
     kw = dict(base=base, qty_usd=5000.0, miss_bp=3.0, urgent=False,
-              now_ms=1_700_000_000_000)
+              now_ms=1_700_000_000_000,
+              # 🔴 **冻结外部输入**：真 LLM 与实时新闻都不是确定性的，
+              #    不冻结这条自检会间歇性失败（实测踩到）
+              freeze_news=True)
     gen_ms = 1_700_000_000_000
 
     cost, items, debate, decision, book = run_decision(**kw)
@@ -3127,14 +3284,19 @@ def main(argv=None):
 
         out = {}
         for b in targets:
-            items = run_team(b, cost=cost_by.get(b))
+            # ⚠️ run_team 返回三元组 (items, hypotheses, dropped)：
+            #    直接写 `items = run_team(...)` 会把元组当 items 传给 run_debate，
+            #    报 `'list' object has no attribute 'get'`（踩到过）
+            items, hyps_b, _dropped_b = run_team(b, cost=cost_by.get(b))
             try:
                 gate = _cg(b, None)
             except Exception as exc:  # noqa: BLE001
                 # 闸门取不到时**不能当作没有事件**（fail-safe），与 execution_cost 一致
                 gate = ("caution", "闸门不可用：%s" % type(exc).__name__,
                         "unavailable", True)
-            out[b] = run_debate(b, items, gate=gate, cost=cost_by.get(b))
+            d = run_debate(b, items, gate=gate, cost=cost_by.get(b))
+            d["agent_hypotheses"] = hyps_b
+            out[b] = d
 
         if args.json:
             print(json.dumps(out, ensure_ascii=False, indent=2))
