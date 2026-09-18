@@ -47,8 +47,8 @@ EXAMPLE_FILE = os.path.join(BASE, ".env.example")
 SPEC = (
     ("LLM_API_KEY", "", "LLM 密钥（DeepSeek 或任意 OpenAI 兼容端点）。留空=只用确定性路径"),
     ("LLM_BASE_URL", "https://api.deepseek.com", "OpenAI 兼容 base_url"),
-    ("LLM_MODEL", "deepseek-v4-pro",
-     "模型名：deepseek-v4-pro（1.6T，推理强）｜ deepseek-flash（284B，快而便宜）"),
+    ("LLM_MODEL", "deepseek-flash",
+     "模型名：deepseek-flash（284B，快而便宜，**默认**）｜ deepseek-v4-pro（1.6T，推理更强）"),
     ("LLM_THINKING", "off",
      "思考模式 on/off。事件分类是**分类任务**，关掉更快更稳、也避免长思维链抖动"),
     ("LLM_TIMEOUT", "45", "单次请求超时（秒）"),
