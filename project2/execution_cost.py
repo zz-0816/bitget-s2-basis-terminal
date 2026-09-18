@@ -170,6 +170,87 @@ def load_fill_params(venue):
     return out
 
 
+# ---- 双腿**联合**成交分布（实测，取代 p_s × p_p 独立近似）----
+#
+# 来源：`tools/joint_fill_analysis.py`（观测单元 = 一个盘口快照的存活区间，
+# 用真实成交判定是否打到我们的挂单价）。为什么必须有它：
+#
+#   旧写法 `p_both = p_s × p_p` 有两个问题，第二个是这次才发现的：
+#     ① **独立性**没被检验过；
+#     ② 两个 `p` 的分母是**成交笔数**（"每笔成交里有多少笔打到我们价"），
+#        而 `P(两腿都成交)` 要的是**每次挂单**的概率 —— 分母压根不是一回事。
+#        `precise_fill` 的口径下，现货腿成交率 7%~87%（各标差异极大），
+#        相乘会得到 0.2~0.5 的"两腿都成交"概率，明显偏高。
+#
+# 实测结论（2026-09-12~09-14，9 个标的、50081 个窗口）：
+#   P(两腿都成交) 0.35% ｜ P(只成交一腿) **12.4%** ｜ P(都不) 37.2%
+#   两腿正相关（phi +0.067），相关性主要来自"**两边同时活跃**"这一层
+#   （到达层 phi +0.116；都到达时两腿都成交 37.4%）。
+#   ⇒ **单腿裸露（12.4%）远多于两腿都成交（0.35%）**，这正是腿风险的来源。
+#
+# ⚠️ 覆盖限制（不藏）：现货成交带只到 2026-09-14（之后为 0 笔），
+#    所以联合分布**只能在那三天测**；且现货腿在 `stockroute` 时段成交率≈0，
+#    模型因此**按 route 取对应分层**，取不到才回退（回退会明确标注）。
+JOINT_FILL_FILES = ("joint_fill_all_in_house.csv", "joint_fill_all.csv")
+JOINT_OK = ("measured", "independence", "unavailable")
+
+
+def load_joint_fill(route=None):
+    """读双腿联合成交分布。
+
+    返回 ``{base: {...}}``，每项含：
+      ``p_both`` / ``p_part`` / ``p_none``  —— 直接可用（三者相加 = 1）
+      ``p_spot`` / ``p_perp``               —— 单腿边际概率（同一分母）
+      ``source``                            —— measured（实测）/ independence（回退）
+      ``prov``                              —— 人可读的来源说明（进日志）
+
+    取用顺序：按当前 route 的分层文件 -> 总体文件。都没有 -> 返回空 dict，
+    调用方回退到独立近似**并标注**（`docs/25` 的原则：数据缺失 ≠ 没有风险，
+    但也不能假装有数据）。
+    """
+    files = []
+    if route:
+        files.append("joint_fill_all_%s.csv" % route)
+    files += list(JOINT_FILL_FILES)
+    for name in files:
+        p = os.path.join(DERIVED, name)
+        if not os.path.exists(p):
+            continue
+        out = {}
+        try:
+            with open(p, newline="", encoding="utf-8") as fh:
+                for r in csv.DictReader(fh):
+                    try:
+                        base = r["base"]
+                        pb = float(r["p_both"])
+                        pp = float(r["p_part"])
+                        # 优先用表里写好的 p_none（保证三格和为 1）；旧表没有才反算
+                        pn = float(r["p_none"]) if r.get("p_none") not in (None, "") \
+                            else (1.0 - pb - pp)
+                        out[base] = {
+                            "p_both": pb, "p_part": pp, "p_none": pn,
+                            "p_spot": float(r.get("p_spot") or 0.0),
+                            "p_perp": float(r.get("p_perp") or 0.0),
+                            "windows": int(float(r.get("windows") or 0)),
+                            "phi": (float(r["phi"]) if r.get("phi") not in (None, "")
+                                    else None),
+                            "both_lift": (float(r["both_lift"])
+                                          if r.get("both_lift") not in (None, "") else None),
+                            "source": "measured",
+                            "prov": ("实测联合分布 data/derived/%s"
+                                     "（窗口 %s 个，%s~%s）"
+                                     % (name, r.get("windows"),
+                                        r.get("date_from") or "?", r.get("date_to") or "?")),
+                        }
+                    except (KeyError, ValueError, TypeError):
+                        continue
+        except OSError:
+            continue
+        if out:
+            return out
+    return {}
+
+
 # ---------------------------------------------------------------- 冲击模型
 
 def impact_bp(levels, qty_usd):
@@ -299,11 +380,15 @@ def analyse_two_leg(base, qty_usd, urgent, miss_bp, gate=True, now_ms=None):
         * 要么把已成交的腿平掉（同样付一次往返点差 + 费）
       两者都要花钱，所以**单腿成交是最坏的结果之一，不能忽略**。
 
-    独立性问题（必须声明的局限）：
-      两条腿的成交**不独立** —— 同一个信息事件会同时推动两边。
-      本模型用 `p_spot × p_perp` 作为 `P(两腿都成交)` 的**上界近似**，
-      并把相关性整体折进 `leg_risk` 的保守取值里。
-      **精确处理需要双腿联合分布，列为下一步工作。**
+    独立性问题（**已实测修正**）：
+      早期版本假设两腿成交独立（`p_both = p_s × p_p`），并把相关性整体折进
+      `leg_risk` 的保守取值里。现已用 `tools/joint_fill_analysis.py` **实测**四格
+      （`data/derived/joint_fill_*.csv`），按 route 取分层值：
+        两腿都成交 / 只成交一腿 / 都没成交  —— 直接进成本式，不再假设独立。
+      实测结论：P(只成交一腿) **12.4%** 远高于 P(两腿都成交) 0.35%，
+      两腿正相关（phi +0.067），相关性主要来自"两边同时活跃"。
+      ⚠️ 覆盖限制：现货成交带只到 2026-09-14，联合分布只在那三天可测；
+      取不到时回退到独立近似**并在返回体里标注 `joint_source`**。
     """
     sst_s = spread_stats(base, "spot")
     sst_p = spread_stats(base, "perp")
@@ -315,16 +400,31 @@ def analyse_two_leg(base, qty_usd, urgent, miss_bp, gate=True, now_ms=None):
     half_s = sst_s["med"] / 2.0
     half_p = sst_p["med"] / 2.0
 
-    # 成交概率（实测值；缺数据时用保守下限）
-    p_s = fills_s.get("fill_rate", 0.0)
-    p_p = fills_p.get("fill_rate", 0.0)
-    p_both = p_s * p_p                       # 上界近似（独立性假设，见 docstring）
-    p_part = p_s * (1 - p_p) + p_p * (1 - p_s)
-    p_none = (1 - p_s) * (1 - p_p)
-
     # 逆向选择（有利漂移，正=有利；实测多为负）
     adv_s = fills_s.get("fdmid_k6", 0.0)
     adv_p = fills_p.get("fdmid_k6", 0.0)
+
+    # ---- 成交概率：优先用**联合分布**（实测），否则回退独立近似并标注 ----
+    route_now = route_of(sst_p["ts"])
+    joint = load_joint_fill(route_now).get(base) or load_joint_fill(None).get(base)
+    p_s_pt = fills_s.get("fill_rate", 0.0)      # 旧口径：分母=成交笔数（per-trade）
+    p_p_pt = fills_p.get("fill_rate", 0.0)
+    if joint:
+        p_s = joint["p_spot"]
+        p_p = joint["p_perp"]
+        p_both = joint["p_both"]
+        p_part = joint["p_part"]
+        p_none = joint["p_none"]
+        joint_source = joint["source"]
+        joint_prov = joint["prov"]
+    else:
+        p_s, p_p = p_s_pt, p_p_pt
+        p_both = p_s * p_p
+        p_part = p_s * (1 - p_p) + p_p * (1 - p_s)
+        p_none = (1 - p_s) * (1 - p_p)
+        joint_source = "independence"
+        joint_prov = ("无联合分布实测数据 -> 回退独立近似 p_s×p_p"
+                      "（**口径不一致**：两个 p 的分母是成交笔数，不是挂单次数）")
 
     # 费率：现货 5bp（maker=taker）；永续 maker 2 / taker 6
     fee_spot = FEE_SPOT
@@ -370,6 +470,12 @@ def analyse_two_leg(base, qty_usd, urgent, miss_bp, gate=True, now_ms=None):
         "half_s": half_s, "half_p": half_p,
         "p_s": p_s, "p_p": p_p, "p_both": p_both, "p_part": p_part,
         "p_none": p_none, "adv_s": adv_s, "adv_p": adv_p,
+        # 联合分布出处 + 旧的 per-trade 口径（保留对照，便于审计口径变化）
+        "joint_source": joint_source, "joint_prov": joint_prov,
+        "p_s_pertrade": p_s_pt, "p_p_pertrade": p_p_pt,
+        "p_both_indep_pertrade": p_s_pt * p_p_pt,
+        "p_both_indep": p_s * p_p,
+        "p_part_indep": p_s * (1 - p_p) + p_p * (1 - p_s),
         "leg_risk": leg_risk, "miss": miss_bp,
         "cost_mm": cost_mm, "cost_mix": cost_mix, "cost_tk": cost_tk,
         "best_mode": best[0], "best_cost": best[1],
@@ -377,7 +483,7 @@ def analyse_two_leg(base, qty_usd, urgent, miss_bp, gate=True, now_ms=None):
         "gate_source": g_src, "maker_allowed": maker_allowed,
         "invalidated": invalidated,
         "spread_s": sst_s["med"], "spread_p": sst_p["med"],
-        "route": route_of(sst_p["ts"]), "session": session_of(sst_p["ts"]),
+        "route": route_now, "session": session_of(sst_p["ts"]),
         "n_s": fills_s.get("trades", 0), "n_p": fills_p.get("trades", 0),
     }
 
@@ -396,13 +502,27 @@ def render_two_leg(r):
         print("        🔴 **挂单类方案已作废**（%s）—— 事件窗口内挂单等于被逆向选择"
               % "、".join(r["invalidated"]))
         print("           剩下唯一可执行方案是「双腿全吃单」；若其成本不可接受，就**不做**。")
-    print("     实测成交率：现货 %5.1f%%（%s 笔）｜ 永续 %5.1f%%（%s 笔）"
-          % (100 * r["p_s"], format(r["n_s"], ","),
-             100 * r["p_p"], format(r["n_p"], ",")))
-    print("     -> 概率分解：两腿都成交 %.1f%% ｜ **只成交一腿 %.1f%%** ｜ 都没成交 %.1f%%"
+    # ---- 成交概率：优先联合实测，回退独立近似时**明确标注** ----
+    if r.get("joint_source") == "measured":
+        print("     成交概率（**实测联合分布**）：现货腿 %.1f%% ｜ 永续腿 %.1f%%"
+              % (100 * r["p_s"], 100 * r["p_p"]))
+        print("       %s" % r["joint_prov"])
+    else:
+        print("     成交概率（⚠️ **回退：独立近似**）：现货腿 %.1f%%（%s 笔）｜ "
+              "永续腿 %.1f%%（%s 笔）"
+              % (100 * r["p_s"], format(r["n_s"], ","),
+                 100 * r["p_p"], format(r["n_p"], ",")))
+        print("       %s" % r["joint_prov"])
+    print("     -> 概率分解：两腿都成交 %.2f%% ｜ **只成交一腿 %.1f%%** ｜ 都没成交 %.1f%%"
           % (100 * r["p_both"], 100 * r["p_part"], 100 * r["p_none"]))
+    pt = r.get("p_both_indep_pertrade")
+    if pt:
+        print("        对照旧口径（per-trade 相乘）：两腿都成交会算成 %.1f%% —— "
+              "分母不同，**不可比**" % (100 * pt))
     print("        单腿成交的代价（补另一腿）%.2f bp —— 这就是「腿风险」"
           % r["leg_risk"])
+    print("        腿风险期望 = P(只一腿) × %.2f bp = **%.2f bp**"
+          % (r["leg_risk"], r["p_part"] * r["leg_risk"]))
     print()
     print("     情形                    成本(bp)")
     print("     " + "-" * 34)
@@ -410,6 +530,28 @@ def render_two_leg(r):
                     ("双腿全吃单", r["cost_tk"])):
         mark = "  ← 最优" if name == r["best_mode"] else ""
         print("     %-22s %+8.2f%s" % (name, c, mark))
+
+
+def render(r):
+    """单腿（默认永续）建议的打印。
+
+    ⚠️ 2026-09-18 修：`--base NVDA` 这条路径调用了 `render()`，但**函数从未存在过**
+    （只有双腿版的 `render_two_leg`），于是单腿命令一直是 NameError ——
+    这次做联合分布时才发现（自检只覆盖了双腿路径，所以一直没抓到）。
+    """
+    print("  %-6s 点差中位 %6.2f bp（p25 %.2f / p75 %.2f）｜ 中间价 %.4f"
+          % (r["base"], r["spread_med"], r.get("spread_p25", 0.0),
+             r.get("spread_p75", 0.0), r["mid"]))
+    print("     实测成交率 %.1f%%（%s 笔）｜ 逆向选择 f_dmid %.2f bp ｜ 半幅点差 %.2f bp"
+          % (100 * r["p_fill"], format(r["trades"], ","), r["adv"], r["half"]))
+    print("     吃单 %+.2f bp（含手续费 %.1f）｜ 挂单 %+.2f bp（含手续费 %.1f）"
+          % (r["cost_taker"], r["fee_taker"], r["cost_maker"], r["fee_maker"]))
+    print("     差异 %+.2f bp -> 建议：**%s**" % (r["diff"], r["verdict"]))
+    if r.get("impact"):
+        print("     吃单冲击：吃穿档位 +%.2f bp（%d 档%s）"
+              % (r["impact"], r["levels"],
+                 "" if r.get("enough") else "，**深度不足**"))
+    print("     route=%s ｜ session=%s" % (r["route"], r["session"]))
 
 
 def main(argv=None):
@@ -515,11 +657,15 @@ def main(argv=None):
             render_two_leg(trows[0])
             print()
         print("  边界（必须与结论一起读）：")
-        print("    1. 两腿成交**不独立**，本模型用 p_s×p_p 作上界近似，")
-        print("       相关性折进 leg_risk 的保守取值里；精确处理需双腿联合分布。")
+        print("    1. 两腿成交概率来自**实测联合分布**（按 route 取分层）：")
+        print("       P(两腿都成交) / P(只成交一腿) / P(都没成交) 直接进成本式，")
+        print("       不再假设独立。⚠️ 该实测只覆盖 2026-09-12~09-14（现货成交带的")
+        print("       有效期）；取不到时回退独立近似并在上面标注 joint_source。")
         print("    2. 『现货挂单』只在 `in_house` 有效 —— 工作日走 stockroute 时")
         print("       现货挂单也按 Taker 计费（docs/09），该情形应改用『双腿全吃单』。")
-        print("    3. 事件风险**已联动** `event_gate.py`：挂单类方案必须先过闸门，")
+        print("    3. 联合分布是**每次挂单**的口径（观测单元 = 一个 30 秒盘口区间），")
+        print("       与 precise_fill 的 per-trade 口径**分母不同**，不可互相换算。")
+        print("    4. 事件风险**已联动** `event_gate.py`：挂单类方案必须先过闸门，")
         print("       被否决时只剩『双腿全吃单』或不做。")
         return 0
 
@@ -546,8 +692,8 @@ def main(argv=None):
     print()
     print("  ⚠️ 模型边界（必须与结论一起读）：")
     print("    0. 🔴 本模型一次只算**一条腿**（默认永续）。真实的执行决策是**双腿**的：")
-    print("       现货腿与永续腿要同时成交才没有敞口，所以两腿的成交概率**不独立**，")
-    print("       双腿联合模型是下一步工作。**不要**把单腿结论当成「这一对可以做」。")
+    print("       现货腿与永续腿要同时成交才没有敞口。双腿联合模型见 --two-leg，")
+    print("       其成交概率来自实测联合分布（tools/joint_fill_analysis.py）。")
     print("    1. 成交概率用的是**该标的的历史成交率**，不是「挂在这个价的成交概率」——")
     print("       后者需要排队位置模型（列在项目一的后续工作里，本模型用历史值近似）。")
     print("    2. 逆向选择用 k=6（约 3 分钟）的实测中位；不同持有期需重算。")
@@ -627,6 +773,63 @@ def selftest():
     ok = ok and good
     print("  [%s] --no-gate 时显式标注 source=off（不静默）"
           % ("OK " if good else "!! "))
+
+    # ---- 路径 6：联合成交概率（实测）与回退（独立近似）----
+    r = r_allow
+    good = bool(r) and r["joint_source"] in JOINT_OK
+    ok = ok and good
+    print("  [%s] 联合分布来源已标注：%s（%s）"
+          % ("OK " if good else "!! ", r["joint_source"] if r else "-",
+             (r["joint_prov"][:60] if r else "")))
+
+    good = bool(r) and abs(r["p_both"] + r["p_part"] + r["p_none"] - 1.0) < 1e-6
+    ok = ok and good
+    print("  [%s] 三格概率相加 = 1（%.6f；CSV 是 6 位小数，容差 1e-6）"
+          % ("OK " if good else "!! ",
+             (r["p_both"] + r["p_part"] + r["p_none"]) if r else 0))
+
+    # 联合分布可用时：单腿裸露是主要风险形态（P(只一腿) 应远高于 P(两腿)）
+    measured_both = None
+    if r and r["joint_source"] == "measured":
+        measured_both = r["p_both"]
+        good = r["p_part"] >= r["p_both"]
+        ok = ok and good
+        print("  [%s] 实测下 P(只一腿) %.2f%% >= P(两腿) %.2f%% —— "
+              "单腿裸露才是主要风险" % ("OK " if good else "!! ",
+                                        100 * r["p_part"], 100 * r["p_both"]))
+
+    # 回退路径：把**所有**联合分布文件临时藏起来 -> 必须回退且**标注**
+    # （不能只藏 stockroute 那一份：当前 route 决定读哪一份，踩过这个坑）
+    saved = {}
+    for p in glob.glob(os.path.join(DERIVED, "joint_fill_*.csv")):
+        with open(p, "rb") as fh:
+            saved[p] = fh.read()
+        os.remove(p)
+    try:
+        r_fb = analyse_two_leg(base, 5000, False, DEFAULT_MISS_BP, gate=False)
+    finally:
+        for p, blob in saved.items():
+            with open(p, "wb") as fh:
+                fh.write(blob)
+    good = bool(r_fb) and r_fb["joint_source"] == "independence"
+    ok = ok and good
+    print("  [%s] 联合分布文件全部移走后回退独立近似，并标注 "
+          "joint_source=independence（%d 份已还原）"
+          % ("OK " if good else "!! ", len(saved)))
+    good = bool(r_fb) and abs(r_fb["p_both"] + r_fb["p_part"] + r_fb["p_none"] - 1.0) < 1e-6
+    ok = ok and good
+    print("  [%s] 回退路径同样满足三格相加 = 1" % ("OK " if good else "!! "))
+    # 旧 per-trade 口径**只会高估**两腿都成交（分母是成交笔数，不是挂单次数）——
+    # 这条对比只有在联合分布可用时才成立，缺数据时两边都是同一个回退值（实测踩过）
+    if measured_both is not None:
+        good = r_fb["p_both_indep_pertrade"] > measured_both
+        ok = ok and good
+        print("  [%s] 旧 per-trade 口径把两腿都成交算成 %.1f%%，实测只有 %.2f%% "
+              "—— 高估 %.0f 倍" % ("OK " if good else "!! ",
+                                   100 * r_fb["p_both_indep_pertrade"],
+                                   100 * measured_both,
+                                   (r_fb["p_both_indep_pertrade"] / measured_both)
+                                   if measured_both else 0))
 
     print("\n自检%s" % ("通过" if ok else "**失败**"))
     return 0 if ok else 1

@@ -1,0 +1,10 @@
+base,route,windows,p_both_legacy,p_both_measured,overestimate_x,p_part_legacy,p_part_measured,cost_mm_legacy_bp,cost_mm_measured_bp,best_legacy,best_measured,leg_risk_term_bp,small_sample_floored,source
+AAPL,in_house,3671,0.006863,0.001362,5.04,0.246374,0.163443,16.265,14.2393,现货挂单+永续吃单,现货挂单+永续吃单,4.7651,0,joint_fill_all_in_house.csv
+GOOGL,in_house,3670,0.134822,0.007629,17.67,0.464756,0.152589,11.2381,10.3821,双腿全挂单,双腿全挂单,0.8348,0,joint_fill_all_in_house.csv
+HOOD,in_house,3671,0.018315,0.002452,7.47,0.26117,0.125851,14.7241,12.2644,现货挂单+永续吃单,双腿全挂单,2.6374,0,joint_fill_all_in_house.csv
+META,in_house,3671,0.29199,0.023699,12.32,0.61852,0.096704,11.6625,10.387,现货挂单+永续吃单,双腿全挂单,0.8144,0,joint_fill_all_in_house.csv
+MRVL,in_house,3671,0.02645,0.005176,5.11,0.315701,0.173795,12.3807,11.3711,双腿全挂单,双腿全挂单,1.9258,0,joint_fill_all_in_house.csv
+NVDA,in_house,3671,0.216352,0.035958,6.02,0.497596,0.236175,10.4849,10.4447,双腿全挂单,双腿全挂单,1.2689,0,joint_fill_all_in_house.csv
+QQQ,in_house,3670,0.112423,0.010082,11.15,0.524453,0.201635,12.1156,11.059,双腿全挂单,双腿全挂单,1.7386,0,joint_fill_all_in_house.csv
+SPY,in_house,3671,0.002856,0.000272,10.5,0.570488,0.133751,16.4972,11.5286,现货挂单+永续吃单,双腿全挂单,1.9335,1,joint_fill_all_in_house.csv
+TSLA,in_house,3670,0.147394,0.009264,15.91,0.473613,0.153134,11.5387,10.488,双腿全挂单,双腿全挂单,0.9451,0,joint_fill_all_in_house.csv

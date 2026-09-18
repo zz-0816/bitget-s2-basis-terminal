@@ -1522,6 +1522,10 @@ def build_log(*, base, items, debate, cost, decision, qty_usd, miss_bp, urgent,
                      "data/derived/funding_rates.csv",
                      "data/derived/precise_fill_spot_bid.csv",
                      "data/derived/precise_fill_perp_ask.csv",
+                     # 联合分布的标定输入也要进清单：改了它，成本结论就会变
+                     "data/derived/joint_fill_all_in_house.csv",
+                     "data/derived/joint_fill_all_stockroute.csv",
+                     "data/derived/joint_fill_all.csv",
                      "project2/agent_team.py", "project2/execution_cost.py",
                      "project2/event_gate.py"]
     # ⚠️ 合成场景**没有读盘口**，就别把 orderbook 写进输入清单 ——
@@ -1544,7 +1548,10 @@ def build_log(*, base, items, debate, cost, decision, qty_usd, miss_bp, urgent,
             "cost": {k: (cost or {}).get(k) for k in (
                 "best_mode", "best_cost", "cost_mm", "cost_mix", "cost_tk",
                 "p_s", "p_p", "p_part", "adv_s", "adv_p", "spread_s", "spread_p",
-                "gate_severity", "maker_allowed")},
+                "gate_severity", "maker_allowed",
+                # 联合分布的出处与三格概率：成本结论的可复现性依赖它们
+                "joint_source", "joint_prov", "p_both", "p_none",
+                "p_both_indep_pertrade")},
         },
         "analysts": [{"dimension": i["report"]["dimension"],
                       "verdict": i["report"]["verdict"],

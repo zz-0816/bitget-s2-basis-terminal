@@ -137,16 +137,20 @@ rho    = Σ (x_t − μ)(x_{t−1} − μ) / Σ (x_t − μ)²      # μ 为该�
 | 3 | `str.rstrip("USDT")` 剥的是**字符集合**，`RHOODUSDT`→`HOO` | 用 `base_of()` 显式切片 |
 | 4 | `Stop-Process` 可能报成功但进程存活（僵尸） | 用 `taskkill /PID <id> /F`，再用 `tools/check_samplers.py` 复检 |
 | 5 | 完全相等键 `(ts_ms,symbol,venue)` **测不出多实例重复** | 按"每分钟轮数/轮间隔"检测 |
-| 6 | `usdtVolume` 对部分符号自相矛盾（如 `RSPYUSDT` 同时显示 251 亿与 5,265） | 与盘口深度交叉验证 |
-| 7 | 1m 只能回溯约 **13.9 天** | 关机超窗口则永久缺失，记入 `data/manifest.json` 的 `gap_log` |
-| 8 | PowerShell 把未加引号的 `--gran 1h,1D` 当数组 | 写 `--gran "1h,1D"` |
-| 9 | `.cmd` 必须**纯 ASCII**（cmd.exe 按 GBK 解析 UTF-8 中文会报错） | 中文放 `.ps1`（带 UTF-8 BOM） |
-| 10 | 多个守护/包装进程各拉一套采样器 | 守护自身持 `.supervisor.lock` 单实例；**新守护启动前先"采纳"已存活的采样器**（见 `sampler_supervisor.ps1` 的 `Get-LiveLockPid`） |
-| 11 | **PowerShell 写的锁文件带 UTF-8 BOM**，Python 用 `encoding="utf-8"` 读会抛 `Unexpected UTF-8 BOM` → 锁明明存在却被判"守护未运行" | 读锁一律用**容忍 BOM** 的方式（`utf-8-sig` → `utf-8` → 正则抠 `"pid"`）；见 `tools/precheck_window.py` 的 `read_lock_pid()` |
-| 12 | **`os.kill(pid, 0)` 在本环境对任何 pid 都抛 OSError**（会话受限，无法向任意进程发信号）→ 存活判定一律为假 | 存活判定改用"列进程"（CIM 全进程列表），不要用信号探测 |
-| 13 | 用 `powershell -Command "... -like '*sampler_supervisor.ps1*'"` 查询时，**查询命令自身的命令行就含该字符串** → PowerShell 子进程自我匹配，误计实例数 | 判守护实例**只看 `.supervisor.lock` 持有者**，不做命令行字符串匹配 |
-| 14 | 用 `wmic process get CommandLine` 查进程 → 新版 Windows 已弃用，**返回空**，导致误判 0 个实例 | 改用 `Get-CimInstance Win32_Process` |
-| 15 | 覆盖率的分子分母口径不一致 → 算出 **153.7% / 110%** 这类不可能值 | 分母用**窗口（或文件）时长**，不用"有数据的那一小段"；并单列"头部缺口"使缺失无处隐藏 |
+| 6 | **`trades-*.csv` 的现货覆盖只到 2026-09-14**（09-15 起每天 0 笔现货成交；09-12:572 / 09-13:5776 / 09-14:3445） | 任何"用成交带测双腿"的分析都必须**显式给日期区间**；用"最近 N 天"会取到现货腿没有成交的日子。原因（采样器漏采 vs 现货真无成交）**尚未结论** |
+| 7 | 两个口径的"成交率"**分母不同**：`precise_fill_*.csv` 的分母是**成交笔数**；`joint_fill_*.csv` 的分母是**挂单次数**（30 秒盘口区间） | 两者**不可相乘、不可换算**；报数时必须写清分母 |
+| 8 | `usdtVolume` 对部分符号自相矛盾（如 `RSPYUSDT` 同时显示 251 亿与 5,265） | 与盘口深度交叉验证 |
+| 9 | 1m 只能回溯约 **13.9 天** | 关机超窗口则永久缺失，记入 `data/manifest.json` 的 `gap_log` |
+| 10 | PowerShell 把未加引号的 `--gran 1h,1D` 当数组 | 写 `--gran "1h,1D"` |
+| 11 | `.cmd` 必须**纯 ASCII**（cmd.exe 按 GBK 解析 UTF-8 中文会报错） | 中文放 `.ps1`（带 UTF-8 BOM） |
+| 12 | 多个守护/包装进程各拉一套采样器 | 守护自身持 `.supervisor.lock` 单实例；**新守护启动前先"采纳"已存活的采样器**（见 `sampler_supervisor.ps1` 的 `Get-LiveLockPid`） |
+| 13 | **PowerShell 写的锁文件带 UTF-8 BOM**，Python 用 `encoding="utf-8"` 读会抛 `Unexpected UTF-8 BOM` → 锁明明存在却被判"守护未运行" | 读锁一律用**容忍 BOM** 的方式（`utf-8-sig` → `utf-8` → 正则抠 `"pid"`）；见 `tools/precheck_window.py` 的 `read_lock_pid()` |
+| 14 | **`os.kill(pid, 0)` 在本环境对任何 pid 都抛 OSError**（会话受限，无法向任意进程发信号）→ 存活判定一律为假 | 存活判定改用"列进程"（CIM 全进程列表），不要用信号探测 |
+| 15 | 用 `powershell -Command "... -like '*sampler_supervisor.ps1*'"` 查询时，**查询命令自身的命令行就含该字符串** → PowerShell 子进程自我匹配，误计实例数 | 判守护实例**只看 `.supervisor.lock` 持有者**，不做命令行字符串匹配 |
+| 16 | 用 `wmic process get CommandLine` 查进程 → 新版 Windows 已弃用，**返回空**，导致误判 0 个实例 | 改用 `Get-CimInstance Win32_Process` |
+| 17 | 覆盖率的分子分母口径不一致 → 算出 **153.7% / 110%** 这类不可能值 | 分母用**窗口（或文件）时长**，不用"有数据的那一小段"；并单列"头部缺口"使缺失无处隐藏 |
+| 18 | 分层统计时把"到达层"（有人交易）与"成交层"（打到我们的价）的计数一起求和 → 窗口数变成两倍 | 分层/合并时**只对四格求和**；不同层的键分开累加（见 `tools/joint_fill_analysis.py` 的 pooled 段） |
+| 19 | 分层结果写 CSV 时把**分层键**（route 名）当成 `base` 写进去 → 下游按 base 查表全部取不到，且**静默** | 分层输出必须把 `base` 换回真正的标的（已踩，见 `_row_for` 的注释） |
 
 ---
 
