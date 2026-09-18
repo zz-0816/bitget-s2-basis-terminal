@@ -186,13 +186,17 @@ def main(argv=None):
                 has_agent = False
         print()
         print("  ③ 多 Agent 团队 —— 分析师 → 辩论 → 交易员 → 风控官 → 最终订单")
+        print("     （分工：**agent 做发现与论证**（5 路分析/辩论/提风险假设），")
+        print("       **确定性代码做执行与守边界**（成本数字/一票否决/最终规模）——")
+        print("       这样门槛与规模才可复跑，见 --log + --replay）")
         if not has_agent:
             print("     （agent_team.py 不可导入，跳过）")
         else:
             cost, items, debate, decision, book = run_decision(
                 b, qty_usd=args.qty, miss_bp=3.0, urgent=False)
             valid = [i for i in items if i.get("valid")]
-            print("     ① 分析师 %d/4 份有效（铁律：没有实测量的结论作废）" % len(valid))
+            print("     ① 分析师 %d/%d 份有效（铁律：没有实测量的结论作废）"
+                  % (len(valid), len(items)))
             for i in items:
                 r = i["report"]
                 print("        %-10s %-12s 置信度 %.2f  证据 %d 条%s"

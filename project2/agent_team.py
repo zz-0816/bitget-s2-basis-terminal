@@ -67,7 +67,21 @@ DERIVED = os.path.join(BASE, "data", "derived")
 SPREAD = os.path.join(BASE, "data", "spread")
 
 VERDICTS = ("favorable", "unfavorable", "neutral")
-DIMENSIONS = ("basis", "sentiment", "news", "technical")
+DIMENSIONS = ("basis", "sentiment", "news", "technical", "execution_risk")
+
+# 执行风险假设 -> 风控官动作（**agent 提议、风控官执行**）
+# agent 只说"该采取什么动作"，**最终立场与规模仍由风控官的规则决定**，
+# 且仍然只能收紧 —— 这条边界见 RISK_LEVELS / decide() 的单调性检查。
+HYPOTHESIS_ACTIONS = {
+    "leg_risk": {"level": "caution", "action": "require_taker",
+                 "measure": "P(只成交一腿) > 50%"},
+    "stale_quotes": {"level": "veto", "action": "no_new_position",
+                     "measure": "逐笔成交停滞 >= %d 分钟" % 30},
+    "thin_capacity": {"level": "caution", "action": "cap_size",
+                      "measure": "可捕获名义额不足"},
+    "adverse_selection": {"level": "veto", "action": "no_new_position",
+                          "measure": "f_dmid <= -3.0 bp"},
+}
 
 
 # ---------------------------------------------------------------- 通用
@@ -205,19 +219,40 @@ def analyst_sentiment(base):
 
 # ---------------------------------------------------------------- ③ 新闻
 
-def analyst_news(base, now_ms=None):
-    """📰 新闻分析师 —— 只拿事件/新闻数据（复用事件闸门）。"""
+# 🔴 诚实标注：日历里**没有一条**带可回溯来源时，置信度封顶 0.40
+CONF_CAP_NO_SOURCE = 0.4
+
+
+def analyst_news(base, now_ms=None, mode="auto", headlines=None):
+    """📰 新闻/事件分析师 —— 这一段是**大模型在运行期的唯一职责**。
+
+    ⚠️ 2026-09-18 修一个**实现缺口**：此前这里**硬编码 `mode="static"`**，
+    于是 `event_gate.llm_gate()` 虽然写好了、**却从来没有在决策链里跑过**
+    （日志里 `gate.source` 一直是 `static`）。而报告里写的是
+    "LLM 在运行期的唯一职责 = 事件判断" —— 那就是**说了没做**。
+
+    现在按 `mode` 分三条路：
+      * ``static``：只用确定性日历（**无 LLM 也能跑**，回退路径）
+      * ``llm``   ：把标题喂给 OpenAI 兼容端点分类（需要 key）
+      * ``auto``  ：有 key 用 llm，没有就用 static —— **绝不因为没有 key 就崩**，
+                    但会在 notes 里**明确写出"本次未使用 LLM"**，不含糊。
+
+    ``headlines`` 可以外部传入（例如来自 `signal_adapter` 的新闻源）。
+    """
     e = []
+    note = ""
     try:
         import event_gate as _eg
         sev = None
         try:
-            # 优先用风险与理由引擎（它已含来源约束）
-            a = _eg.assess(base, now_ms=now_ms, mode="static")
+            a = _eg.assess(base, now_ms=now_ms, mode=mode, headlines=headlines
+                           if headlines else None)
             sev = a["event"]["severity"]
+            src = a["event"].get("source", "static")
             e.append(ev("事件严重度", sev, "project2/event_gate.py"))
             e.append(ev("判断置信度（受来源约束）", "%.2f" % a["confidence"],
                         "project2/event_gate.py"))
+            e.append(ev("判断来源", src, "project2/event_gate.py"))
             if a["event"].get("reason"):
                 e.append(ev("事件理由", a["event"]["reason"][:60],
                             "project2/event_gate.py"))
@@ -225,6 +260,15 @@ def analyst_news(base, now_ms=None):
                 if "已复核" in line:
                     e.append(ev("日历已复核条数", line.strip()[:60],
                                 "project2/events_calendar.json"))
+            used_llm = str(src).startswith("llm")
+            if used_llm:
+                note = ("✅ 本次由 **LLM** 判事件（来源=%s，置信度 %.2f）——"
+                        "大模型的运行期职责已真实执行" % (src, a["confidence"]))
+            else:
+                note = ("⚠️ **本次未使用 LLM**（来源=%s）："
+                        "事件判断退化为确定性日历，只能挡可计算事件"
+                        "（期权到期/休市），**挡不住突发新闻与财报**"
+                        % src)
         except Exception as exc:  # noqa: BLE001
             e.append(ev("闸门调用异常", repr(exc)[:60], "project2/event_gate.py"))
     except ImportError:
@@ -234,9 +278,9 @@ def analyst_news(base, now_ms=None):
         return report("news", "neutral", 0.0, [], "无事件数据")
     verdict = "unfavorable" if sev == "block" else (
         "neutral" if sev == "caution" else "favorable")
-    return report("news", verdict, 0.4, e,
-                  "⚠️ 日历尚无经复核来源，置信度按上限 0.40 处理；"
-                  "接入 bitget-signal 后可提升")
+    # 置信度：有可回溯来源才允许高；否则封顶 0.40
+    conf = 0.4 if "llm" not in note else 0.85
+    return report("news", verdict, conf, e, note)
 
 
 # ---------------------------------------------------------------- ④ 技术面
@@ -301,25 +345,188 @@ def analyst_technical(base):
                   "成交率 %.1f%% ｜ 逆向选择 %+.2f bp" % (100 * fill, adv))
 
 
+# ------------------------------------------------- ⑤ 执行风险（agent 做的风险评估）
+
+# 「行情停滞」判定：现货/永续**逐笔成交**多久没有新打印。
+# 为什么必须单列：现货腿自 2026-09-14 起零成交（`docs/29`），而**报价仍在刷新** ——
+# 报价动 ≠ 市场能成交。挂单策略的收益完全来自成交，所以"没有成交"是致命风险，
+# 但在盘口数据上完全看不出来（点差、深度都正常）。这条只有把两边数据**联起来看**
+# 才能发现 —— 这正是"多一个分析师"的价值，而不是多一层包装。
+STALE_TRADE_MIN = 30.0      # 分钟
+MAX_HYPOTHESES = 3          # 最多带进辩论/风控的假设条数（防止刷屏式围堵）
+
+
+def _last_trade_ts(venue, base):
+    """该 venue 下该标的**最后一笔**成交的时间戳（毫秒）。读不到返回 None。"""
+    files = sorted(glob.glob(os.path.join(SPREAD, "trades-*.csv")))
+    for p in reversed(files):
+        last = None
+        try:
+            with open(p, newline="", encoding="utf-8") as fh:
+                for r in csv.DictReader(fh):
+                    if r.get("venue") != venue or r.get("base") != base:
+                        continue
+                    try:
+                        last = int(r["ts_ms"])
+                    except (KeyError, ValueError, TypeError):
+                        continue
+        except OSError:
+            continue
+        if last is not None:
+            return last
+    return None
+
+
+def analyst_execution_risk(base, cost=None, now_ms=None, size_usd=None):
+    """🛡️ **执行风险分析师** —— agent 做的风险评估层。
+
+    与其它四个分析师的差别：它不回答"哪一路数据怎么样"，而是回答
+    **"这一单可能怎么死"**，并且每一条风险都必须给全四样东西：
+
+      ``hypothesis`` 风险陈述 ｜ ``metric/value`` 实测量（引用了哪个、值多少）
+      ｜ ``threshold`` 验证阈值 ｜ ``falsifier`` **什么条件下这条风险不成立**
+
+    只有四样齐全的假设才会被带进辩论层与风控层；缺证的直接丢弃并留痕
+    （与 `docs/25` §2.1 的"可证伪"铁律同源）。
+
+    目前覆盖四类（全部来自实测踩过的坑）：
+      1. **单腿裸露**：P(只成交一腿) 高 -> 只成交一边 = 裸露方向敞口
+      2. **行情停滞**：逐笔成交长时间无新打印 -> 挂单不会成交（报价在动也没用）
+      3. **容量约束**：可捕获名义额 / 首档深度 -> 规模撑不住
+      4. **逆向选择**：现货腿 f_dmid 负向加深 -> 挂单被系统性挑选
+    """
+    now_ms = now_ms or int(dt.datetime.now(dt.UTC).timestamp() * 1000)
+    e, hyps, dropped = [], [], []
+
+    def H(hid, text, metric, value, threshold, falsifier, action):
+        return {"id": hid, "hypothesis": text, "metric": metric, "value": value,
+                "threshold": threshold, "falsifier": falsifier, "action": action}
+
+    # ---- ① 单腿裸露（来自实测联合分布）----
+    j = None
+    try:
+        try:
+            from execution_cost import load_joint_fill
+        except ImportError:
+            from project2.execution_cost import load_joint_fill
+        route = (cost or {}).get("route")
+        j = (load_joint_fill(route).get(base) or load_joint_fill(None).get(base))
+    except Exception:  # noqa: BLE001
+        j = None
+    if j:
+        e.append(ev("P(只成交一腿)", "%.1f%%" % (100 * j["p_part"]),
+                    j["prov"]))
+        e.append(ev("P(两腿都成交)", "%.2f%%" % (100 * j["p_both"]), j["prov"]))
+        if j["p_part"] > 0.5:
+            hyps.append(H(
+                "leg_risk", "只成交一腿的概率超过一半 —— 会留下裸露的方向敞口",
+                "P(只成交一腿)", "%.1f%%" % (100 * j["p_part"]),
+                ">50%", "若 P(只成交一腿) 降到 50% 以内，本条不成立",
+                "禁止挂单类方案，只允许双腿全吃单"))
+        else:
+            dropped.append({"id": "leg_risk", "reason": "未超过阈值",
+                            "metric": "P(只成交一腿)",
+                            "value": "%.1f%%" % (100 * j["p_part"])})
+    # ---- ② 行情停滞（联表看：报价在动 ≠ 能成交）----
+    stale = {}
+    for venue in ("spot", "perp"):
+        ts = _last_trade_ts(venue, base)
+        if ts:
+            stale[venue] = (now_ms - ts) / 60000.0
+    if stale:
+        worst = max(stale, key=lambda v: stale[v])
+        e.append(ev("%s 最后一笔成交距今" % worst, "%.1f 分钟" % stale[worst],
+                    "data/spread/trades-*.csv"))
+        e.append(ev("双边停滞对照",
+                    "现货 %.1f 分钟 ｜ 永续 %.1f 分钟"
+                    % (stale.get("spot", 0.0), stale.get("perp", 0.0)),
+                    "data/spread/trades-*.csv"))
+        if stale[worst] >= STALE_TRADE_MIN:
+            hyps.append(H(
+                "stale_quotes",
+                "%s 腿已 %.0f 分钟没有成交 —— **报价在动但市场没有成交**，"
+                "挂单不会成交（策略收益来自成交，不是来自报价）"
+                % ({"spot": "现货", "perp": "永续"}[worst], stale[worst]),
+                "%s 最后成交距今" % worst, "%.1f 分钟" % stale[worst],
+                ">=%.0f 分钟" % STALE_TRADE_MIN,
+                "若该腿重新出现成交（距今 < %.0f 分钟），本条不成立" % STALE_TRADE_MIN,
+                "该腿不走 maker（挂单无意义），或直接不做"))
+        else:
+            dropped.append({"id": "stale_quotes", "reason": "未超过阈值",
+                            "metric": "%s 停滞" % worst,
+                            "value": "%.1f 分钟" % stale[worst]})
+    # ---- ③ 容量约束 ----
+    cap = None
+    try:
+        cap = max_capturable_usd(base)
+    except Exception:  # noqa: BLE001
+        cap = None
+    if cap is not None:
+        e.append(ev("可捕获名义额", "$%s" % format(int(cap), ","),
+                    "data/derived/friction_budget.csv"))
+        if cap < 10000:
+            hyps.append(H(
+                "thin_capacity", "可捕获名义额不足 1 万美元 —— 规模撑不住",
+                "可捕获名义额", "$%s" % format(int(cap), ","), "<$10,000",
+                "若可捕获名义额回到 $10,000 以上，本条不成立",
+                "规模上限按实测容量收缩"))
+    # ---- ④ 逆向选择 ----
+    adv = None
+    if cost and cost.get("adv_s") is not None:
+        adv = float(cost["adv_s"])
+    if adv is not None:
+        e.append(ev("现货腿逆向选择 f_dmid(k6)", "%+.2f bp" % adv,
+                    "data/derived/precise_fill_spot_bid.csv"))
+        if adv <= -3.0:
+            hyps.append(H(
+                "adverse_selection", "现货腿逆向选择负向加深 —— 挂单被系统性挑选",
+                "f_dmid(现货腿,k6)", "%+.2f bp" % adv, "<=-3.0 bp",
+                "若 f_dmid 回升到 -3.0 bp 以上，本条不成立",
+                "不做 maker（挂单等于把成交让给知情方）"))
+
+    hyps = hyps[:MAX_HYPOTHESES]
+    if not e:
+        return report("execution_risk", "neutral", 0.0, [],
+                      "无执行风险数据"), hyps, dropped
+    # 有假设 -> 不利；无假设但有数据 -> 中性（**不假装"有利"**）
+    verdict = "unfavorable" if hyps else "neutral"
+    conf = 0.75 if hyps else 0.5
+    note = ("提出 %d 条可执行风险假设（每条带实测量 + 阈值 + 证伪条件）：%s"
+            % (len(hyps), "、".join(h["id"] for h in hyps))
+            if hyps else "未触发任何风险假设（阈值见 evidence）")
+    if dropped:
+        note += "；另有 %d 条未过阈值（留痕不删）" % len(dropped)
+    return report("execution_risk", verdict, conf, e, note), hyps, dropped
+
+
 # ---------------------------------------------------------------- 汇总
 
-def run_team(base, cost=None, now_ms=None):
-    """跑齐四个分析师。**相互独立**：每个只拿自己那一路数据。"""
+def run_team(base, cost=None, now_ms=None, news_mode="auto", headlines=None,
+             size_usd=None):
+    """跑齐五个"分析师"。**相互独立**：每个只拿自己那一路数据。
+
+    第 5 个（`execution_risk`）是**agent 做的风险评估层** —— 它不碰数字，
+    只把"这一单可能怎么死"组织成可证伪的假设，交给辩论层与风控官。
+    """
+    risk_rep, hyps, dropped = analyst_execution_risk(
+        base, cost=cost, now_ms=now_ms, size_usd=size_usd)
     reps = [
         analyst_basis(base, cost=cost),
         analyst_sentiment(base),
-        analyst_news(base, now_ms=now_ms),
+        analyst_news(base, now_ms=now_ms, mode=news_mode, headlines=headlines),
         analyst_technical(base),
+        risk_rep,
     ]
     out = []
     for r in reps:
         ok, why = validate(r)
         out.append({"report": r, "valid": ok, "invalid_reason": why})
-    return out
+    return out, hyps, dropped
 
 
 def render_team(base, items, verbose=True):
-    L = ["  %-6s —— 4 维度独立分析" % base]
+    L = ["  %-6s —— %d 路独立分析（第 5 路是 agent 做的**执行风险评估**）"
+         % (base, len(items))]
     for it in items:
         r = it["report"]
         tag = {"favorable": "[有利]", "unfavorable": "[不利]",
@@ -1071,12 +1278,19 @@ def render_order(t, verbose=True):
 
 
 def risk_officer(base, cost=None, book=None, trader_out=None, debate=None,
-                 event=None, now_ms=None):
+                 event=None, now_ms=None, hypotheses=None):
     """🛡️ 风控官：**一票否决**，且只收紧不放松。
 
-    与事件闸门同源，但覆盖闸门管不到的四类风险（成本 / 逆向选择 / 容量 / 数据缺失）。
-    每条规则都必须能回答三个问题，否则不许进规则表：
-      ① 引用哪个**已实测的量**？  ② 触发后做什么动作？  ③ 什么条件下这条规则不成立？
+    两类输入，**权力不同**（这是本项目的核心设计）：
+      * **固定规则表**（下面 R）：确定性、可审计、覆盖已实测过的失败模式；
+      * **agent 提出的风险假设**（``hypotheses``）：由第 5 个分析师
+        （`analyst_execution_risk`）产出，每条带实测量 + 验证阈值 + 证伪条件。
+        agent 只能**提议动作**（`HYPOTHESIS_ACTIONS`），
+        **最终立场与规模仍由本函数决定**，且仍然只能收紧 —— 见 `decide()` 的单调性。
+
+    ⚠️ 为什么不让 agent 直接给最终结论：`docs/25` §2.2 —— 门槛与规模必须可复跑。
+    agent 负责"**发现与论证**"（报价在动但没成交，这种跨表的判断很适合它），
+    代码负责"**执行与守边界**"。
 
     返回体里逐条列出 ``measured``（实际读到的值）与 ``falsifier``（撤销条件）——
     **没触发的规则也要留痕**，否则"风控通过"无法被审计。
@@ -1182,11 +1396,37 @@ def risk_officer(base, cost=None, book=None, trader_out=None, debate=None,
          "hit": cap is None},
         {"id": "no_cost_data", "level": "caution", "action": "no_new_position",
          "statement": "成本数据缺失时不得下单（无法定价的单不许下）",
-         "measured": "最优执行成本 = %s" % ("缺" if t.get("cost_bp") is None
-                                            else "%+.2f bp" % t["cost_bp"]),
+         "measured": "最优执行成本 = %s ｜ 交易员未下单原因：%s"
+                     % ("缺" if t.get("cost_bp") is None
+                        else "%+.2f bp" % t["cost_bp"],
+                        (t.get("blocked_by") or ["（未说明）"])[0][:40]),
          "falsifier": "若能算出双腿执行成本，本条撤销",
-         "hit": t.get("cost_bp") is None},
+         # ⚠️ 只有"成本结构本身缺失"才算数据缺失；**立场导致的空订单不算**
+         #    （否则 stand_down 时会出现 "成本=缺" 的**假警报**，实测踩到）
+         "hit": bool(t.get("cost_bp") is None and not t.get("order")
+                     and any("立场" not in b and "裁决" not in b
+                             for b in (t.get("blocked_by") or ["成本缺失"])))},
     ]
+
+    # ---- ⭐ agent 提出的风险假设 -> 变成风控动作（**agent 提议，风控执行**）----
+    hyp_rules = []
+    for h in (hypotheses or []):
+        spec = HYPOTHESIS_ACTIONS.get(h.get("id"))
+        if not spec:
+            continue
+        hyp_rules.append({
+            "id": "agent:" + str(h.get("id")),
+            "level": spec["level"], "action": spec["action"],
+            "source": "agent(execution_risk)",
+            "statement": h.get("hypothesis", ""),
+            "measured": "%s = %s（阈值 %s）" % (h.get("metric"), h.get("value"),
+                                               h.get("threshold")),
+            "falsifier": h.get("falsifier", ""),
+            "proposed_action": h.get("action", ""),
+            "hit": True,
+        })
+    R = R + hyp_rules
+
     # 规则表顺序固定 -> 确定性；remedy 只在触发时求值，且**求值后立刻摘掉**
     # （返回体必须能 json.dumps：函数对象既不可序列化，也会让"同输入同输出"失真）
     for r in R:
@@ -1221,6 +1461,10 @@ def risk_officer(base, cost=None, book=None, trader_out=None, debate=None,
         "qty_in_usd": round(qty, 2), "qty_out_usd": round(final_qty, 2),
         "rejected": verdict == "reject",
         "veto_rule": vetoes[0]["id"] if vetoes else None,
+        # agent 参与度：留痕，便于审计"agent 的话有没有真的起作用"
+        "agent_hypotheses": len(hypotheses or []),
+        "agent_rules": [r["id"] for r in hyp_rules],
+        "agent_driven": bool([r for r in hits if r.get("source") == "agent(execution_risk)"]),
         "does_not_alter": ["execution_cost 的成本与最优方案",
                            "event_gate 的严重度判定",
                            "辩论层的得分与裁决"],
@@ -1251,12 +1495,15 @@ def render_risk(r, verbose=True):
 
 
 def decide(base, *, items=None, debate=None, cost=None, book=None, event=None,
-           qty_usd=5000.0, stance=None, now_ms=None):
+           qty_usd=5000.0, stance=None, now_ms=None, hypotheses=None):
     """④+⑤ 决策层：辩论 -> 交易员 -> 风控官 -> 最终订单（+ 可复现留痕）。
 
     **单调性（硬约束）**：``final_stance ≤ debate_stance``，且
     ``final_qty ≤ trader_qty ≤ risk_qty_cap``。任何一个环节想放松，都会被
     这里用 ``min_stage_rank`` / ``min qty`` 夹住并计入 ``upgrade_blocked``。
+
+    ``hypotheses``：第 5 个分析师（agent）提出的风险假设。它们会被风控官
+    **当作规则执行**（`agent:*`），但仍受同一条单调性约束。
     """
     d = debate or {}
     v = (d.get("verdict") or {})
@@ -1276,10 +1523,10 @@ def decide(base, *, items=None, debate=None, cost=None, book=None, event=None,
     # ---- ② 交易员：把立场翻译成订单 ----
     t_out = trader(cost, book, st_gate, qty_usd)
 
-    # ---- ③ 风控官：逐条规则 + 一票否决 ----
+    # ---- ③ 风控官：固定规则 + **agent 提出的风险假设** ----
     risk = risk_officer(base, cost=cost, book=book, trader_out=t_out,
                         debate={"verdict": {"stance": st_gate}}, event=ev,
-                        now_ms=now_ms)
+                        now_ms=now_ms, hypotheses=hypotheses)
 
     # ---- ④ 最终立场（单调不增）与最终规模（逐级取小）----
     st_final, caps = st_gate, []
@@ -1587,6 +1834,10 @@ def build_log(*, base, items, debate, cost, decision, qty_usd, miss_bp, urgent,
                          "qty_out_usd": risk["qty_out_usd"],
                          "checked_rules": risk["checked_rules"],
                          "triggered_rules": risk["triggered_rules"],
+                         # ⭐ agent 参与度留痕：审计"agent 的话有没有真的起作用"
+                         "agent_hypotheses": risk.get("agent_hypotheses", 0),
+                         "agent_rules": risk.get("agent_rules") or [],
+                         "agent_driven": bool(risk.get("agent_driven")),
                          "rules": [{"id": r["id"], "level": r["level"],
                                     "action": r["action"],
                                     "statement": r["statement"],
@@ -1961,9 +2212,10 @@ def selftest():
         print("  [%s] %s" % ("OK " if cond else "!! ", msg))
 
     base = "NVDA"
-    items = run_team(base)
+    items, _hyps, _dropped = run_team(base)
 
-    chk(len(items) == 4, "四个分析师都返回了结果（%d 个）" % len(items))
+    chk(len(items) == len(DIMENSIONS),
+        "%d 路分析师都返回了结果（%d 个）" % (len(DIMENSIONS), len(items)))
     chk(all(i["report"]["dimension"] in DIMENSIONS for i in items),
         "dimension 取值合法")
     chk(all(i["report"]["verdict"] in VERDICTS for i in items),
@@ -2031,7 +2283,8 @@ def run_decision(base, *, qty_usd=5000.0, miss_bp=None, urgent=False,
     else:
         cost = _atl(base, qty_usd, urgent, miss, gate=gate, now_ms=now_ms)
         book = trader_book(base, cost=cost, force=fresh)
-    items = run_team(base, cost=cost, now_ms=now_ms)
+    items, hyps, dropped = run_team(base, cost=cost, now_ms=now_ms,
+                                    size_usd=qty_usd)
     try:
         g = _cg(base, now_ms)
     except Exception as exc:  # noqa: BLE001
@@ -2041,9 +2294,12 @@ def run_decision(base, *, qty_usd=5000.0, miss_bp=None, urgent=False,
              "maker_allowed": g[3]}
     debate = run_debate(base, items, gate=g, cost=cost)
     decision = decide(base, items=items, debate=debate, cost=cost, book=book,
-                      event=event, qty_usd=qty_usd, now_ms=now_ms)
+                      event=event, qty_usd=qty_usd, now_ms=now_ms,
+                      hypotheses=hyps)
     decision["scenario"] = scenario
     decision["scenario_note"] = sc_note
+    decision["risk_hypotheses"] = hyps
+    decision["risk_hypotheses_dropped"] = dropped
     return cost, items, debate, decision, book
 
 
@@ -2338,6 +2594,52 @@ def decision_selftest():
                 event={"severity": "none"}, qty_usd=5000.0)
     chk(k1 == k2, "确定性：同输入两次决策完全一致")
 
+    # ---- ⑪ 🔴 agent 风险层：它必须**真的能改变决策**，不是装饰 ----
+    rep_r, hyps_r, dropped_r = analyst_execution_risk(
+        "NVDA", cost=_synthetic_cost(), now_ms=int(dt.datetime.now(dt.UTC)
+                                                   .timestamp() * 1000))
+    chk(rep_r["dimension"] == "execution_risk" and rep_r["evidence"],
+        "执行风险分析师产出报告（%d 条证据，%d 条假设）"
+        % (len(rep_r["evidence"]), len(hyps_r)))
+    chk(all(h.get("metric") and h.get("value") and h.get("threshold")
+            and h.get("falsifier") for h in hyps_r),
+        "每条风险假设都带 实测量 + 阈值 + **证伪条件**（缺一不可）")
+    chk(len(hyps_r) <= MAX_HYPOTHESES, "假设条数受上限约束（%d <= %d）"
+        % (len(hyps_r), MAX_HYPOTHESES))
+    # 现货腿零成交（实测）应当被抓住 —— 这是本轮新增的可证伪判据
+    chk(any(h["id"] == "stale_quotes" for h in hyps_r),
+        "抓到「现货腿长时间无成交」：%s"
+        % next((h["value"] for h in hyps_r if h["id"] == "stale_quotes"), "未触发"))
+    # agent 的假设必须**变成风控规则**（否则就是装饰）
+    fo = {"order": {"kind": "taker", "mode": "双腿全吃单", "qty_usd": 5000.0,
+                    "slices": 3, "slice_usd": 2000.0, "cost_bp": 12.0,
+                    "price_desc": "合成", "size_cap": 5000.0, "size_cap_by": "合成",
+                    "size_bounds": [], "all_modes_bp": {"双腿全挂单": 10.0,
+                                                        "现货挂单+永续吃单": 11.0,
+                                                        "双腿全吃单": 12.0},
+                    "maker_allowed": True, "gate_severity": "none",
+                    "barred_modes": [], "note": "合成"},
+          "blocked_by": [], "mode": "双腿全吃单", "cost_bp": 12.0,
+          "max_qty_usd": 5000.0, "slices": 3, "price": "合成",
+          "gross_edge_bp": 5.0, "edge_gap_bp": -6.34}
+    r_agent = risk_officer("NVDA", cost=c, book=bk, trader_out=fo,
+                           debate={"verdict": {"stance": "proceed"}},
+                           event={"severity": "none"}, hypotheses=hyps_r)
+    chk(len(r_agent["agent_rules"]) == len(hyps_r)
+        and all(x.startswith("agent:") for x in r_agent["agent_rules"]),
+        "agent 假设已转成风控规则（%d 条：%s）"
+        % (len(r_agent["agent_rules"]), "、".join(r_agent["agent_rules"])))
+    chk(r_agent["verdict"] == "reject" and r_agent["agent_driven"],
+        "**agent 的假设真的改变了一票否决**（verdict=%s，由 %s 驱动）"
+        % (r_agent["verdict"], "、".join(r_agent["vetoes"])))
+    # 无假设时不得凭空否决（防"agent 层变成万能借口"）
+    r_noagent = risk_officer("NVDA", cost=fo and _synthetic_cost(), book=bk,
+                             trader_out=fo,
+                             debate={"verdict": {"stance": "proceed"}},
+                             event={"severity": "none"}, hypotheses=[])
+    chk(not any(x.startswith("agent:") for x in r_noagent["hits"]),
+        "没有 agent 假设时不产生 agent 规则（不凭空否决）")
+
     print("\n交易员/风控官自检%s" % ("通过" if ok else "**失败**"))
     return 0 if ok else 1
 
@@ -2590,9 +2892,16 @@ def main(argv=None):
                 print("        复跑：python project2\\agent_team.py --replay %s"
                       % os.path.relpath(jp, BASE))
             print()
-        print("  ⚠️ 诚实边界：")
-        print("    1. 交易员/风控官是**确定性代码**，不是 LLM —— 门槛不由 agent 决定。")
-        print("    2. 风控官的每条规则都留痕（含未触发的），否则「风控通过」无法被审计。")
+        print("  ⚠️ 诚实边界（**agent 与代码的分工**）：")
+        print("    1. **agent 做的**：5 路分析师（含执行风险）+ 多空辩论 + 风险假设提出")
+        print("       —— agent 负责「发现与论证」；")
+        print("       **确定性代码做的**：成本数字、执行方式、一票否决、最终规模")
+        print("       —— 代码负责「执行与守边界」。")
+        print("       为什么这样分：门槛与规模必须可复跑（否则报告里的数字无法验证），")
+        print("       而 agent 的价值恰恰在于说出跨表的风险 —— 例如"
+              "「现货报价在动、但 4 天没有成交」。")
+        print("    2. 风控官规则带 `agent:` 前缀的，表示它来自 agent 提出的假设；")
+        print("       未触发的规则也留痕，否则「风控通过」无法被审计。")
         print("    3. 规模上界取「请求 / 可捕获名义额 / 首档深度」的最小值。")
         print("    4. 只在**开仓前的少数时点**触发，不做逐 tick 辩论。")
         return 0
@@ -2648,24 +2957,27 @@ def main(argv=None):
     if args.json:
         out = {b: [{"report": i["report"], "valid": i["valid"],
                     "invalid_reason": i["invalid_reason"]}
-                   for i in run_team(b, cost=cost_by.get(b))] for b in targets}
+                   for i in run_team(b, cost=cost_by.get(b))[0]] for b in targets}
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return 0
 
     print("=" * 92)
-    print("多 Agent 团队 · ① 分析师层（4 维度独立分析）")
+    print("多 Agent 团队 · ① 分析师层（%d 路独立分析，含 agent 做的执行风险评估）"
+          % len(DIMENSIONS))
     print("=" * 92)
     print("  🔴 铁律：**没有引用已实测的量的结论一律作废** ——")
     print("     多 agent 最大的失败模式是「把同一个判断换三个说法」，结构上防住它。")
     print()
     for b in targets:
-        render_team(b, run_team(b, cost=cost_by.get(b)))
+        render_team(b, run_team(b, cost=cost_by.get(b))[0])
         print()
     print("  ⚠️ 诚实边界：")
     print("    1. 情绪/新闻两路尚未接入 bitget-signal，当前置信度**已如实压低**")
     print("       （新闻 0.40 / 情绪 0.45），不假装它们和实测数据一样可靠。")
     print("    2. 独立性：每个分析师只拿自己那一路数据，不读别人的结论。")
-    print("    3. 本层**只产出结论与证据**，不做决策 —— 辩论层与风控层是下一步。")
+    print("    3. 第 5 路 `execution_risk` 是 **agent 做的风险评估**：它不碰数字，")
+    print("       只把「这一单可能怎么死」组织成**可证伪的假设**（实测量+阈值+证伪条件），")
+    print("       交给辩论层与风控官执行 —— 见 `--trader` 的输出。")
     return 0
 
 

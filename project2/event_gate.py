@@ -302,7 +302,7 @@ def _sources_of(records):
 
 
 def assess(base, now_ms=None, cost=None, size_usd=None, mode="auto",
-           model=None, api_key=None, base_url=None):
+           model=None, api_key=None, base_url=None, headlines=None):
     """⭐ 风险与理由引擎 —— 大模型在运行期的核心职责。
 
     回答用户下单前最需要的三件事（**输出理由与条件，不是订单**）：
@@ -332,21 +332,30 @@ def assess(base, now_ms=None, cost=None, size_usd=None, mode="auto",
                             "source": e.get("source") or e.get("url")})
 
     confidence = CONF_CAP_STATIC if not sources else 0.85
+    llm_err = None
     if mode == "llm":
         try:
-            llm = llm_gate(base, now_ms, [], model or "gpt-4o-mini",
-                           api_key or os.environ.get("OPENAI_API_KEY")
-                           or os.environ.get("LLM_API_KEY"),
-                           base_url or os.environ.get("LLM_BASE_URL",
-                                                      "https://api.openai.com/v1"))
-            if llm.get("source") == "llm":
-                ev = llm
-                confidence = float(llm.get("confidence", 0.5))
-                sources = sources or _sources_of(llm.get("headlines") and
-                                                 [{"label": h, "source": "news"}
-                                                  for h in llm["headlines"]] or [])
-        except Exception:  # noqa: BLE001
-            pass
+            key = (api_key or os.environ.get("OPENAI_API_KEY")
+                   or os.environ.get("LLM_API_KEY"))
+            if not key:
+                # 没有 key：**如实记录"没跑成"**，不要静默退回 static 假装跑过
+                llm_err = "未配置 OPENAI_API_KEY / LLM_API_KEY"
+            else:
+                llm = llm_gate(base, now_ms, list(headlines or []),
+                               model or "gpt-4o-mini", key,
+                               base_url or os.environ.get(
+                                   "LLM_BASE_URL", "https://api.openai.com/v1"))
+                if llm.get("source") == "llm":
+                    ev = llm
+                    confidence = float(llm.get("confidence", 0.5))
+                else:
+                    llm_err = str(llm.get("source", ""))[:80]
+        except Exception as exc:  # noqa: BLE001
+            llm_err = "%s: %s" % (type(exc).__name__, str(exc)[:60])
+    if llm_err and mode == "llm":
+        # 请求了 LLM 但没成功 —— 必须让调用方看得见（否则又是"说了没做"）
+        ev = dict(ev)
+        ev["source"] = "static(LLM 未执行: %s)" % llm_err
 
     # ⚠️ 「真实」要求：没有可回溯来源时，**不允许**给出高置信度。
     if not sources:
