@@ -5,9 +5,26 @@
     "earnings_scheduled": 7,
     "filing": 5,
     "filing_material": 7,
-    "macro": 8,
-    "other": 38
+    "macro": 9,
+    "other": 37
   },
+  "event_driven": {
+    "first_run": false,
+    "n_fresh": 9,
+    "n_total": 67,
+    "should_call_llm": true
+  },
+  "fresh_headlines": [
+    "[Fri, 18 Se] Nvidia Chip Sales Could Double Next Year, CEO Jensen Huang Says",
+    "[Fri, 18 Se] Why Shares of Okta Stock Shot Up 10% This Week",
+    "[Fri, 18 Se] AMD stock rises on a rumor that could give it a 2027 GPU edge",
+    "[Fri, 18 Se] IREN Shares Rise as Northland Targets $99",
+    "[Fri, 18 Se] Prediction: $950 Invested in Micron Today Will Be Worth This Much by 2030",
+    "[Fri, 18 Se] JPMorgan CEO Jamie Dimon attending Trump&apos;s state dinner for China&apos;s Xi: Source",
+    "[Fri, 18 Se] Three words from Kevin Warsh have Wall Street wondering how far the Fed will go with rate hikes",
+    "[Fri, 18 Se] Stocks making the biggest moves midday: Netflix, Xenon Pharmaceuticals, Coinbase, Sandisk, SpaceX &amp; more",
+    "[Fri, 18 Se] Nike parts ways with Kylian Mbappé, soccer superstar signs with On"
+  ],
   "headlines_for_gate": [
     "[2026-09-03] NVDA 申报：8-K（重大事项（含财报发布、并购、高管变动））",
     "[2026-08-26] NVDA 申报：10-Q（季报）",
@@ -616,6 +633,28 @@
       "url": "https://www.bea.gov/news/2026/us-international-transactions-and-investment-position-1st-quarter-2026-and-annual-update"
     },
     {
+      "category": "other",
+      "date": "Fri, 18 Sep 2026 16:12:01 +0000",
+      "kind": "news",
+      "relevance": 0,
+      "source": "yahoo",
+      "source_name": "Yahoo Finance·个股头条",
+      "summary": "AI data centers will need upgrades over the long run, and that's great news for Nvidia investors.",
+      "title": "Global AI Infrastructure Spending Will Hit $31.6 Trillion by 2050. This Is the Stock That Could Benefit the Most",
+      "url": "https://www.fool.com/investing/2026/09/18/global-ai-infrastructure-spending-will-hit-usd31-6-trillion-by-2050-this-is-the-stock-that-could-benefit-the-most/?.tsrc=rss"
+    },
+    {
+      "category": "other",
+      "date": "Fri, 18 Sep 2026 16:02:00 +0000",
+      "kind": "news",
+      "relevance": 0,
+      "source": "yahoo",
+      "source_name": "Yahoo Finance·个股头条",
+      "summary": "Nvidia CEO Jensen Huang says the company will sell twice as many chips next year. Server racks, CPUs, and networking products could help explain how.",
+      "title": "Nvidia Chip Sales Could Double Next Year, CEO Jensen Huang Says",
+      "url": "https://finance.yahoo.com/m/6e076e3a-b3e6-33b9-b7b3-708c1c1aa04e/nvidia-chip-sales-could.html?.tsrc=rss"
+    },
+    {
       "category": "earnings",
       "date": "Fri, 18 Sep 2026 15:15:00 +0000",
       "kind": "news",
@@ -628,14 +667,47 @@
     },
     {
       "category": "other",
-      "date": "Fri, 18 Sep 2026 14:05:47 +0000",
+      "date": "Fri, 18 Sep 2026 16:43:25 +0000",
       "kind": "news",
       "relevance": 0,
       "source": "yahoo",
       "source_name": "Yahoo Finance·个股头条",
-      "summary": "The latest forecast pushes back against AI slowdown fears",
-      "title": "Nvidia CEO Sends Strong Signal to Investors",
-      "url": "https://finance.yahoo.com/technology/ai/articles/nvidia-ceo-sends-strong-signal-140547008.html?.tsrc=rss"
+      "summary": "Investors are upgrading cybersecurity and authentication companies amid growing concern over AI agent swarms.",
+      "title": "Why Shares of Okta Stock Shot Up 10% This Week",
+      "url": "https://www.fool.com/investing/2026/09/18/why-shares-of-okta-stock-shot-up-10-this-week/?.tsrc=rss"
+    },
+    {
+      "category": "other",
+      "date": "Fri, 18 Sep 2026 16:28:44 +0000",
+      "kind": "news",
+      "relevance": 0,
+      "source": "yahoo",
+      "source_name": "Yahoo Finance·个股头条",
+      "summary": "A rumor about AMD's 2027 lineup could give the company an unusual window against Nvidia.",
+      "title": "AMD stock rises on a rumor that could give it a 2027 GPU edge",
+      "url": "https://finance.yahoo.com/markets/stocks/articles/amd-stock-rises-rumor-could-162844610.html?.tsrc=rss"
+    },
+    {
+      "category": "other",
+      "date": "Fri, 18 Sep 2026 16:24:51 +0000",
+      "kind": "news",
+      "relevance": 0,
+      "source": "yahoo",
+      "source_name": "Yahoo Finance·个股头条",
+      "summary": "The target implies more than 100% upside from the prior close",
+      "title": "IREN Shares Rise as Northland Targets $99",
+      "url": "https://finance.yahoo.com/markets/stocks/articles/iren-shares-rise-northland-targets-162451738.html?.tsrc=rss"
+    },
+    {
+      "category": "other",
+      "date": "Fri, 18 Sep 2026 16:15:00 +0000",
+      "kind": "news",
+      "relevance": 0,
+      "source": "yahoo",
+      "source_name": "Yahoo Finance·个股头条",
+      "summary": "How much higher can Micron stock climb by the end of the decade?",
+      "title": "Prediction: $950 Invested in Micron Today Will Be Worth This Much by 2030",
+      "url": "https://www.fool.com/investing/2026/09/18/prediction-950-invested-in-micron-today-will-be-wo/?.tsrc=rss"
     },
     {
       "category": "other",
@@ -650,61 +722,6 @@
     },
     {
       "category": "other",
-      "date": "Fri, 18 Sep 2026 15:35:00 +0000",
-      "kind": "news",
-      "relevance": 0,
-      "source": "yahoo",
-      "source_name": "Yahoo Finance·个股头条",
-      "summary": "Broadcom, Meta Platforms, and Microsoft are all trading close to flat for the year.",
-      "title": "3 AI Stocks Stuck in Neutral to Buy Before Their Next Catalysts Hit",
-      "url": "https://www.fool.com/investing/2026/09/18/3-ai-stocks-stuck-in-neutral-to-buy-before-the-nex/?.tsrc=rss"
-    },
-    {
-      "category": "other",
-      "date": "Fri, 18 Sep 2026 15:23:44 +0000",
-      "kind": "news",
-      "relevance": 0,
-      "source": "yahoo",
-      "source_name": "Yahoo Finance·个股头条",
-      "summary": "Cybersecurity is having a moment amid fears of artificial intelligence hacking.",
-      "title": "Why Shares of Rubrik Stock Rallied This Week",
-      "url": "https://www.fool.com/investing/2026/09/18/why-shares-of-rubrik-stock-rallied-this-week/?.tsrc=rss"
-    },
-    {
-      "category": "other",
-      "date": "Fri, 18 Sep 2026 15:19:11 +0000",
-      "kind": "news",
-      "relevance": 0,
-      "source": "yahoo",
-      "source_name": "Yahoo Finance·个股头条",
-      "summary": "AI fears are real. But Palo Alto stock is also really overpriced.",
-      "title": "Why Palo Alto Networks Stock Dropped Today",
-      "url": "https://www.fool.com/investing/2026/09/18/why-palo-alto-networks-stock-dropped-today/?.tsrc=rss"
-    },
-    {
-      "category": "other",
-      "date": "Fri, 18 Sep 2026 14:50:00 +0000",
-      "kind": "news",
-      "relevance": 0,
-      "source": "yahoo",
-      "source_name": "Yahoo Finance·个股头条",
-      "summary": "The conglomerate's new CEO is bullish on the hottest technology trend ruling the economy and markets.",
-      "title": "31% of Berkshire Hathaway's Portfolio Is Concentrated in These 2 AI Stocks Under Greg Abel",
-      "url": "https://www.fool.com/investing/2026/09/18/berkshire-hathaway-portfolio-2-ai-stocks-greg-abel/?.tsrc=rss"
-    },
-    {
-      "category": "other",
-      "date": "Fri, 18 Sep 2026 14:35:02 +0000",
-      "kind": "news",
-      "relevance": 0,
-      "source": "yahoo",
-      "source_name": "Yahoo Finance·个股头条",
-      "summary": "These companies may perform well in any market environment.",
-      "title": "Better Buy for Cautious Investors: Eli Lilly vs Costco",
-      "url": "https://www.fool.com/investing/2026/09/18/better-buy-for-cautious-investors-eli-lilly-vs-costco/?.tsrc=rss"
-    },
-    {
-      "category": "other",
       "date": "Fri, 18 Sep 2026 14:36:55 GMT",
       "kind": "news",
       "relevance": 0,
@@ -716,40 +733,29 @@
     },
     {
       "category": "other",
-      "date": "Fri, 18 Sep 2026 12:04:02 GMT",
+      "date": "Fri, 18 Sep 2026 16:21:20 GMT",
       "kind": "news",
       "relevance": 0,
       "source": "cnbc",
       "source_name": "CNBC·财经",
-      "summary": "Buffett's son Howard will replace him as chairman, as dictated by a long-standing succession plan, Berkshire said.",
-      "title": "Warren Buffett steps down as chairman of Berkshire Hathaway: &apos;Father Time always wins&apos;",
-      "url": "https://www.cnbc.com/2026/09/18/buffett-stepping-down-as-berkshire-chairman.html"
-    },
-    {
-      "category": "other",
-      "date": "Fri, 18 Sep 2026 14:49:20 GMT",
-      "kind": "news",
-      "relevance": 0,
-      "source": "cnbc",
-      "source_name": "CNBC·财经",
-      "summary": "Fed Vice Chair for Supervision Michelle Bowman said a new report indicates the central bank's staff missed signs ahead of Silicon Valley Bank's 2023 failure.",
-      "title": "Fed staff should have known Silicon Valley Bank was vulnerable, new report finds",
-      "url": "https://www.cnbc.com/2026/09/18/fed-silicon-valley-bank.html"
-    },
-    {
-      "category": "other",
-      "date": "Fri, 18 Sep 2026 15:02:50 GMT",
-      "kind": "news",
-      "relevance": 0,
-      "source": "cnbc",
-      "source_name": "CNBC·财经",
-      "summary": "California Gov. Gavin Newsom and other 2028 Democratic presidential hopefuls have called for a more aggressive approach to addressing AI fears.",
-      "title": "California Gov. Newsom issues executive order to rein in AI &apos;before it&apos;s too late&apos;",
-      "url": "https://www.cnbc.com/2026/09/18/california-newsom-executive-order-ai.html"
+      "summary": "Dimon joins OpenAI CEO Sam Altman, Nvidia chief Jensen Huang and others who are reportedly planning to attend the Trump-Xi state dinner.",
+      "title": "JPMorgan CEO Jamie Dimon attending Trump&apos;s state dinner for China&apos;s Xi: Source",
+      "url": "https://www.cnbc.com/2026/09/18/trump-xi-state-dinner-jpmorgan-jamie-dimon.html"
     },
     {
       "category": "macro",
-      "date": "Fri, 18 Sep 2026 15:48:01 GMT",
+      "date": "Fri, 18 Sep 2026 16:33:43 GMT",
+      "kind": "news",
+      "relevance": 0,
+      "source": "cnbc",
+      "source_name": "CNBC·财经",
+      "summary": "The chairman both explained this week's decision to raise interest rates, and raised vexing questions about what comes next",
+      "title": "Three words from Kevin Warsh have Wall Street wondering how far the Fed will go with rate hikes",
+      "url": "https://www.cnbc.com/2026/09/18/three-words-from-kevin-warsh-have-wall-street-wondering-how-far-the-fed-will-go-with-rate-hikes.html"
+    },
+    {
+      "category": "macro",
+      "date": "Fri, 18 Sep 2026 16:26:42 GMT",
       "kind": "news",
       "relevance": 0,
       "source": "cnbc",
@@ -757,6 +763,17 @@
       "summary": "The major averages rose in Thursday's regular trading session following Wednesday's first Federal Reserve interest rate hike in three years.",
       "title": "S&amp;P 500 falls as Treasury yields rise; index heads for losing week: Live updates",
       "url": "https://www.cnbc.com/2026/09/17/stock-market-today-live-updates.html"
+    },
+    {
+      "category": "other",
+      "date": "Fri, 18 Sep 2026 16:34:18 GMT",
+      "kind": "news",
+      "relevance": 0,
+      "source": "cnbc",
+      "source_name": "CNBC·财经",
+      "summary": "Here are some of the companies making headlines in midday trading.",
+      "title": "Stocks making the biggest moves midday: Netflix, Xenon Pharmaceuticals, Coinbase, Sandisk, SpaceX &amp; more",
+      "url": "https://www.cnbc.com/2026/09/18/stocks-making-the-biggest-moves-midday-nflx-xene-coin-sndk-spcx.html"
     },
     {
       "category": "macro",
@@ -771,73 +788,73 @@
     },
     {
       "category": "other",
-      "date": "Fri, 18 Sep 2026 15:41:28 GMT",
+      "date": "Fri, 18 Sep 2026 16:42:14 GMT",
       "kind": "news",
       "relevance": 0,
       "source": "cnbc",
       "source_name": "CNBC·财经",
-      "summary": "One of Wendy's biggest U.S. franchisees, Meritage Hospitality Group, filed for Chapter 11 bankruptcy protection.",
-      "title": "Wendy&apos;s franchisee files for Chapter 11 bankruptcy protection as burger chain struggles",
-      "url": "https://www.cnbc.com/2026/09/18/wendys-franchisee-files-for-chapter-11-bankruptcy-protection.html"
+      "summary": "Mbappe had been signed with Nike for roughly two decades, and his agreement with On is the first it has made with a soccer player.",
+      "title": "Nike parts ways with Kylian Mbappé, soccer superstar signs with On",
+      "url": "https://www.cnbc.com/2026/09/18/kylian-mbappe-signs-with-on-after-nike-parts-ways.html"
     },
     {
       "category": "other",
-      "date": "Fri, 18 Sep 2026 12:18:55 GMT",
+      "date": "Fri, 18 Sep 2026 16:26:27 GMT",
       "kind": "news",
       "relevance": 0,
       "source": "cnbc",
       "source_name": "CNBC·财经",
-      "summary": "Nestlé is assessing its options after Russia placed the Swiss food giant’s local assets under temporary external administration.",
-      "title": "Putin targets Nestle&apos;s Russian business as Kremlin tightens grip on Western assets",
-      "url": "https://www.cnbc.com/2026/09/18/nestle-russia-assets-putin-ukraine-war.html"
+      "summary": "Leaders of six major auto trade groups joined to sign a letter to the president.",
+      "title": "Auto industry urges Trump to bar Chinese automakers in U.S. ahead of Xi visit",
+      "url": "https://www.cnbc.com/2026/09/18/xi-visit-automakers-urge-trump-to-bar-chinese-automakers-in-us.html"
     }
   ],
   "latency_note": "本工具的下限 = 轮询间隔；采样器本身是 30~60 秒节奏，所以再快也没有观察意义",
-  "probed_at": "2026-09-18T15:55:20.715069+00:00",
+  "probed_at": "2026-09-18T16:53:03.038899+00:00",
   "sources": {
     "bea": {
       "n": 8,
-      "note": "耗时 1.59s",
+      "note": "耗时 3.71s",
       "ok": true
     },
     "cnbc": {
       "n": 8,
-      "note": "耗时 0.88s",
+      "note": "耗时 1.35s",
       "ok": true
     },
     "edgar": {
       "n": 12,
-      "note": "延迟：分钟级（法定披露第一落点）｜ 耗时 1.25s",
+      "note": "延迟：分钟级（法定披露第一落点）｜ 耗时 1.23s",
       "ok": true
     },
     "fed_all": {
       "n": 8,
-      "note": "耗时 0.66s",
+      "note": "耗时 0.71s",
       "ok": true
     },
     "fed_monetary": {
       "n": 8,
-      "note": "耗时 0.70s",
+      "note": "耗时 0.69s",
       "ok": true
     },
     "nasdaq_calendar_2026-09-18": {
       "n": 7,
-      "note": "提前数天（预告）｜ 耗时 0.66s",
+      "note": "提前数天（预告）｜ 耗时 0.56s",
       "ok": true
     },
     "nasdaq_calendar_2026-09-19": {
       "n": 0,
-      "note": "提前数天（预告）｜ 耗时 0.61s",
+      "note": "提前数天（预告）｜ 耗时 0.65s",
       "ok": true
     },
     "sec_press": {
       "n": 8,
-      "note": "耗时 0.87s",
+      "note": "耗时 0.68s",
       "ok": true
     },
     "yahoo": {
       "n": 8,
-      "note": "耗时 1.47s",
+      "note": "耗时 5.77s",
       "ok": true
     }
   }

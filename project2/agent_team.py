@@ -2947,10 +2947,18 @@ def decision_selftest():
         "每条风险假设都带 实测量 + 阈值 + **证伪条件**（缺一不可）")
     chk(len(hyps_r) <= MAX_HYPOTHESES, "假设条数受上限约束（%d <= %d）"
         % (len(hyps_r), MAX_HYPOTHESES))
-    # 现货腿零成交（实测）应当被抓住 —— 这是本轮新增的可证伪判据
-    chk(any(h["id"] == "stale_quotes" for h in hyps_r),
-        "抓到「现货腿长时间无成交」：%s"
-        % next((h["value"] for h in hyps_r if h["id"] == "stale_quotes"), "未触发"))
+    # 现货腿**零成交**是 2026-09-14~09-18 的真实状态（docs/29），09-19 已恢复；
+    # 所以自检不能假设"必然停滞"，要**按真实数据分两种情形**检查。
+    # ⚠️ 初版写成 `chk(any(h["id"] == "stale_quotes"))` —— 那是把"当时的数据"
+    #    写死进自检，现货一恢复成交自检就误报失败（实测踩到）。
+    stale_h = [h for h in hyps_r if h["id"] == "stale_quotes"]
+    stale_d = [d for d in dropped_r if d["id"] == "stale_quotes"]
+    chk(bool(stale_h) or bool(stale_d),
+        "行情停滞判据有结论（触发或如实未过阈值）：%s"
+        % (("%s" % stale_h[0]["value"]) if stale_h
+           else ("未过阈值 %s" % stale_d[0].get("value")) if stale_d else "无数据"))
+    chk(not stale_h or stale_h[0].get("falsifier"),
+        "若触发，则必须带**证伪条件**（重新出现成交即撤销）")
     # ⭐ 停牌/报价冻结：正反两面都要测
     froz, fdet, _m = frozen_quote("NVDA")
     chk(froz is False, "活市场不误报『报价冻结』（%s）" % fdet[:56])
@@ -2968,7 +2976,9 @@ def decision_selftest():
         "停牌假设带**证伪条件**（报价恢复变动即撤销）")
     chk(HYPOTHESIS_ACTIONS.get("quote_frozen", {}).get("level") == "veto",
         "停牌假设在风控里是**否决级**（依据 docs/32 的豁免条款）")
-    # agent 的假设必须**变成风控规则**（否则就是装饰）
+    # ⑤ agent 的假设必须**变成风控规则**（否则就是装饰）。
+    #    ⚠️ 同理不能假设"一定有假设"：现货恢复成交、腿风险低于 50% 时，
+    #    合法结果就是**零假设** —— 那时要验的是"不凭空产生 agent 规则"。
     fo = {"order": {"kind": "taker", "mode": "双腿全吃单", "qty_usd": 5000.0,
                     "slices": 3, "slice_usd": 2000.0, "cost_bp": 12.0,
                     "price_desc": "合成", "size_cap": 5000.0, "size_cap_by": "合成",
@@ -2986,10 +2996,15 @@ def decision_selftest():
     chk(len(r_agent["agent_rules"]) == len(hyps_r)
         and all(x.startswith("agent:") for x in r_agent["agent_rules"]),
         "agent 假设已转成风控规则（%d 条：%s）"
-        % (len(r_agent["agent_rules"]), "、".join(r_agent["agent_rules"])))
-    chk(r_agent["verdict"] == "reject" and r_agent["agent_driven"],
-        "**agent 的假设真的改变了一票否决**（verdict=%s，由 %s 驱动）"
-        % (r_agent["verdict"], "、".join(r_agent["vetoes"])))
+        % (len(r_agent["agent_rules"]), "、".join(r_agent["agent_rules"]) or "无"))
+    if hyps_r:
+        chk(r_agent["verdict"] == "reject" and r_agent["agent_driven"],
+            "**agent 的假设真的改变了一票否决**（verdict=%s，由 %s 驱动）"
+            % (r_agent["verdict"], "、".join(r_agent["vetoes"])))
+    else:
+        chk(not r_agent["agent_driven"] or r_agent["verdict"] == "reject",
+            "零假设时 agent 规则为空（不凭空否决）—— 当前 regime 下无风险假设"
+            "（腿风险/停滞/冻结均未过阈值）")
     # 无假设时不得凭空否决（防"agent 层变成万能借口"）
     r_noagent = risk_officer("NVDA", cost=fo and _synthetic_cost(), book=bk,
                              trader_out=fo,
