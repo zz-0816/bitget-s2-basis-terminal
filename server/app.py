@@ -49,6 +49,8 @@ from common.market_calendar import (  # noqa: E402
 )
 # 透明读取 .csv / .csv.gz（全新克隆里只有 gz 归档，见 common/samples.py 的说明）
 from common.samples import find_core_samples, iter_rows  # noqa: E402
+# 盘口深度口径的唯一实现（与 project2/agent_team.py 共用同一函数）
+from common.book_depth import book_depth as _book_depth  # noqa: E402
 
 # ---------------------------------------------------------------- 路径
 
@@ -470,29 +472,17 @@ OB_THIN_USD = 5000.0
 
 
 def _book_d5(levels, side):
-    """单个 book（某 venue 某 side 的 1..5 档）在 ≤5bp / ≤10bp 滑点内可吃的 USD。
+    """单个 book 的 ≤5bp / ≤10bp 累计可吃 USD —— 返回 (d5, d10, cum_all)。
 
-    `levels` = {档位: (price, notional)}。滑点基准 = 该侧最优价
-    （ask 取最低价、bid 取最高价）。返回 (d5, d10, cum_all)。
+    ⚠️ 实现已收归 `common/book_depth.py`（**全项目唯一实现**），本函数只是适配壳。
+    为什么要收归：页面与决策链各算一份就一定会漂 —— 实测就漂过（页面用 5 档+滑点，
+    决策链用首档×25%），而项目自己的 `docs/24` §4.3 早已写清前者才对。
+    收归后两边逐标的完全一致（可复跑核对）。
     """
-    if not levels:
+    d = _book_depth(levels, side)
+    if not d or d.get("levels", 0) <= 0:
         return None, None, 0.0
-    prices = [p for p, _n in levels.values()]
-    best = min(prices) if side == "ask" else max(prices)
-    if best <= 0:
-        return None, None, 0.0
-    cum = 0.0
-    d5 = d10 = None
-    for lvl in sorted(levels):
-        price, notional = levels[lvl]
-        slip_bp = abs(price / best - 1.0) * 1e4
-        if d5 is None and slip_bp > 5.0:
-            d5 = cum
-        if d10 is None and slip_bp > 10.0:
-            d10 = cum
-        cum += notional
-    cum_all = cum
-    return (cum_all if d5 is None else d5), (cum_all if d10 is None else d10), cum_all
+    return d["within_5bp"], d["within_10bp"], d["five_level"]
 
 
 def _orderbook_depth():

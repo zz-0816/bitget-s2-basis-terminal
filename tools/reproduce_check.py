@@ -158,6 +158,7 @@ TOOLS = [
     "tools/audit_samples.py", "tools/capacity_curve.py",
     "tools/verify_basis_convention.py", "tools/verify_status_cache.py",
     "common/console.py", "common/market_calendar.py",
+    "common/book_depth.py",
     "common/prompts.py", "common/rag_memory.py",
     "tools/news_sources.py", "tools/sentiment_sampler.py",
     "tools/position_watch.py",

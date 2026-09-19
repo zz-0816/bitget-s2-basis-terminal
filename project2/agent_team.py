@@ -60,6 +60,9 @@ BASE = os.path.dirname(P2)
 sys.path.insert(0, BASE)
 sys.path.insert(0, P2)
 from common.console import install  # noqa: E402
+# 盘口深度口径：与页面共用同一实现（`common/` 而不是 `project2/`，
+# 因为项目一有硬约束"删掉 project2/ 照样完整运行"）
+from common.book_depth import book_depth as _book_depth  # noqa: E402
 
 install()
 
@@ -1496,11 +1499,12 @@ def trader_book(base, cost=None, force=False):
         out["mid"][venue] = ss["mid"] if ss else None
         out["snapshot_ts"] = max(out["snapshot_ts"] or 0, int(b["ts"]))
         for side in ("bid", "ask"):
-            tot = sum(n for _p, n in b[side])
-            l1 = b[side][0][1] if b[side] else 0.0
-            out["depth_usd"]["%s/%s" % (venue, side)] = {
-                "five_level": tot, "level1": l1,
-                "first_share": (l1 / tot) if tot > 0 else 0.0}
+            # ⚠️ 口径必须与**页面**完全一致：统一走 `common/book_depth.py`
+            #    （全项目唯一实现）。此前这里只算 five_level/level1，
+            #    而 trader 的规模上界用 level1 —— 与项目自己在 docs/24 §4.3
+            #    写下的修正（"只看最优一档低估 30~280 倍，改用 5 档累计"）矛盾。
+            lv = {i + 1: (p, n) for i, (p, n) in enumerate(b[side])}
+            out["depth_usd"]["%s/%s" % (venue, side)] = _book_depth(lv, side)
     return out
 
 
@@ -1552,18 +1556,35 @@ def trader(cost, book, stance, qty_usd, slice_usd=SLICE_USD,
     else:
         caps.append(("累计可捕获名义额（缺数据，按 0 处理 —— fail-safe）", 0.0))
     for venue in ("spot", "perp"):
-        d = (book or {}).get("depth_usd", {}).get("%s/ask" % venue) or {}
-        l1 = float(d.get("level1") or 0.0)
-        five = float(d.get("five_level") or 0.0)
-        if l1 > 0:
-            caps.append(("%s/ask 首档深度 × %.2f（data/spread/orderbook-*.csv）"
-                         % (venue, depth_take_ratio), l1 * depth_take_ratio))
+        dd = (book or {}).get("depth_usd", {})
+        sides = {}
+        for side in ("bid", "ask"):
+            x = dd.get("%s/%s" % (venue, side)) or {}
+            w5 = float(x.get("within_5bp") or 0.0)
+            sides[side] = w5 if w5 > 0 else float(x.get("level1") or 0.0)
+        # 🔴 口径三件事，缺一不可：
+        #   ① 用 **≤5bp 滑点内累计**，不用首档 —— 依据是项目自己的修正
+        #      （`docs/24` §4.3："只看最优一档会低估 30~280 倍"）。
+        #      **不能**用裸 `five_level`：它不含滑点约束。实测 GOOGL 现货 bid
+        #      第 2 档就跳到 11.7bp，裸五档 30,830 而 ≤5bp 只有 76 —— 差 400 倍。
+        #   ② 每腿取**两侧较薄者**。实测盘口强不对称且方向因标的而异：
+        #      NVDA 薄在 spot/ask（232 vs bid 123,870）；GOOGL 薄在 spot/bid（76 vs ask 67,174）。
+        #   ③ 再取两腿较薄者 —— 双腿策略两条腿都要成交。
+        #   ②+③ 合起来 = **四方向取最薄**，与页面 `depth_within_5bp_usd` 完全同口径。
+        #   ⚠️ 旧代码写死取 `spot/ask + perp/ask`：maker 模式要的是 `spot/bid + perp/ask`、
+        #      taker 模式要的是 `spot/ask + perp/bid`，**两种模式下各错一侧**，
+        #      于是同一时刻有的标的被高估、有的被低估（GOOGL 被高估 884 倍）。
+        amt = min(sides["bid"], sides["ask"])
+        if amt > 0:
+            caps.append(("%s ≤5bp 累计深度（两侧取薄）× %.2f"
+                         "（data/spread/orderbook-*.csv）"
+                         % (venue, depth_take_ratio), amt * depth_take_ratio))
         else:
             # 🔴 该腿**没有盘口**（或盘口为空）时必须 fail-safe：上界给 0，而不是"跳过这条约束"。
             #    旧写法是 `if l1 > 0` 才 append —— 于是"没有深度"反而**变成没有约束**，
             #    一个根本下不了单的腿会悄悄放行整笔单。实测 SOXL 的现货盘口在交易所侧
             #    就是空的（code=00000 但 bids=0/asks=0），正属于这种情形。
-            caps.append(("%s/ask **无盘口**（该腿无法成交）—— 按 0 处理" % venue, 0.0))
+            caps.append(("%s **无盘口**（该腿无法成交）—— 按 0 处理" % venue, 0.0))
     qty = float(qty_usd or 0.0)
     cap_qty = min([qty] + [v for _n, v in caps])
     cap_why = min(caps, key=lambda z: z[1])[0] if caps else "无"
