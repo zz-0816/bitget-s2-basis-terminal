@@ -133,6 +133,13 @@ td.sep, th.sep { border-left: 1px solid var(--line); }
 }
 .tag.hot { color: var(--warn); border-color: #4a3c22; }
 .tag.thin { color: var(--neg); border-color: #4a2622; }
+/* 缺一条腿：比"深度不足"更强的信号 —— 不是"薄"，是**做不了**（交易所侧盘口为空）。
+   用橙色而不是红色，避免和普通告警混为一谈；整行也压暗，一眼能看出它不该被选。 */
+.tag.miss { color: var(--warn); border-color: #6a4a1e; background: #2a2114; }
+/* 窗口内「不足占比」：区分"永远做不了"与"时好时坏" */
+.tag.ratio { color: var(--dim); border-color: var(--line);
+  font-variant-numeric: tabular-nums; }
+tr.untradable td { opacity: .55; }
 .pos { color: var(--pos); }
 .neg { color: var(--neg); }
 .mono-dim { color: var(--dim); }

@@ -1539,18 +1539,31 @@ def trader(cost, book, stance, qty_usd, slice_usd=SLICE_USD,
         return empty
 
     # ---- 规模上界：三个上界取最小，且都带来源 ----
+    # ⚠️ 口径说明（2026-09-19 审计）：`friction_budget.csv` 的
+    #    `capturable_notional_usd` 是**样本窗口内全部成交的累加**
+    #    （实测：AAPL 30 笔共 $1,558、NVDA 486 笔共 $125,197），
+    #    它**不是"单笔能吃下多少"**。放在这里只当**宽松上界**（实际上从不 binding），
+    #    标签也必须写清是"累计"，否则读者会把它当成单笔容量。
     caps = []
     cap = max_capturable_usd(cost.get("base"))
     if cap:
-        caps.append(("可捕获名义额（data/derived/friction_budget.csv）", float(cap)))
+        caps.append(("样本窗口内**累计**可捕获名义额（friction_budget.csv，非单笔容量）",
+                     float(cap)))
     else:
-        caps.append(("可捕获名义额（缺数据，按 0 处理 —— fail-safe）", 0.0))
+        caps.append(("累计可捕获名义额（缺数据，按 0 处理 —— fail-safe）", 0.0))
     for venue in ("spot", "perp"):
         d = (book or {}).get("depth_usd", {}).get("%s/ask" % venue) or {}
         l1 = float(d.get("level1") or 0.0)
+        five = float(d.get("five_level") or 0.0)
         if l1 > 0:
             caps.append(("%s/ask 首档深度 × %.2f（data/spread/orderbook-*.csv）"
                          % (venue, depth_take_ratio), l1 * depth_take_ratio))
+        else:
+            # 🔴 该腿**没有盘口**（或盘口为空）时必须 fail-safe：上界给 0，而不是"跳过这条约束"。
+            #    旧写法是 `if l1 > 0` 才 append —— 于是"没有深度"反而**变成没有约束**，
+            #    一个根本下不了单的腿会悄悄放行整笔单。实测 SOXL 的现货盘口在交易所侧
+            #    就是空的（code=00000 但 bids=0/asks=0），正属于这种情形。
+            caps.append(("%s/ask **无盘口**（该腿无法成交）—— 按 0 处理" % venue, 0.0))
     qty = float(qty_usd or 0.0)
     cap_qty = min([qty] + [v for _n, v in caps])
     cap_why = min(caps, key=lambda z: z[1])[0] if caps else "无"
@@ -1696,8 +1709,19 @@ def risk_officer(base, cost=None, book=None, trader_out=None, debate=None,
         gate_sev = cost.get("gate_severity") if cost else None
     gate_block = (gate_sev == "block")
     cap = max_capturable_usd(base)
-    depth_s = ((b.get("depth_usd") or {}).get("spot/ask") or {}).get("level1") or 0.0
-    depth_p = ((b.get("depth_usd") or {}).get("perp/ask") or {}).get("level1") or 0.0
+    # ⚠️ 同时取首档与**五档累计**：
+    #   · 首档用于"单笔会不会显著吃掉档位"的判据（保持原口径，不偷偷放宽）；
+    #   · 五档用于**如实展示**书有多深 —— 项目自己的文档（docs/24 §4.3）已实测
+    #     "只看最优一档会低估 30~280 倍"，所以不能只报首档就下结论。
+    _ds = (b.get("depth_usd") or {}).get("spot/ask") or {}
+    _dp = (b.get("depth_usd") or {}).get("perp/ask") or {}
+    depth_s = _ds.get("level1") or 0.0
+    depth_p = _dp.get("level1") or 0.0
+    five_s = _ds.get("five_level") or 0.0
+    five_p = _dp.get("five_level") or 0.0
+    # 缺一侧盘口（没有 depth_usd 条目）也算"该腿不可成交"
+    no_book_s = not _ds
+    no_book_p = not _dp
     adv_s = float(cost.get("adv_s")) if cost and cost.get("adv_s") is not None else None
     edge = t.get("gross_edge_bp")
     modes = t.get("all_modes_bp") or {}
@@ -1767,12 +1791,23 @@ def risk_officer(base, cost=None, book=None, trader_out=None, debate=None,
          "remedy": _cap_action},
         {"id": "thin_depth", "level": "caution", "action": "cap_size",
          "statement": "单笔超过首档深度的 %.0f%% —— 会显著消耗档位" % (DEPTH_TAKE_RATIO * 100),
-         "measured": "spot/ask 首档 %s USD ｜ perp/ask 首档 %s USD（单笔上限 %.0f%%）"
-                     % (format(int(depth_s), ","), format(int(depth_p), ","),
-                        DEPTH_TAKE_RATIO * 100),
+         "measured": ("spot/ask 首档 %s USD（五档 %s）｜ perp/ask 首档 %s USD（五档 %s）"
+                      "（单笔上限 %.0f%%）"
+                      % (format(int(depth_s), ","), format(int(five_s), ","),
+                         format(int(depth_p), ","), format(int(five_p), ","),
+                         DEPTH_TAKE_RATIO * 100))
+                     + (" ｜ ⚠️ 缺盘口：%s" % "、".join(
+                         x for x, miss in (("现货腿", no_book_s), ("永续腿", no_book_p))
+                         if miss) if (no_book_s or no_book_p) else ""),
          "falsifier": "若两腿首档深度均高于单笔规模 ÷ %.2f，本条撤销" % DEPTH_TAKE_RATIO,
-         "hit": bool(qty > 0 and min(depth_s, depth_p) > 0
-                     and qty > min(depth_s, depth_p) * DEPTH_TAKE_RATIO),
+         # 🔴 缺一条腿（无盘口 / 首档为 0）必须**触发**。
+         #    旧写法 `min(depth_s, depth_p) > 0 and ...` 里那个 `> 0` 把最危险的情形
+         #    判成了"不触发"：一条腿根本没有盘口时反倒放行（实测 SOXL 的现货盘口
+         #    在交易所侧为空 bids=0/asks=0，正属此类）。
+         #    风控里"没有数据"必须按**最坏**处理，不能按"没有约束"处理。
+         "hit": bool(qty > 0 and (
+             no_book_s or no_book_p or depth_s <= 0 or depth_p <= 0
+             or qty > min(depth_s, depth_p) * DEPTH_TAKE_RATIO)),
          "remedy": _depth_action},
         {"id": "leg_risk_high", "level": "caution", "action": "require_taker",
          "statement": "「只成交一腿」概率 > 50% —— 会留下裸露的方向敞口",
@@ -3085,6 +3120,42 @@ def decision_selftest():
                              event={"severity": "none"}, hypotheses=[])
     chk(not any(x.startswith("agent:") for x in r_noagent["hits"]),
         "没有 agent 假设时不产生 agent 规则（不凭空否决）")
+
+    # ---- ⑫ 🔴 缺盘口必须按「最坏」处理，不能按「无约束」处理 ----
+    # 这条是 2026-09-19 审计抓出来的**最危险的一类错**：旧写法
+    #   `hit = qty > 0 and min(depth_s, depth_p) > 0 and qty > min(...) * ratio`
+    # 里那个 `> 0` 把"某条腿根本没有盘口"判成了**不触发** —— 越危险越放行。
+    # 实测触发场景：`RSOXLUSDT` 的现货盘口在交易所侧就是空的
+    # （`code=00000 success` 但 `bids=0 asks=0`；同批对照 `RNVDAUSDT` 有 5 档）。
+    # 这里把 5 种边界钉死，任何一条回退都会立刻变红。
+    def _bk(spot_l1, spot5, perp_l1, perp5, omit_spot=False, omit_perp=False):
+        d = {}
+        if not omit_spot:
+            d["spot/ask"] = {"level1": spot_l1, "five_level": spot5,
+                             "first_share": 0.0}
+        if not omit_perp:
+            d["perp/ask"] = {"level1": perp_l1, "five_level": perp5,
+                             "first_share": 0.0}
+        d["spot/bid"] = {"level1": spot_l1, "five_level": spot5, "first_share": 0.0}
+        d["perp/bid"] = {"level1": perp_l1, "five_level": perp5, "first_share": 0.0}
+        return {"depth_usd": d, "mid": {"spot": 100.0, "perp": 100.0}}
+
+    for label, bk_case, want in (
+            ("两腿都够深", _bk(50000, 200000, 50000, 200000), False),
+            ("两腿都薄", _bk(100, 2000, 100, 2000), True),
+            ("现货腿**无盘口**（SOXL 情形）",
+             _bk(0, 0, 50000, 200000, omit_spot=True), True),
+            ("现货腿首档为 0", _bk(0, 0, 50000, 200000), True),
+            ("永续腿无盘口", _bk(50000, 200000, 0, 0, omit_perp=True), True),
+    ):
+        rr = risk_officer("SYNTH", cost=_synthetic_cost(), book=bk_case,
+                          trader_out=fo,
+                          debate={"verdict": {"stance": "proceed"}},
+                          event={"severity": "none"}, hypotheses=[])
+        rule = {x.get("id"): x for x in (rr.get("rules") or [])}.get("thin_depth") or {}
+        chk(bool(rule.get("hit")) == want,
+            "thin_depth：%s -> %s"
+            % (label, "触发" if rule.get("hit") else "不触发"))
 
     print("\n交易员/风控官自检%s" % ("通过" if ok else "**失败**"))
     return 0 if ok else 1

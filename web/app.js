@@ -76,15 +76,25 @@ function renderPairs(rows) {
     tbody.innerHTML = '<tr><td colspan="7" class="empty">暂无数据</td></tr>';
     return;
   }
-  const bases = rows.map((r) => Math.abs(r.basis_bp || 0));
-  const maxAbs = Math.max(...bases, 1e-9);
+  // ⚠️ 「基差最大」只在**可交易**的标的中评。
+  // 实测 RSOXLUSDT 的现货盘口在交易所侧就是空的（code=00000 但 bids=0/asks=0），
+  // 双腿策略在它上面根本下不了单 —— 若仍按 |基差| 排序，它的 -265bp 会永远霸榜，
+  // 等于把读者往一个做不了的标的上引。
+  const tradableRows = rows.filter(
+    (r) => !(r.capacity && r.capacity.tradable === false));
+  const maxAbs = Math.max(
+    ...tradableRows.map((r) => Math.abs(r.basis_bp || 0)), 1e-9);
 
   tbody.innerHTML = rows.map((r) => {
     const s = r.spot, p = r.perp;
     const sBp = s ? s.spread_bp : null;
     const pBp = p ? p.spread_bp : null;
     const basis = r.basis_bp;
-    const hot = Math.abs(basis || 0) >= maxAbs * 0.98;
+    // ⚠️ 不可交易的标的**不参与**「基差最大」评选（连自己的那一次也不行）：
+    //    它的 |基差| 往往是全场最大，若只把它从 maxAbs 里剔除、却仍按 maxAbs 判自己，
+    //    它照样会拿到标签（实测踩到）。
+    const isTradable = !(r.capacity && r.capacity.tradable === false);
+    const hot = isTradable && Math.abs(basis || 0) >= maxAbs * 0.98;
     const ratio = (sBp && pBp) ? (sBp / Math.max(pBp, 1e-9)) : null;
     // ---- 容量告警（09-14 修正）----
     // 旧判据：perp_top_depth_usd < 5000 —— 只看**永续腿**、且只看**最优一档**。
@@ -94,19 +104,41 @@ function renderPairs(rows) {
     // 根因：深度是可以往下吃的，只看一档完全失真；而且策略**两条腿都要成交**。
     // 新判据：用**5 档累计**的 `depth_within_5bp_usd`（已在后端算好，取四个方向最薄者），
     // 不足 5000 才算"深度不足"，并把**瓶颈腿**一起显示出来。
+    //
+    // 09-19 再修两处（都是实测踩出来的）：
+    //   ① 缺一条腿（`tradable === false`）时**不显示容量数字**，改标「无现货盘口」——
+    //      否则会拿只有一个 venue 的数假装能成交（实测 RSOXLUSDT 现货盘口在
+    //      交易所侧就是空的：code=00000 但 bids=0/asks=0）；
+    //   ② 单点快照会忽好忽坏（实测 GOOGL 相邻两天中位 16,572 -> 76），
+    //      所以把**窗口内不足占比**一并显示，让人能分清"永远做不了"和"时好时坏"。
     const cap = r.capacity || null;
     const eatable = cap ? cap.depth_within_5bp_usd : null;
     const topDepth = cap ? cap.min_top_depth_usd : null;
     const binding = cap ? cap.binding_leg_top : null;
-    const thin = (eatable !== null && eatable !== undefined)
+    const notTradable = cap ? (cap.tradable === false) : false;
+    const hasRatio = !!(cap && !notTradable &&
+      cap.thin_ratio !== null && cap.thin_ratio !== undefined);
+    const thin = !notTradable && ((eatable !== null && eatable !== undefined)
       ? eatable < 5000
-      : (topDepth !== null && topDepth !== undefined && topDepth < 5000);
+      : (topDepth !== null && topDepth !== undefined && topDepth < 5000));
     const thinWhy = binding ? '（瓶颈：' + (binding === 'spot' ? '现货腿' : '永续腿') + '）' : '';
-    return '<tr class="' + (hot ? 'best' : '') + '">' +
+    const winWhy = hasRatio
+      ? '；最近 ' + (cap.window_rounds || 0) + ' 轮里 ' +
+        Math.round(100 * cap.thin_ratio) + '% 不足，中位 ' + fmt(cap.d5_median, 0) + ' USD'
+      : '';
+    const thinTitle = '≤5bp 滑点内可吃 ' + fmt(eatable, 0) + ' USD' + thinWhy + winWhy;
+    const missLeg = notTradable ? (cap.missing_leg === 'spot' ? '现货' : '永续') : '';
+    const missTitle = '该标的缺' + missLeg + '腿盘口（交易所侧为空），两腿策略无法建仓' + winWhy;
+    return '<tr class="' + (hot ? 'best' : '') + (notTradable ? ' untradable' : '') + '">' +
       '<td class="base-name">' + esc(r.base) +
         (hot ? ' <span class="tag hot">基差最大</span>' : '') +
-        (thin ? ' <span class="tag thin" title="≤5bp 滑点内可吃 ' +
-          fmt(eatable, 0) + ' USD' + thinWhy + '">深度不足</span>' : '') + '</td>' +
+        (notTradable
+          ? ' <span class="tag miss" title="' + esc(missTitle) + '">无' + missLeg + '盘口</span>'
+          : (thin ? ' <span class="tag thin" title="' + esc(thinTitle) +
+            '">深度不足</span>' : '')) +
+        (hasRatio ? ' <span class="tag ratio" title="' + esc(thinTitle) +
+            '">窗口不足 ' + Math.round(100 * cap.thin_ratio) + '%</span>' : '') +
+      '</td>' +
       '<td>' + fmt(s && s.mid) + '</td>' +
       '<td class="sep ' + (sBp > 10 ? 'neg' : '') + '">' + fmt(sBp) +
         (ratio ? ' <span class="mono-dim">(' + ratio.toFixed(1) + '×)</span>' : '') + '</td>' +
@@ -116,10 +148,13 @@ function renderPairs(rows) {
       '<td>' + (basis === null ? '—'
         : '<span class="tag">' + (basis > 0 ? '多现货 / 空永续' : '空现货 / 多永续') + '</span>') + '</td>' +
       // 显示"≤5bp 实际可吃"，因为那才是决定能做多大规模的量
-      '<td>' + (cap
-        ? (fmt(eatable, 0) + (binding ? ' <span class="mono-dim">' +
-            (binding === 'spot' ? '现' : '永') + '</span>' : ''))
-        : '—') + '</td>' +
+      // ⚠️ 缺一条腿时**不许**显示数字（那会读成"容量很大"），改成明确的不可交易
+      '<td>' + (notTradable
+        ? '<span class="neg">不可交易</span>'
+        : (cap
+          ? (fmt(eatable, 0) + (binding ? ' <span class="mono-dim">' +
+              (binding === 'spot' ? '现' : '永') + '</span>' : ''))
+          : '—')) + '</td>' +
       '</tr>';
   }).join('');
 }

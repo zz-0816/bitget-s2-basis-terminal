@@ -415,6 +415,7 @@ def build_overview():
     for e in out:
         s, p = e.get("spot"), e.get("perp")
         e["capacity"] = None
+        e["tradable"] = None
         if s and p:
             sv = s.get("usdt_vol_24h") or 0
             pv = p.get("usdt_vol_24h") or 0
@@ -422,6 +423,13 @@ def build_overview():
             p_top = min(p.get("bid_depth_usd") or 0, p.get("ask_depth_usd") or 0)
             binding = "spot" if s_top < p_top else "perp"
             base = e.get("base") or ""
+            _ob = ob.get(base) or {}
+            # 🔴 「能报价」≠「能成交」：RSOXLUSDT 的现货盘口在**交易所侧就是空的**
+            #    （code=00000 但 bids=0/asks=0；同批对照 RNVDAUSDT 有 5 档）。
+            #    这类标的两腿策略根本下不了单 —— 必须如实标注，且**不给容量数字**
+            #    （旧代码只用永续腿也能算出 77,047，页面还给它挂「基差最大」）。
+            missing = _ob.get("missing_leg")
+            e["tradable"] = (missing is None)
             e["capacity"] = {
                 "perp_vol_24h": pv,
                 "spot_vol_24h": sv,
@@ -433,27 +441,82 @@ def build_overview():
                 "min_top_depth_usd": min(s_top, p_top),
                 "binding_leg_top": binding,
                 # 5 档累计：在 ≤N bp 滑点内能吃下多少（比只看一档真实得多）
-                "depth_within_5bp_usd": (ob.get(base) or {}).get("d5"),
-                "depth_within_10bp_usd": (ob.get(base) or {}).get("d10"),
-                "ob_ts_ms": (ob.get(base) or {}).get("ts"),
+                # ⚠️ 缺一条腿时为 None —— 不许前端把它当成"容量很大"
+                "depth_within_5bp_usd": _ob.get("d5"),
+                "depth_within_10bp_usd": _ob.get("d10"),
+                "ob_ts_ms": _ob.get("ts"),
+                # ---- 新增：可交易性 + 窗口稳定性 ----
+                "tradable": missing is None,
+                "missing_leg": missing,
+                "legs_present": _ob.get("legs_present"),
+                "window_rounds": _ob.get("window_rounds"),
+                "thin_ratio": _ob.get("thin_ratio"),
+                "d5_median": _ob.get("d5_median"),
+                "thin_usd": OB_THIN_USD,
             }
 
     out.sort(key=lambda x: -(x["basis_bp"] or -999))
     return out
 
 
-# 5 档累计深度缓存（订单簿采样文件每 30 秒追加一轮，读末轮即可）
+# 5 档累计深度缓存（订单簿采样文件每 30 秒追加一轮）
 _OB_DEPTH_CACHE = {"ts": 0.0, "data": {}}
 _OB_DEPTH_SEC = 30
 
+# 容量统计用的窗口：最近多少轮（≈ N×30 秒）。40 轮 ≈ 20 分钟。
+OB_WINDOW_ROUNDS = 40
+# 判「深度不足」的阈值（USD）：等于页面默认名义额
+OB_THIN_USD = 5000.0
 
-def _latest_orderbook_depth():
-    """从 `orderbook-*.csv` 的**最新一轮**算 5 档累计深度。
 
-    为什么要它：只看最优一档会**严重低估**容量 —— 深度是可以往下吃的。
-    `tools/capacity_curve.py` 早就做了这个计算，但前端一直没接上，
-    于是界面上显示"深度不足 $290"，而实际上多档吃下去的容量更大。
-    返回 {base: {"d5": 5bp 内可吃 USD, "d10": 10bp 内可吃 USD, "ts": ms}}
+def _book_d5(levels, side):
+    """单个 book（某 venue 某 side 的 1..5 档）在 ≤5bp / ≤10bp 滑点内可吃的 USD。
+
+    `levels` = {档位: (price, notional)}。滑点基准 = 该侧最优价
+    （ask 取最低价、bid 取最高价）。返回 (d5, d10, cum_all)。
+    """
+    if not levels:
+        return None, None, 0.0
+    prices = [p for p, _n in levels.values()]
+    best = min(prices) if side == "ask" else max(prices)
+    if best <= 0:
+        return None, None, 0.0
+    cum = 0.0
+    d5 = d10 = None
+    for lvl in sorted(levels):
+        price, notional = levels[lvl]
+        slip_bp = abs(price / best - 1.0) * 1e4
+        if d5 is None and slip_bp > 5.0:
+            d5 = cum
+        if d10 is None and slip_bp > 10.0:
+            d10 = cum
+        cum += notional
+    cum_all = cum
+    return (cum_all if d5 is None else d5), (cum_all if d10 is None else d10), cum_all
+
+
+def _orderbook_depth():
+    """从 `orderbook-*.csv` 算**每个标的自己**的容量与窗口统计。
+
+    ⚠️ 这里修掉两处实测踩到的问题（2026-09-19）：
+
+    **① 不能只看"全文件最新一轮"。**
+    采样器每轮给所有标的打**同一个** `ts_ms`，但文件是**边采边写**的 ——
+    读到"最新一轮"时它可能只写进去了一两个标的，于是其余标的容量瞬间为空，
+    页面上的数字随机闪没（实测抓到过 10 个标的只有 1 个有值）。
+    现在改成：**每个标的取它自己最近一轮「两腿齐全」的数据**。
+
+    **② 缺一条腿的标的不能给容量。**
+    实测 `RSOXLUSDT` 的现货盘口在**交易所侧就是空的**
+    （`code=00000 success` 但 `bids=0 asks=0`；同批对照 `RNVDAUSDT` 有 5 档）。
+    旧代码只用永续腿也能算出一个漂亮的容量（77,047），页面还给它挂「基差最大」
+    —— 而双腿策略在这个标的上**根本没法成交**。现在这类标的返回
+    `missing_leg`，容量置空，由前端如实标注。
+
+    顺带给出**窗口统计**（最近 `OB_WINDOW_ROUNDS` 轮）：
+    `thin_ratio`（≤5bp 可吃低于阈值的轮次占比）与 `d5_median`。
+    单点快照会让"这个标的到底能不能做"看起来忽好忽坏
+    （实测 GOOGL 相邻两天中位从 16,572 掉到 76），占比比快照稳得多。
     """
     now = time.time()
     if _OB_DEPTH_CACHE["data"] and (now - _OB_DEPTH_CACHE["ts"]) < _OB_DEPTH_SEC:
@@ -464,68 +527,89 @@ def _latest_orderbook_depth():
     if not files:
         return _OB_DEPTH_CACHE["data"]
     path = files[-1]
-    rows = []
-    last_ms = None
+
+    # ---- 只留最近 OB_WINDOW_ROUNDS 轮（按时间戳切，不整份读进内存）----
+    by_ts = {}
     try:
         for r in iter_rows(path):
             try:
                 ts = int(r["ts_ms"])
             except (KeyError, ValueError, TypeError):
                 continue
-            if last_ms is None or ts > last_ms:
-                last_ms = ts
-                rows = [r]
-            elif ts == last_ms:
-                rows.append(r)
-            # 只保留末轮，前面的直接丢（文件很大，不占内存）
+            by_ts.setdefault(ts, []).append(r)
     except (OSError, EOFError):
         return _OB_DEPTH_CACHE["data"]
+    stamps = sorted(by_ts, reverse=True)[:OB_WINDOW_ROUNDS]
+    if not stamps:
+        return _OB_DEPTH_CACHE["data"]
 
-    # 按 base+venue+side 聚合各档。
-    # ⚠️ 必须带上 venue：早先只按 (base, side) 做键，会把**现货与永续的同名档位
-    # 合并到一起**（现货 level1 被永续 level1 覆盖），算出来的容量是错的。
-    book = {}
-    for r in rows:
-        try:
-            b = r["base"]
-            v = r["venue"]
-            side = r["side"]
-            lvl = int(r["level"])
-            price = float(r["price"])
-            notional = float(r["notional_usd"])
-        except (KeyError, ValueError, TypeError):
-            continue
-        book.setdefault((b, v, side), {})[lvl] = (price, notional)
+    seen_venues = {}      # base -> 在窗口里出现过的 venue 集合
+    per_base_rounds = {}  # base -> [(ts, d5, d10)]（只含两腿齐全的轮）
+    for ts in sorted(stamps):                 # 由旧到新，便于取"最新齐全轮"
+        rows = by_ts[ts]
+        book = {}
+        venue_of_base = {}
+        for r in rows:
+            try:
+                b = r["base"]
+                v = r["venue"]
+                side = r["side"]
+                lvl = int(r["level"])
+                price = float(r["price"])
+                notional = float(r["notional_usd"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            # ⚠️ 键必须带 venue：早先只按 (base, side) 会把现货与永续的同名档位合并
+            book.setdefault((b, v, side), {})[lvl] = (price, notional)
+            venue_of_base.setdefault(b, set()).add(v)
+            seen_venues.setdefault(b, set()).add(v)
+        # 每个 base 的四方向最薄
+        per_base = {}
+        for (b, _v, side), levels in book.items():
+            d5, d10, _c = _book_d5(levels, side)
+            if d5 is None:
+                continue
+            cur = per_base.setdefault(b, {"d5": None, "d10": None})
+            cur["d5"] = d5 if cur["d5"] is None else min(cur["d5"], d5)
+            cur["d10"] = d10 if cur["d10"] is None else min(cur["d10"], d10)
+        for b, val in per_base.items():
+            # 只收「两腿齐全」的轮：缺一侧就没有双腿容量可言
+            if {"spot", "perp"} <= venue_of_base.get(b, set()):
+                per_base_rounds.setdefault(b, []).append((ts, val["d5"], val["d10"]))
 
-    # 本策略四个方向都会用到：买现货(ask)、卖永续(bid)、平仓时卖现货(bid)、买永续(ask)
-    # -> 容量取这**四个方向里最薄的那个**，这才是真正能做的规模。
-    per_base = {}
-    for (b, _v, _side), levels in book.items():
-        if not levels:
+    out = {}
+    for b, vs in seen_venues.items():
+        rounds = per_base_rounds.get(b) or []
+        missing = None
+        if not {"spot", "perp"} <= vs:
+            missing = "spot" if "spot" not in vs else "perp"
+        if not rounds:
+            out[b] = {"d5": None, "d10": None, "ts": max(stamps),
+                      "missing_leg": missing or "spot", "window_rounds": 0,
+                      "thin_ratio": None, "d5_median": None,
+                      "legs_present": sorted(vs)}
             continue
-        best = min(levels.values(), key=lambda z: z[0])[0] if _side == "ask" \
-            else max(levels.values(), key=lambda z: z[0])[0]
-        if best <= 0:
-            continue
-        cum = 0.0
-        d5 = d10 = None
-        for lvl in sorted(levels):
-            price, notional = levels[lvl]
-            slip_bp = abs(price / best - 1.0) * 1e4
-            cum += notional
-            if d5 is None and slip_bp > 5.0:
-                d5 = cum - notional
-            if d10 is None and slip_bp > 10.0:
-                d10 = cum - notional
-        cum_all = sum(n for _p, n in levels.values())
-        v5 = cum_all if d5 is None else d5
-        v10 = cum_all if d10 is None else d10
-        rec = per_base.setdefault(b, {"d5": None, "d10": None, "ts": last_ms})
-        rec["d5"] = v5 if rec["d5"] is None else min(rec["d5"], v5)
-        rec["d10"] = v10 if rec["d10"] is None else min(rec["d10"], v10)
-    _OB_DEPTH_CACHE["data"] = per_base
+        latest_ts, d5, d10 = rounds[-1]
+        vals = [r[1] for r in rounds]
+        svals = sorted(vals)
+        mid = (svals[len(svals) // 2] if len(svals) % 2
+               else (svals[len(svals) // 2 - 1] + svals[len(svals) // 2]) / 2.0)
+        out[b] = {
+            "d5": d5, "d10": d10, "ts": latest_ts,
+            "missing_leg": None,
+            "window_rounds": len(rounds),
+            "thin_ratio": round(sum(1 for v in vals if v < OB_THIN_USD) / len(vals), 4),
+            "d5_median": round(mid, 2),
+            "legs_present": sorted(vs),
+        }
+    _OB_DEPTH_CACHE["data"] = out
     _OB_DEPTH_CACHE["ts"] = now
-    return per_base
+    return out
+
+
+def _latest_orderbook_depth():
+    """兼容旧名：返回 {base: {"d5","d10","ts",...}}（内容同 `_orderbook_depth`）。"""
+    return _orderbook_depth()
 
 
 def build_timeline(max_points=300):
