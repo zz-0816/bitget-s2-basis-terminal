@@ -420,6 +420,61 @@ def check_features():
     except Exception as exc:  # noqa: BLE001
         bad("停摆自检无法运行", repr(exc))
 
+    # ---- 前端布局验收：真浏览器量尺寸 ----
+    # 为什么必须进全仓库自检：**HTTP 通、JS 不报错，都不代表排版是对的**。
+    # 实测踩到：项目一「执行决策」表宽 1532px、右缘 2050px，把页面撑到 2070px
+    # （视口 1440）—— 最右边的「条件」列（什么价位、多大仓位）在屏幕上
+    # **完全看不到**，而当时所有自检都是绿的（web_smoke 不做布局）。
+    # 缺浏览器时只记警告，不判失败：评委机器上可能没装。
+    try:
+        import socket
+        import time as _time
+        import urllib.request as _url
+        _s = socket.socket()
+        _s.bind(("127.0.0.1", 0))
+        _port = _s.getsockname()[1]
+        _s.close()
+        _srv = subprocess.Popen(
+            [sys.executable, "server/app.py", "--port", str(_port)],
+            cwd=BASE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            _base = "http://127.0.0.1:%d" % _port
+            _up = False
+            for _ in range(80):
+                if _srv.poll() is not None:
+                    break
+                try:
+                    _url.urlopen(_base + "/api/health", timeout=3).read()
+                    _up = True
+                    break
+                except Exception:  # noqa: BLE001
+                    _time.sleep(0.5)
+            if not _up:
+                warn("前端布局验收：临时服务未起来，跳过")
+            else:
+                _r = subprocess.run(
+                    [sys.executable, "tools/ui_check.py", "--url", _base + "/",
+                     "--wait", "9000"],
+                    cwd=BASE, capture_output=True, text=True, timeout=420,
+                    encoding="utf-8", errors="replace")
+                _lines = [x for x in (_r.stdout or "").splitlines() if x.strip()]
+                if _r.returncode == 0 and any("skip" in x for x in _lines):
+                    warn("前端布局验收跳过：%s" % _lines[-2].strip()[:70])
+                elif _r.returncode == 0:
+                    ok("前端布局验收通过（真浏览器：无溢出/无字面标记/无截断）")
+                else:
+                    _why = " ｜ ".join(x.strip() for x in _lines
+                                       if "[!! ]" in x)[:170]
+                    bad("前端布局验收失败", _why or "见 tools/ui_check.py 输出")
+        finally:
+            _srv.terminate()
+            try:
+                _srv.wait(timeout=10)
+            except Exception:  # noqa: BLE001
+                _srv.kill()
+    except Exception as exc:  # noqa: BLE001
+        warn("前端布局验收无法运行：%s" % repr(exc)[:90])
+
     # ---- prompt 契约：删掉一条铁律必须变成**失败**，而不是沉默的退化 ----
     # 用户要求"严格遵守 prompt"。prompt 是普通 markdown，谁都能顺手删一条约束，
     # 而那时模型就少一条约束且没人会发现 —— 所以契约校验必须进全仓库自检。

@@ -64,6 +64,11 @@ main { padding: 18px 22px 40px; max-width: 1360px; margin: 0 auto; }
 }
 .hint { color: var(--dim); font-size: 12px; font-weight: 400; }
 .grid2 { display: grid; grid-template-columns: 1.15fr .85fr; gap: 16px; }
+/* 🔴 grid 子项默认 `min-width: auto`，**不允许收缩到内容宽度以下**。
+   于是"执行决策"表里那两列长文本（理由 / 条件）会把整列撑宽 ->
+   把页面撑到 2070px（视口 1440）-> 最右边的「条件」列在屏幕上**根本看不到**。
+   加 `min-width: 0` 后子项才能收缩，配合 .table-wrap 的 overflow-x 正常滚动。 */
+.grid2 > * { min-width: 0; }
 @media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } }
 
 /* ---------- 主题陈述 ---------- */
@@ -98,6 +103,27 @@ thead th {
 tbody tr { border-bottom: 1px solid rgba(36, 43, 61, .5); }
 tbody tr:hover { background: var(--panel-2); }
 tbody tr.best { background: rgba(76, 141, 255, .07); }
+
+/* ---------- 「执行决策」表：长文本列必须能换行 ----------
+   这两列装的是理由与条件（`price_band_bp=…；size_usd=…；timing=…`），
+   属于**句子**而不是数字。全表 `white-space: nowrap` 会把它们变成一条
+   不可断的长条，把表格顶到 1532px、「条件」列被推到屏幕外。
+   这里只针对这一张表放开换行，并按内容分配列宽（数字列照旧 nowrap）。 */
+#assess-table { table-layout: fixed; }
+#assess-table th:nth-child(1), #assess-table td:nth-child(1) { width: 8%; }
+#assess-table th:nth-child(2), #assess-table td:nth-child(2) { width: 7%; }
+#assess-table th:nth-child(3), #assess-table td:nth-child(3) { width: 13%; }
+#assess-table th:nth-child(4), #assess-table td:nth-child(4) { width: 37%; }
+#assess-table th:nth-child(5), #assess-table td:nth-child(5) { width: 35%; }
+#assess-table td:nth-child(4), #assess-table td:nth-child(5),
+#assess-table th:nth-child(4), #assess-table th:nth-child(5) {
+  white-space: normal;
+  /* 长 ASCII token（price_band_bp=4.25 / route=in_house）在中文里没有空格，
+     必须允许在任意位置断行，否则又会把列撑开。 */
+  overflow-wrap: anywhere;
+  text-align: left;
+  line-height: 1.55;
+}
 td.sep, th.sep { border-left: 1px solid var(--line); }
 .empty { text-align: center; color: var(--dim); padding: 22px; }
 .base-name { font-weight: 600; }
