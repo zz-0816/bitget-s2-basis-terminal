@@ -52,7 +52,12 @@ COPY_FILES = {
                  "market_events.py", "mcp_client.py", "signal_adapter.py",
                  "events_calendar.json", "demo_architecture.svg",
                  "demo_architecture.png"],
-    "common": ["config.py", "console.py", "market_calendar.py", "rag_memory.py"],
+    "common": ["config.py", "console.py", "market_calendar.py", "rag_memory.py",
+               # prompt 注册表（外置 prompt + 版本校验 + 强制条款契约）。
+               # 项目二的运行期 LLM 唯一职责就是事件判断，prompt 必须跟着走，
+               # 否则隔离树里 `event_gate` 读不到 prompt 文件、只能退回内联兜底。
+               "prompts.py"],
+    "prompts": ["event_classify.md", "README.md"],
     "tools": ["news_sources.py", "position_watch.py", "sentiment_sampler.py",
               "threshold_calibration.py", "model_compare.py",
               "joint_fill_analysis.py", "joint_fill_check.py",
