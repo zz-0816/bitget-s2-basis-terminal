@@ -1,0 +1,166 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1010" viewBox="0 0 1440 1010"
+     font-family="'Microsoft YaHei','PingFang SC',Segoe UI,sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5b6b7c"/>
+    </marker>
+    <marker id="arLLM" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8a4fd0"/>
+    </marker>
+  </defs>
+  <rect width="1440" height="1010" fill="#f7f9fb"/>
+
+  <!-- ══════════ 标题 ══════════ -->
+  <text x="34" y="44" font-size="24" font-weight="700" fill="#1b2733">项目一 · Agent 分工 &amp; LLM 使用边界（简化图）</text>
+  <text x="34" y="72" font-size="14" fill="#5b6b7c">
+    一句话：<tspan font-weight="700" fill="#1b2733">5 路 agent 做「发现与论证」</tspan>，
+    <tspan font-weight="700" fill="#1b2733">确定性代码做「执行与守边界」</tspan>，
+    <tspan font-weight="700" fill="#8a4fd0">LLM 只做一件事 —— 判断「是不是信息事件」</tspan>
+  </text>
+
+  <!-- ══════════ 图例 ══════════ -->
+  <rect x="34" y="88" width="14" height="14" rx="3" fill="#ffffff" stroke="#a8c6e0"/>
+  <text x="56" y="100" font-size="12.5" fill="#33475b">确定性代码（可复跑、可审计）</text>
+  <rect x="256" y="88" width="14" height="14" rx="3" fill="#f3ecfd" stroke="#8a4fd0"/>
+  <text x="278" y="100" font-size="12.5" fill="#8a4fd0" font-weight="700">LLM 参与（唯一入口）</text>
+  <rect x="470" y="88" width="14" height="14" rx="3" fill="#fff6e6" stroke="#d99a2b"/>
+  <text x="492" y="100" font-size="12.5" fill="#a06a00">LLM 出判断 + 确定性代码出规则</text>
+
+  <!-- ══════════ 左栏：决策链 ══════════ -->
+  <rect x="34" y="116" width="900" height="866" rx="12" fill="#ffffff" stroke="#dbe4ec" stroke-width="1.4"/>
+  <text x="54" y="146" font-size="16" font-weight="700" fill="#1b2733">决策链（一条链，从左到右 / 从上到下）</text>
+
+  <!-- ① 五路分析师 -->
+  <text x="54" y="176" font-size="13" font-weight="700" fill="#1b5a8a">① 五路独立分析 · 互不读对方结论</text>
+  <text x="330" y="176" font-size="11.5" fill="#6b7b8c">铁律：没有引用已实测的量的结论一律作废</text>
+
+  <rect x="54" y="188" width="160" height="96" rx="8" fill="#ffffff" stroke="#a8c6e0"/>
+  <text x="68" y="212" font-size="13" font-weight="700" fill="#1b2733">📊 basis</text>
+  <text x="68" y="233" font-size="11.5" fill="#33475b">基差分解 / 门槛</text>
+  <text x="68" y="251" font-size="11.5" fill="#33475b">资金费 / 容量</text>
+  <text x="68" y="272" font-size="11" fill="#7a8798">自采数据</text>
+
+  <rect x="226" y="188" width="160" height="96" rx="8" fill="#ffffff" stroke="#a8c6e0"/>
+  <text x="240" y="212" font-size="13" font-weight="700" fill="#1b2733">😱 sentiment</text>
+  <text x="240" y="233" font-size="11.5" fill="#33475b">资金费率 / 持仓量</text>
+  <text x="240" y="251" font-size="11.5" fill="#33475b">拥挤度</text>
+  <text x="240" y="272" font-size="11" fill="#7a8798">多空比不可得·已标注</text>
+
+  <rect x="398" y="188" width="160" height="96" rx="8" fill="#f3ecfd" stroke="#8a4fd0" stroke-width="2"/>
+  <text x="412" y="212" font-size="13" font-weight="700" fill="#5b2d94">📰 news ★</text>
+  <text x="412" y="233" font-size="11.5" fill="#33475b">有没有信息事件</text>
+  <text x="412" y="251" font-size="11.5" fill="#8a4fd0" font-weight="700">← LLM 唯一职责</text>
+  <text x="412" y="272" font-size="11" fill="#7a8798">其余 4 路纯确定性</text>
+
+  <rect x="570" y="188" width="160" height="96" rx="8" fill="#ffffff" stroke="#a8c6e0"/>
+  <text x="584" y="212" font-size="13" font-weight="700" fill="#1b2733">📈 technical</text>
+  <text x="584" y="233" font-size="11.5" fill="#33475b">盘口形状 / 成交率</text>
+  <text x="584" y="251" font-size="11.5" fill="#33475b">逆向选择</text>
+  <text x="584" y="272" font-size="11" fill="#7a8798">自采 5 档盘口</text>
+
+  <rect x="742" y="188" width="172" height="96" rx="8" fill="#ffffff" stroke="#a8c6e0"/>
+  <text x="756" y="212" font-size="13" font-weight="700" fill="#1b2733">🛡 execution_risk</text>
+  <text x="756" y="233" font-size="11.5" fill="#33475b">单腿裸露 / 行情停滞</text>
+  <text x="756" y="251" font-size="11.5" fill="#33475b">停牌 / 容量</text>
+  <text x="756" y="272" font-size="11" fill="#7a8798">每条须带证伪条件</text>
+
+  <line x1="134" y1="284" x2="134" y2="306" stroke="#5b6b7c" stroke-width="1.4" marker-end="url(#ar)"/>
+  <line x1="306" y1="284" x2="306" y2="306" stroke="#5b6b7c" stroke-width="1.4" marker-end="url(#ar)"/>
+  <line x1="478" y1="284" x2="478" y2="306" stroke="#5b6b7c" stroke-width="1.4" marker-end="url(#ar)"/>
+  <line x1="650" y1="284" x2="650" y2="306" stroke="#5b6b7c" stroke-width="1.4" marker-end="url(#ar)"/>
+  <line x1="828" y1="284" x2="828" y2="306" stroke="#5b6b7c" stroke-width="1.4" marker-end="url(#ar)"/>
+
+  <!-- ② 辩论 -->
+  <rect x="54" y="310" width="860" height="72" rx="8" fill="#ffffff" stroke="#a8c6e0"/>
+  <text x="68" y="334" font-size="13.5" font-weight="700" fill="#1b2733">② 多空辩论 · 证据强度加权</text>
+  <text x="68" y="355" font-size="11.5" fill="#33475b">每条论点必须给<tspan font-weight="700">证伪条件</tspan>；同一证伪条件只算一条；强度实测 1.0 / 已核实 0.85 / 推导 0.6 / 推断 0.3</text>
+  <text x="68" y="373" font-size="11.5" fill="#7a8798">裁决只输出立场；<tspan font-weight="700" fill="#33475b">无论辩得多热，都不改成本数字与硬规则</tspan></text>
+  <line x1="484" y1="382" x2="484" y2="404" stroke="#5b6b7c" stroke-width="1.4" marker-end="url(#ar)"/>
+
+  <!-- ③ 事件闸门 -->
+  <rect x="54" y="408" width="860" height="86" rx="8" fill="#fff6e6" stroke="#d99a2b" stroke-width="2"/>
+  <text x="68" y="432" font-size="13.5" font-weight="700" fill="#8a5a00">③ 事件闸门 · severity → 动作由确定性代码映射，LLM 不能改</text>
+  <text x="68" y="453" font-size="11.5" fill="#5b4a20">LLM 只回一个结构化判断 <tspan font-family="monospace">{is_event_window, severity, reason, confidence}</tspan></text>
+  <text x="68" y="472" font-size="11.5" fill="#5b4a20">block → 禁止挂单（硬规则） ｜ caution → 缩规模/放宽价位 ｜ none → 正常 ｜ <tspan font-weight="700">无 key 或失败 → 暂停挂单（保守优先）</tspan></text>
+  <text x="68" y="489" font-size="11" fill="#a06a00">↑ 这一格是 LLM 与确定性代码的唯一交界处</text>
+
+  <line x1="914" y1="451" x2="936" y2="451" stroke="#8a4fd0" stroke-width="2" marker-end="url(#arLLM)"/>
+
+  <line x1="484" y1="494" x2="484" y2="516" stroke="#5b6b7c" stroke-width="1.4" marker-end="url(#ar)"/>
+
+  <!-- ④ 交易员 / ⑤ 风控官 -->
+  <rect x="54" y="520" width="422" height="96" rx="8" fill="#ffffff" stroke="#a8c6e0"/>
+  <text x="68" y="544" font-size="13.5" font-weight="700" fill="#1b2733">④ 交易员 · 只算账，不预测价格</text>
+  <text x="68" y="565" font-size="11.5" fill="#33475b">双腿三方案（全挂 / 混挂 / 全吃）逐项算成本</text>
+  <text x="68" y="583" font-size="11.5" fill="#33475b">用<tspan font-weight="700">实测联合分布</tspan>，不再假设两腿独立</text>
+  <text x="68" y="603" font-size="11" fill="#7a8798">不新造阈值、不做方向判断</text>
+
+  <rect x="492" y="520" width="422" height="96" rx="8" fill="#ffffff" stroke="#a8c6e0"/>
+  <text x="506" y="544" font-size="13.5" font-weight="700" fill="#1b2733">⑤ 风控官 · 一票否决，只收紧</text>
+  <text x="506" y="565" font-size="11.5" fill="#33475b">9 条规则逐条留痕（触发/未触发都写）</text>
+  <text x="506" y="583" font-size="11.5" fill="#33475b">单调性硬约束：<tspan font-weight="700">最终 ≤ 辩论；规模 ≤ 各环节最小值</tspan></text>
+  <text x="506" y="603" font-size="11" fill="#7a8798">agent 提的风险假设在此变成真否决</text>
+
+  <line x1="265" y1="616" x2="265" y2="638" stroke="#5b6b7c" stroke-width="1.4" marker-end="url(#ar)"/>
+  <line x1="703" y1="616" x2="703" y2="638" stroke="#5b6b7c" stroke-width="1.4" marker-end="url(#ar)"/>
+
+  <!-- ⑥ 最终决策 -->
+  <rect x="54" y="642" width="860" height="112" rx="8" fill="#eef4fb" stroke="#4a90c4" stroke-width="1.8"/>
+  <text x="68" y="666" font-size="13.5" font-weight="700" fill="#1b5a8a">⑥ 最终决策 + 可复跑日志</text>
+  <text x="68" y="688" font-size="11.5" fill="#33475b">输出：stance（做/谨慎/不做）· 规模 USD · 执行方式 · <tspan font-weight="700">可核验理由</tspan> · 条件点位</text>
+  <text x="68" y="708" font-size="11.5" fill="#33475b">每个结论带 <tspan font-family="monospace">decision_hash</tspan>；<tspan font-family="monospace">--log</tspan> 落盘 + <tspan font-family="monospace">--replay</tspan> 校验（契约字段须逐项一致）</text>
+  <text x="68" y="730" font-size="11.5" fill="#7a8798">输入清单带 SHA256；复跑时实时量允许漂移，但<tspan font-weight="700" fill="#33475b">决策路径必须一致</tspan></text>
+  <text x="68" y="748" font-size="11" fill="#7a8798">⚠️ 本图按项目一仓库现状绘制（2026-09-19）；链路代码在 project2/agent_team.py</text>
+
+  <!-- ══════════ 右栏：LLM 边界 ══════════ -->
+  <rect x="952" y="116" width="454" height="866" rx="12" fill="#faf7ff" stroke="#c9b3ea" stroke-width="1.6"/>
+  <text x="972" y="146" font-size="16" font-weight="700" fill="#5b2d94">LLM 使用情况 &amp; prompt</text>
+  <text x="972" y="168" font-size="11.5" fill="#7a5aa8">整条链里，LLM 只有<tspan font-weight="700">一个</tspan>调用点</text>
+
+  <!-- 调用点 -->
+  <rect x="972" y="182" width="414" height="86" rx="8" fill="#ffffff" stroke="#c9b3ea"/>
+  <text x="986" y="204" font-size="13" font-weight="700" fill="#5b2d94">调用点（唯一）</text>
+  <text x="986" y="226" font-size="11.5" fill="#33475b" font-family="monospace">analyst_news → event_gate.assess()</text>
+  <text x="986" y="245" font-size="11.5" fill="#33475b" font-family="monospace">→ rag.build_context() + llm_gate()</text>
+  <text x="986" y="262" font-size="11" fill="#7a8798">其余 4 路分析师、辩论、交易员、风控官全部不调 LLM</text>
+
+  <!-- prompt -->
+  <rect x="972" y="280" width="414" height="196" rx="8" fill="#ffffff" stroke="#c9b3ea"/>
+  <text x="986" y="302" font-size="13" font-weight="700" fill="#5b2d94">prompt（外置 + 版本化）</text>
+  <text x="986" y="324" font-size="11.5" fill="#33475b" font-family="monospace">prompts/event_classify.md</text>
+  <text x="986" y="343" font-size="11.5" fill="#33475b">版本 <tspan font-family="monospace" font-weight="700">v3-2026-09-19</tspan> ｜ 正文 SHA256 进日志，可回溯到当时那一版</text>
+  <text x="986" y="366" font-size="12" font-weight="700" fill="#5b2d94">三条铁律</text>
+  <text x="986" y="386" font-size="11.5" fill="#33475b">1. 只能依据标题 —— 标题没写 = 不知道</text>
+  <text x="986" y="404" font-size="11.5" fill="#33475b">2. 输出字段契约 —— 不得增删字段</text>
+  <text x="986" y="422" font-size="11.5" fill="#33475b">3. 不确定 → caution，绝不 → none</text>
+  <text x="986" y="445" font-size="11.5" fill="#7a8798">另注入 RAG「我方口径与历史案例」，</text>
+  <text x="986" y="462" font-size="11.5" fill="#7a8798">prompt 明写：只用于理解我方在做什么，不得据此编造</text>
+
+  <!-- 三层防线 -->
+  <rect x="972" y="486" width="414" height="196" rx="8" fill="#ffffff" stroke="#c9b3ea"/>
+  <text x="986" y="508" font-size="13" font-weight="700" fill="#5b2d94">防幻觉：prompt 写了 ≠ 模型会遵守</text>
+  <text x="986" y="531" font-size="11.5" fill="#33475b"><tspan font-weight="700">① 输出强校验</tspan>（每次返回都过一遍）</text>
+  <text x="1002" y="549" font-size="11" fill="#7a8798">字段恰好 4 个 ｜ severity 枚举 ｜ 布尔 ｜ confidence ∈ [0,1]</text>
+  <text x="1002" y="566" font-size="11" fill="#7a8798">reason 必须<tspan font-weight="700" fill="#c0392b">能回溯到标题</tspan>（找不到标题片段即不合格）</text>
+  <text x="986" y="589" font-size="11.5" fill="#33475b"><tspan font-weight="700">② 带错误信息重试</tspan>：把不合格原因附到 user 消息再试</text>
+  <text x="1002" y="607" font-size="11" fill="#7a8798">只改 user、不动 system → prompt 指纹不变，日志仍可归因</text>
+  <text x="986" y="630" font-size="11.5" fill="#33475b"><tspan font-weight="700">③ 仍不合格 → 失败关闭</tspan>（暂停挂单，绝不静默放行）</text>
+  <text x="1002" y="648" font-size="11" fill="#7a8798">自检里绝大多数是<tspan font-weight="700">反向用例</tspan>：只测"合规通过"等于没测</text>
+  <text x="986" y="670" font-size="11" fill="#7a8798">已修真实漏洞：旧判据用"任意 2 字片段"，<tspan font-weight="700" fill="#c0392b">「重大」曾让编造的理由通过</tspan></text>
+
+  <!-- 权限与降级 -->
+  <rect x="972" y="692" width="414" height="140" rx="8" fill="#ffffff" stroke="#c9b3ea"/>
+  <text x="986" y="714" font-size="13" font-weight="700" fill="#5b2d94">权限与降级（保守优先）</text>
+  <text x="986" y="737" font-size="11.5" fill="#33475b">· 只有<tspan font-weight="700">判断权</tspan>，<tspan font-weight="700" fill="#c0392b">没有下单权</tspan></text>
+  <text x="986" y="756" font-size="11.5" fill="#33475b">· 不能推翻确定性规则（事件窗口禁止挂单是硬规则）</text>
+  <text x="986" y="775" font-size="11.5" fill="#33475b">· 无可回溯来源时<tspan font-weight="700">置信度封顶 0.40</tspan> —— 可以猜，但不许把猜测标成确信</text>
+  <text x="986" y="794" font-size="11.5" fill="#33475b">· 无 key / 调用失败 → 退化为确定性日历，并在输出明写「本次未使用 LLM」</text>
+  <text x="986" y="813" font-size="11.5" fill="#8a4fd0">· 失败时<tspan font-weight="700">暂停挂单</tspan>（FAIL_CLOSED_ON_LLM_ERROR=True）</text>
+
+  <rect x="972" y="844" width="414" height="122" rx="8" fill="#f3ecfd" stroke="#8a4fd0"/>
+  <text x="986" y="866" font-size="12.5" font-weight="700" fill="#5b2d94">为什么这样分工</text>
+  <text x="986" y="888" font-size="11.5" fill="#4a3a63">数值计算（点差 / 成交概率 / 期望成本）交给确定性代码 ——</text>
+  <text x="986" y="906" font-size="11.5" fill="#4a3a63">才可复现、可审计、可 --replay 校验。</text>
+  <text x="986" y="928" font-size="11.5" fill="#4a3a63">而"这条新闻算不算信息事件"规则写不全，才是模型该做的。</text>
+  <text x="986" y="950" font-size="11" fill="#7a5aa8">复跑：python project2\event_gate.py --llm-guard-selftest</text>
+</svg>

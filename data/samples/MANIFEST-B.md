@@ -84,7 +84,7 @@
 
 | 路径 | 字节 | 行数 | 覆盖 | SHA256(16) | 用途 | 对应任务 | 复跑 |
 |---|---|---|---|---|---|---|---|
-| `data/panel/1h_10pairs.csv` | 2,119,705 | 14,020 | 2026-07-16 06:00 ~ 2026-09-12 15:00 | `df621a310f9329aa` | 10 配对小时面板（58 天） | B3 门禁自证 | `python build_panel.py` |
+| `data/panel/1h_10pairs.csv` | 2,370,484 | 15,710 | 2026-07-16 06:00 ~ 2026-09-19 16:00 | `2122f3d17f006cdc` | 10 配对小时面板（**65.4 天**，已过 ≥60 天门禁） | B3 门禁自证 | `python build_panel.py` |
 | `data/panel/1day_213pairs.csv` | 2,474,782 | 23,330 | 2026-06-29 16:00 ~ 2026-09-11 16:00 | `511385c8a09e74df` | 213 配对日线面板 | B3 门禁自证 | `python build_panel.py` |
 | `data/samples/MANIFEST.md` | 67,383 | — | — | `ba16ffdbbd70f56d` | K 线样本包清单（1m/1h/1D，09-15 生成） | 独立复算 | `python tools\make_sample_bundle.py` |
 
