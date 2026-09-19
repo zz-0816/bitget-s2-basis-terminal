@@ -51,6 +51,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sys
 
 P2 = os.path.dirname(os.path.abspath(__file__))
@@ -157,7 +158,9 @@ def static_gate(base, now_ms):
 
 # ---------------------------------------------------------------- LLM 路径
 
-PROMPT_VERSION = "v2-2026-09-18"    # prompt 改动必须升版本号，否则日志分不清新旧判断
+PROMPT_VERSION = "v3-2026-09-19"   # 必须与 prompts/event_classify.md 的版本号一致
+#   （`python common\prompts.py --check` 会校验；改了 prompt 没升版本号会导致
+#     历史日志无法归因 —— 实测踩过）
 
 # 🔴 用户明确选择（2026-09-18）：**保守优先** ——
 # LLM 调用失败时**暂停挂单**，而不是退回确定性日历继续做。
@@ -166,25 +169,109 @@ PROMPT_VERSION = "v2-2026-09-18"    # prompt 改动必须升版本号，否则�
 # 代价：LLM 抖动时会放弃一些本可做的机会 —— 这个代价是**明知且接受**的。
 FAIL_CLOSED_ON_LLM_ERROR = True
 
-LLM_PROMPT = """你是交易系统的事件风险过滤器。你的**唯一**任务是判断：
-给定的新闻标题里，是否存在会让我方"挂单被逆向选择"的信息事件。
+# ---- prompt 外置（2026-09-19）：从 prompts/event_classify.md 读，不硬编码 ----
+#    硬编码的问题：改一次 prompt 就要动业务逻辑，diff 里看不清改了哪句话，
+#    版本号也容易忘记同步。外置后 prompt 本身是可 review、可版本管理的产物。
+_FALLBACK_PROMPT = """你是交易系统的事件风险过滤器。你的唯一任务是判断：
+给定标题里是否存在会让我方"挂单被逆向选择"的信息事件。
 
-你要输出严格的 JSON，不要任何解释文字：
+只输出一个 JSON 对象，字段严格如下，不得增删：
 {"is_event_window": true/false, "severity": "block"|"caution"|"none",
- "reason": "一句话理由", "confidence": 0.0-1.0}
+ "reason": "一句话，必须引用标题里的具体内容", "confidence": 0.0-1.0}
 
-判断标准：
-- 财报、业绩预告、重大合同、监管处罚、并购、退市风险、**监管新规** -> severity="block"
-- 宏观数据（CPI/非农/利率决议）、行业级重大新闻 -> severity="caution"
-- 与标的无关的普通新闻、营销内容、例行内部人交易 -> severity="none"
+severity 判据（按事件类别，不看对某标的相关性）：
+- block：财报/业绩预告、重大合同、监管处罚、并购、退市风险、监管新规
+- caution：宏观数据、行业级新闻、指数成分调整、分析师评级变动
+- none：例行内部人交易、营销内容、与市场无关的社会新闻
 
-三条硬要求：
-1. **只看给定标题里的事实**，不许补充标题之外的背景或推测；
-   若标题不足以判断，给 "caution" 并在 reason 里说明"信息不足"。
-2. 若给了「我方策略口径与历史案例」，**只用于理解我方在做什么**，
-   不得据此编造不存在的事件。
-3. 保守原则：不确定时给 "caution"，不要给 "none"。
-"""
+硬要求：① 只能依据标题里写明的内容，禁止补充标题之外的任何信息；
+② 标题不足判断时给 caution 并在 reason 写明"信息不足"；
+③ reason 必须引用标题里的词。"""
+
+
+def load_prompt():
+    """读外置 prompt。**读不到就用内嵌兜底，并如实标注**（不静默）。"""
+    try:
+        import sys as _sys
+        import os as _os
+        _base = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+        if _base not in _sys.path:
+            _sys.path.insert(0, _base)
+        from common import prompts as _p
+        _ver, body = _p.get("event_classify")
+        return body, "file"
+    except Exception:  # noqa: BLE001
+        return _FALLBACK_PROMPT, "inline-fallback"
+
+
+LLM_PROMPT, PROMPT_SOURCE = load_prompt()
+
+
+# ---- 输出强校验（防"不遵守 prompt"与"幻觉"）----
+_ALLOWED_KEYS = {"is_event_window", "severity", "reason", "confidence"}
+
+
+def _grounded(reason, headlines):
+    """`reason` 是否**可回溯到标题** —— 至少含标题里的一个 ≥2 字片段。
+
+    这是防幻觉的**机器判据**：模型如果编造了一个标题里没有的事件，
+    它的理由通常找不到与标题的公共子串。挡不住所有编造，但能挡住"空话式理由"
+    与明显跑题 —— 比"看起来挺像"强。
+    """
+    if not reason or not headlines:
+        return False, "无标题可对照"
+    r = str(reason)
+    blobs = []
+    for h in headlines:
+        h = str(h)
+        # 取标题里的字母/数字/汉字片段（去标点），长度 >= 2
+        blobs += [t for t in re.findall(r"[A-Za-z0-9]{2,}|[\u4e00-\u9fff]{2,}", h)]
+    for t in blobs:
+        if t and t in r:
+            return True, t
+    return False, "理由里找不到标题中的任何片段"
+
+
+def _validate_llm_output(d, headlines):
+    """校验 LLM 输出。返回 (ok, 错误说明)。不过 -> 带错误重试一次；仍不过 -> fail-closed。"""
+    if not isinstance(d, dict):
+        return False, "顶层不是 JSON 对象"
+    extra = set(d) - _ALLOWED_KEYS
+    if extra:
+        return False, "多出未允许的字段：%s" % "、".join(sorted(extra))
+    missing = _ALLOWED_KEYS - set(d)
+    if missing:
+        return False, "缺字段：%s" % "、".join(sorted(missing))
+    if not isinstance(d.get("is_event_window"), bool):
+        return False, "is_event_window 必须是布尔"
+    if d.get("severity") not in ("block", "caution", "none"):
+        return False, "severity 非法：%r" % d.get("severity")
+    try:
+        c = float(d.get("confidence"))
+    except (TypeError, ValueError):
+        return False, "confidence 不是数字"
+    if not (0.0 <= c <= 1.0):
+        return False, "confidence 超出 [0,1]"
+    reason = str(d.get("reason") or "").strip()
+    if len(reason) < 4:
+        return False, "reason 过短（疑似空话）"
+    ok, why = _grounded(reason, headlines)
+    if not ok and headlines:
+        return False, "reason 不可回溯到标题（%s）—— 疑似模型自行补充了标题外的内容" % why
+    return True, ""
+
+
+
+def _with_repair_hint(payload, hint):
+    """把"上次哪里不合规"附到 user 消息末尾，用于带错误信息重试。"""
+    p = json.loads(json.dumps(payload))     # 深拷贝，不改原请求体
+    msg = p["messages"][-1]
+    msg["content"] = (msg["content"]
+                      + "\n\n【上一次的回答不合规，请修正后重新输出】\n"
+                      + str(hint)[:200]
+                      + "\n注意：只输出规定的 JSON 字段；reason 必须引用标题里的词；"
+                        "不得补充标题之外的信息。")
+    return p
 
 
 def llm_gate(base, now_ms, headlines, model, api_key, base_url,
@@ -230,20 +317,47 @@ def llm_gate(base, now_ms, headlines, model, api_key, base_url,
     body_no_thinking = json.dumps(
         {k: v for k, v in payload.items() if k != "thinking"}).encode("utf-8")
 
-    box = {"attempts": 0, "errors": [], "dropped_thinking": False}
+    box = {"attempts": 0, "errors": [], "dropped_thinking": False,
+           "repair_hint": "", "validated": None}
 
     def work():
         for i in range(max(1, int(max_retry) + 1)):
             box["attempts"] = i + 1
-            use_body = (body_no_thinking if box["dropped_thinking"] else body)
+            # ⭐「带错误信息重试」：上一次校验失败的具体原因附在 user 消息里，
+            #   让模型**知道哪条规则没遵守** —— 比盲目重发有效得多。
+            b = (body_no_thinking if box["dropped_thinking"] else body)
+            if box["repair_hint"]:
+                try:
+                    b = json.dumps(_with_repair_hint(payload, box["repair_hint"])
+                                   if not box["dropped_thinking"] else
+                                   _with_repair_hint(
+                                       {k: v for k, v in payload.items()
+                                        if k != "thinking"}, box["repair_hint"])
+                                   ).encode("utf-8")
+                except Exception:  # noqa: BLE001
+                    pass
             try:
                 req = urllib.request.Request(
-                    base_url.rstrip("/") + "/chat/completions", data=use_body,
+                    base_url.rstrip("/") + "/chat/completions", data=b,
                     headers={"Content-Type": "application/json",
                              "Authorization": "Bearer " + api_key})
                 with urllib.request.urlopen(req, timeout=timeout) as r:
                     box["r"] = json.loads(r.read().decode("utf-8"))
-                return
+                # ---- 输出校验（防"不遵守 prompt"与"幻觉"）----
+                try:
+                    content = box["r"]["choices"][0]["message"]["content"]
+                    parsed = json.loads(content)
+                except Exception as exc:  # noqa: BLE001
+                    box["errors"].append("解析失败: %s" % str(exc)[:60])
+                    box["repair_hint"] = "上一次输出不是合法 JSON，请只输出 JSON 对象"
+                    continue
+                ok_v, why = _validate_llm_output(parsed, list(headlines or []))
+                if ok_v:
+                    box["validated"] = parsed
+                    return
+                box["errors"].append("校验不过: %s" % why)
+                box["repair_hint"] = why
+                continue
             except urllib.error.HTTPError as exc:
                 detail = ""
                 try:
@@ -264,39 +378,100 @@ def llm_gate(base, now_ms, headlines, model, api_key, base_url,
     t.start()
     t.join()
 
-    if "r" not in box:
+    if box.get("validated") is None:
+        # 没有任何一次通过校验（含解析失败/字段不合规/理由不可回溯）-> 按保守处理
         fallback = static_gate(base, now_ms)
-        fallback["source"] = ("static(LLM 失败 %d 次: %s)"
-                              % (box["attempts"], box["errors"][-1][:60]
-                                 if box["errors"] else "unknown"))
+        fallback["source"] = ("static(LLM 未通过校验，%d 次尝试；最后一条：%s)"
+                              % (box["attempts"],
+                                 box["errors"][-1][:80] if box["errors"] else "unknown"))
         fallback["llm_ok"] = False
         fallback["llm_attempts"] = box["attempts"]
         fallback["llm_errors"] = box["errors"][-3:]
         fallback["llm_dropped_thinking"] = box["dropped_thinking"]
         return fallback
-    try:
-        content = box["r"]["choices"][0]["message"]["content"]
-        usage = (box["r"].get("usage") or {})
-        d = json.loads(content)
-        sev = d.get("severity", "caution")
-        return {"in_window": bool(d.get("is_event_window")),
-                "severity": sev if sev in SEVERITY_ACTION else "caution",
-                "reason": str(d.get("reason", ""))[:200],
-                "confidence": float(d.get("confidence", 0.0)),
-                "source": "llm",
-                "prompt_version": PROMPT_VERSION,
-                "headlines": headlines,
-                "llm_ok": True,
-                "llm_attempts": box["attempts"],
-                # 记 token 用量：成本可控是"每轮都调"能否接受的前提
-                "llm_usage": {"prompt_tokens": usage.get("prompt_tokens"),
-                              "completion_tokens": usage.get("completion_tokens"),
-                              "model": box["r"].get("model", model)}}
-    except (KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
-        fallback = static_gate(base, now_ms)
-        fallback["source"] = "static(LLM 响应解析失败: %r)" % (exc,)
-        fallback["llm_ok"] = False
-        return fallback
+    d = box["validated"]
+    usage = ((box.get("r") or {}).get("usage") or {})
+    sev = d.get("severity")
+    return {"in_window": bool(d.get("is_event_window")),
+            "severity": sev if sev in SEVERITY_ACTION else "caution",
+            "reason": str(d.get("reason", ""))[:200],
+            "confidence": float(d.get("confidence", 0.0)),
+            "source": "llm",
+            "prompt_version": PROMPT_VERSION,
+            "prompt_source": PROMPT_SOURCE,
+            "headlines": headlines,
+            "llm_ok": True,
+            "llm_attempts": box["attempts"],
+            # 记 token 用量：成本可控是"每轮都调"能否接受的前提
+            "llm_usage": {"prompt_tokens": usage.get("prompt_tokens"),
+                          "completion_tokens": usage.get("completion_tokens"),
+                          "model": (box.get("r") or {}).get("model", model)}}
+
+
+def _llm_guard_selftest():
+    """LLM 输出的**强校验**自检（用户 2026-09-19 要求：稳定/不幻觉/严格遵守 prompt）。
+
+    为什么必须有它：prompt 写了规则 ≠ 模型会遵守。下面每条都用一个**违规样本**
+    验证校验器真的会拒绝 —— 只测"合规样本通过"等于没测。
+    """
+    ok = True
+
+    def chk(cond, msg):
+        nonlocal ok
+        ok = ok and bool(cond)
+        print("  [%s] %s" % ("OK " if cond else "!! ", msg))
+
+    H = ["NVDA 申报：8-K（重大事项：发布季度业绩）"]
+    good = {"is_event_window": True, "severity": "block",
+            "reason": "标题写明 8-K 与发布季度业绩", "confidence": 0.9}
+    v, why = _validate_llm_output(good, H)
+    chk(v, "合规输出通过（%s）" % (why or "ok"))
+
+    # ① 多字段（模型爱加解释字段）
+    chk(not _validate_llm_output({**good, "explain": "补充说明"}, H)[0],
+        "**多出字段**被拒（模型常自作主张加 explain/notes）")
+    # ② 缺字段
+    chk(not _validate_llm_output({"severity": "block", "reason": "x", "confidence": 1},
+                                 H)[0], "**缺字段**被拒")
+    # ③ severity 取值越界
+    chk(not _validate_llm_output({**good, "severity": "high"}, H)[0],
+        "severity 非法取值被拒（只允许 block/caution/none）")
+    # ④ 布尔写成字符串
+    chk(not _validate_llm_output({**good, "is_event_window": "true"}, H)[0],
+        "is_event_window 写成字符串被拒")
+    # ⑤ confidence 越界
+    chk(not _validate_llm_output({**good, "confidence": 1.7}, H)[0],
+        "confidence 超出 [0,1] 被拒")
+    # ⑥ 🔴 幻觉：理由与标题毫无关系（编造了标题里没有的事件）
+    hallu = {**good, "reason": "市场传闻该公司将被收购，存在重大不确定性"}
+    v2, why2 = _validate_llm_output(hallu, H)
+    chk(not v2 and "不可回溯" in why2, "**幻觉式理由被拒**（%s）" % why2[:44])
+    # ⑦ 空话式理由
+    chk(not _validate_llm_output({**good, "reason": "可能存在风险"}, H)[0],
+        "空话式理由被拒（`reason 过短`）")
+    # ⑧ 无标题时不做回溯校验（不能因为没标题就把合法输出判死）
+    chk(_validate_llm_output(good, [])[0], "无标题时不误杀（跳过可回溯校验）")
+    # ⑨ 带错误重试的提示文本确实会附到 user 消息里
+    p = _with_repair_hint({"messages": [{"role": "system", "content": "S"},
+                                        {"role": "user", "content": "U"}]},
+                          "reason 不可回溯")
+    chk("不合规" in p["messages"][-1]["content"]
+        and p["messages"][-1]["content"].startswith("U"),
+        "带错误信息重试：把上轮不合格原因附到 user 消息（且不改 system）")
+    # ⑩ prompt 外置与版本一致
+    chk(PROMPT_SOURCE in ("file", "inline-fallback") and LLM_PROMPT,
+        "prompt 已加载（来源=%s，%d 字符）" % (PROMPT_SOURCE, len(LLM_PROMPT)))
+    if PROMPT_SOURCE == "file":
+        import subprocess
+        r = subprocess.run([sys.executable,
+                            os.path.join(os.path.dirname(os.path.dirname(
+                                os.path.abspath(__file__))), "common", "prompts.py"),
+                            "--check"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        chk(r.returncode == 0,
+            "外置 prompt 版本与代码一致（common/prompts.py --check）")
+    print("\nLLM 输出校验自检%s" % ("通过" if ok else "**失败**"))
+    return 0 if ok else 1
 
 
 def calendar_quality():
@@ -697,6 +872,12 @@ def selftest():
     else:
         print("  [ ~ ] 日历里没有财报条目，跳过事件命中测试")
 
+    # LLM 输出校验器的自检也并进来 —— 闸门最重要的是"模型乱说话时接不接得住"，
+    # 这条不该只在单独 flag 里跑。
+    print()
+    guard_ok = _llm_guard_selftest() == 0
+    ok = ok and guard_ok
+
     print("\n自检%s" % ("通过" if ok else "**失败**"))
     return 0 if ok else 1
 
@@ -704,6 +885,8 @@ def selftest():
 def main(argv=None):
     ap = argparse.ArgumentParser(description="事件闸门（项目二）")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--llm-guard-selftest", action="store_true",
+                    help="只跑 LLM 输出强校验自检（幻觉/越界/多字段是否真被拒）")
     ap.add_argument("--assess", action="store_true",
                     help="风险与理由引擎（回答：能不能做 / 为什么 / 什么条件）")
     ap.add_argument("--risk-selftest", action="store_true",
@@ -731,6 +914,11 @@ def main(argv=None):
 
     if args.selftest:
         return selftest()
+    if args.llm_guard_selftest:
+        print("=" * 88)
+        print("LLM 输出强校验自检（幻觉 / 越界 / 多字段 / 版本一致）")
+        print("=" * 88)
+        return _llm_guard_selftest()
     if args.risk_selftest:
         print("=" * 88)
         print("风险与理由引擎自检")

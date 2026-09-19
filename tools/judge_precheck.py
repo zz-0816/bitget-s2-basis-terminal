@@ -261,7 +261,7 @@ def main(argv=None):
         print("     风控规则表）都跑在**确定性路径**上，不依赖 LLM 与实时数据。")
         print("     建议下一步：")
         print("       python tools\\unified_demo.py --base NVDA      # 一条链跑完两个项目")
-        print("       python tools\\reproduce_check.py              # 全仓库 87 项自检")
+        print("       python tools\\reproduce_check.py              # 全仓库自检（项数看它自己的结论行）")
     else:
         print("  ❌ 有失败项。失败都在**确定性路径**上，请先修掉再谈结论复现。")
     print()

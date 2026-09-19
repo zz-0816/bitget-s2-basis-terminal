@@ -158,6 +158,9 @@ TOOLS = [
     "tools/audit_samples.py", "tools/capacity_curve.py",
     "tools/verify_basis_convention.py", "tools/verify_status_cache.py",
     "common/console.py", "common/market_calendar.py",
+    "common/prompts.py", "common/rag_memory.py",
+    "tools/news_sources.py", "tools/sentiment_sampler.py",
+    "tools/position_watch.py",
 ]
 
 
@@ -384,6 +387,8 @@ def check_features():
         ("project2/signal_adapter.py", "def normalize(", "bitget-signal 事件源适配器"),
         ("project2/agent_team.py", "def validate(", "分析师层·证据铁律"),
         ("project2/agent_team.py", "def run_team(", "分析师层·四维度汇总"),
+        ("project2/agent_team.py", "def halted_from(", "执行风险·停牌判据（双证据）"),
+        ("project2/agent_team.py", "def frozen_quote(", "执行风险·停牌检测"),
         ("project2/agent_team.py", "def falsifier_for(", "辩论层·可证伪"),
         ("project2/agent_team.py", "def direction_conflict(", "辩论层·方向一致性"),
         ("project2/agent_team.py", "def adjudicate(", "辩论层·确定性裁决"),
@@ -414,6 +419,25 @@ def check_features():
                 (r.stdout or "").strip().splitlines()[-1] if r.stdout else "")
     except Exception as exc:  # noqa: BLE001
         bad("停摆自检无法运行", repr(exc))
+
+    # ---- prompt 契约：删掉一条铁律必须变成**失败**，而不是沉默的退化 ----
+    # 用户要求"严格遵守 prompt"。prompt 是普通 markdown，谁都能顺手删一条约束，
+    # 而那时模型就少一条约束且没人会发现 —— 所以契约校验必须进全仓库自检。
+    for args, desc in (
+            (["common/prompts.py", "--check"], "prompt 版本与强制条款齐全"),
+            (["common/prompts.py", "--selftest"], "prompt 契约能抓到被删条款"),
+    ):
+        try:
+            r = subprocess.run([sys.executable] + args, cwd=BASE,
+                               capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                ok(desc)
+            else:
+                tail = [ln for ln in (r.stdout or "").splitlines() if ln.strip()]
+                bad("%s（%s 退出码 %d）" % (desc, " ".join(args), r.returncode),
+                    tail[-1] if tail else "")
+        except Exception as exc:  # noqa: BLE001
+            bad("%s 无法运行" % desc, repr(exc))
 
     # ---- 控制台编码：有没有"会被 print 的非 GBK 字符却没兜底"的文件 ----
     # 这条是真事故驱动：`kline_accumulator.py` 有两处 print 带 ⚠️ 且没装兜底，
