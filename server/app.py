@@ -961,7 +961,14 @@ def serve(port, tick):
             build_overview()
             build_timeline()
             build_session_compare()
-            print("[warmup] 预热完成：实时行情 + data-status + 采样缓存 + 三个端点")
+            # ⭐ 「执行决策·风险与理由」那块表也要预热。
+            #    实测冷态 **4.5 秒**（它要跑项目二的事件闸门与成本模型），
+            #    而页面前面几块都是秒回 —— 于是首屏只有这一块停在"加载中…"，
+            #    看着像卡住了。它本身有 30 秒缓存，预热一次就够。
+            #    放在最后：它最慢，且不影响其余几块的可用时间。
+            build_assess()
+            print("[warmup] 预热完成：实时行情 + data-status + 采样缓存 + "
+                  "三个端点 + 执行决策")
         except Exception as exc:            # noqa: BLE001
             print("[warmup] 预热异常（不影响服务）：%r" % (exc,))
 

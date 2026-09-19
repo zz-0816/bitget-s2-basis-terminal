@@ -1,0 +1,3 @@
+Data + tooling: <REPO_URL>
+
+Not investment advice. rTokens are price-exposure instruments, not equity. All figures are from our own sampling (Sep 12-19); the exchange publishes no bid/ask history, so the sample cannot be extended retroactively.

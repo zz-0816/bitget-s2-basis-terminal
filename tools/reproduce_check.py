@@ -454,7 +454,15 @@ def check_features():
             else:
                 _r = subprocess.run(
                     [sys.executable, "tools/ui_check.py", "--url", _base + "/",
-                     "--wait", "9000"],
+                     "--wait", "2500",
+                     # ⚠️ 用**条件等待**而不是固定等待：冷启动时 /api/data-status 实测要
+                     #    6.2 秒、/api/assess 4.5 秒，固定 9 秒在这种机器负载下会偶发超时
+                     #    （实测踩到：报"卡住的占位符"，其实只是还没加载完）。
+                     #    条件 = 页面上不再有任何写着"加载中/读取中"的占位符。
+                     "--until", "Array.from(document.querySelectorAll("
+                                "'.loading,.empty')).every(function(e){"
+                                "return !/加载中|读取中/.test(e.innerText||'');})",
+                     "--timeout", "150000"],
                     cwd=BASE, capture_output=True, text=True, timeout=420,
                     encoding="utf-8", errors="replace")
                 _lines = [x for x in (_r.stdout or "").splitlines() if x.strip()]
@@ -474,6 +482,29 @@ def check_features():
                 _srv.kill()
     except Exception as exc:  # noqa: BLE001
         warn("前端布局验收无法运行：%s" % repr(exc)[:90])
+
+    # ---- X 帖（硬门禁）：字数按 X 口径算 + 硬门禁 + 合规红线 ----
+    # 为什么进全仓库自检：X 帖是**硬门禁**（`docs/00` G6"不做即无效提交"）。
+    # 而 X 对 CJK 按 2 计、ASCII 按 1、链接按 23 —— 中文帖很容易"看着短、实际超"。
+    # 手数不可靠；缺标签、出现"无风险套利/年化"这类词同样是硬伤。
+    _posts = os.path.join(BASE, "docs", "x-post", "cn.txt")
+    if os.path.exists(_posts):
+        try:
+            _r = subprocess.run([sys.executable, "tools/x_post_check.py",
+                                 "--text-file", _posts],
+                                cwd=BASE, capture_output=True, text=True,
+                                timeout=60, encoding="utf-8", errors="replace")
+            if _r.returncode == 0:
+                ok("X 帖体检通过（字数/硬门禁/合规词）")
+            else:
+                _why = " ｜ ".join(x.strip() for x in (_r.stdout or "").splitlines()
+                                   if "->" in x)[:150]
+                bad("X 帖体检失败", _why or "见 tools/x_post_check.py 输出")
+        except Exception as exc:  # noqa: BLE001
+            warn("X 帖体检无法运行：%s" % repr(exc)[:80])
+    else:
+        warn("X 帖正文未落盘（%s），跳过体检；"
+             "落盘后本项会自动开跑" % os.path.relpath(_posts, BASE))
 
     # ---- prompt 契约：删掉一条铁律必须变成**失败**，而不是沉默的退化 ----
     # 用户要求"严格遵守 prompt"。prompt 是普通 markdown，谁都能顺手删一条约束，

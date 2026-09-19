@@ -1,0 +1,8 @@
+Basis-arb backtests assume fills at mid. We sampled 8 days of order books and killed that twice:
+
+1) only 34% of the time clears our 11.34 bp cost bar
+2) 24.9% of fills hit one leg only; both legs fill 0.70%
+
+Spot leg was dark 5 days, then resumed.
+
+@Bitget_AI #BitgetHackathon
