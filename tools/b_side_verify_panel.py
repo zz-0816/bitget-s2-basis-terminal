@@ -124,10 +124,15 @@ def main():
         print("  %-32s %9.2f %10.2f %10.2f" % (name,
               med([x["B_mid"] for x in rows]) - sf - pf, med([x["B_maker"] for x in rows]) - sf - pf,
               med([x["B_taker"] for x in rows]) - sf - pf))
-    b = sorted(x["B_mid"] for x in rows)
-    print("\n  毛基差分位:", " ".join("P%d=%.1f" % (q, b[min(len(b) - 1, int(q / 100.0 * len(b)))])
-                                      for q in (5, 25, 50, 75, 95)))
-    print("  B_mid>0 占比 %.1f%%（方向反转 = 永续折价）" % (100.0 * sum(1 for x in b if x > 0) / len(b)))
+    if not rows:
+        print("\n  [!] 未解析出任何配对样本 -> 跳过本节统计（不是数据有问题，是取不到数据）")
+        print("      最常见原因：A 侧原始盘口 data/spread/*.csv 未入库（.gitignore 已排除），")
+        print("      克隆出来的仓库里没有该目录 —— 请在采集机上运行本脚本。")
+    else:
+        b = sorted(x["B_mid"] for x in rows)
+        print("\n  毛基差分位:", " ".join("P%d=%.1f" % (q, b[min(len(b) - 1, int(q / 100.0 * len(b)))])
+                                          for q in (5, 25, 50, 75, 95)))
+        print("  B_mid>0 占比 %.1f%%（方向反转 = 永续折价）" % (100.0 * sum(1 for x in b if x > 0) / len(b)))
 
     # ---------------------------------------------------------------- 3 面板
     for gran, path in (("1h", r"data\panel\1h_10pairs.csv"), ("1day", r"data\panel\1day_213pairs.csv")):

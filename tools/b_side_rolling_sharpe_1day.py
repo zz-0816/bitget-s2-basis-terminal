@@ -270,7 +270,8 @@ def main():
     ap = argparse.ArgumentParser(description=u'滚动 30 天 Sharpe 曲线（1day 轴）')
     ap.add_argument('--repo', default=REPO_DEFAULT)
     ap.add_argument('--days', type=int, default=ROLL_DAYS)
-    ap.add_argument('--json', action='store_true')
+    ap.add_argument('--json', action='store_true',
+                    help=u'落盘：同时写出 json 与 csv（不加则只计算、不写文件）')
     ap.add_argument('--out', default=None,
                     help=u'产物目录（默认 <repo>/data/b-side/rolling）')
     a = ap.parse_args()
@@ -407,9 +408,9 @@ def main():
         io.open(os.path.join(OUT, 'rolling_sharpe_1day.json'), 'w', encoding='utf-8').write(
             json.dumps(res, ensure_ascii=False, indent=2))
         with io.open(os.path.join(OUT, 'rolling_sharpe_1day.csv'), 'w', encoding='utf-8', newline='') as f:
-            f.write(u'date_right,n_days,total_bp,sharpe_ci_lo,sharpe_ann,sharpe_ci_hi\n')
+            f.write(u'date_right,n_days,total_bp,sharpe_ci_lo,sharpe_ann,sharpe_ci_hi\r\n')
             for x in rd:
-                f.write(u'%s,%d,%.4f,%.4f,%.4f,%.4f\n'
+                f.write(u'%s,%d,%.4f,%.4f,%.4f,%.4f\r\n'
                         % (x['date_right'], x['n_days'], x['total_bp'], x['lo'], x['sharpe_ann'], x['hi']))
         print(u'落盘：rolling_sharpe_1day.json / rolling_sharpe_1day.csv  -> %s' % OUT)
     return 0

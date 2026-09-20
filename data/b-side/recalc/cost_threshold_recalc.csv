@@ -1,0 +1,7 @@
+item,value_bp,target_bp,source
+roundtrip_maker,14.0,14.0,docs/09 费率
+roundtrip_taker,22.0,22.0,docs/09 费率
+perp_half_spread_med,0.1867,0.15,乙侧原始盘口
+hurdle_gross,13.6266,13.7,计算
+funding_median,2.3594,2.36,funding_rates.csv
+hurdle_net,11.2672,11.34,计算
