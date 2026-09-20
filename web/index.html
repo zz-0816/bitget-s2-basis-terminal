@@ -161,6 +161,21 @@
   </section>
 </main>
 
+<!-- 8. 右下角提醒（持仓期风控 · 黄/红两档；只告警、不自动下单）
+     数据来自 /api/alerts（tools/position_watch.py 落盘的 alerts.json）。
+     没有提醒时整块收起 —— 不设"绿色 / 一切正常"档。 -->
+<aside class="alert-dock" id="alert-dock" aria-live="polite" hidden>
+  <div class="alert-head">
+    <span class="alert-dot" id="alert-dot"></span>
+    <span class="alert-title">持仓期风控提醒</span>
+    <span class="alert-sum" id="alert-sum">—</span>
+    <button class="alert-close" id="alert-close" type="button"
+            title="收起（出现新的提醒会再次弹出）" aria-label="收起">×</button>
+  </div>
+  <div class="alert-list" id="alert-list"></div>
+  <div class="alert-foot" id="alert-foot"></div>
+</aside>
+
 <footer class="bottom">
   <span id="footer-meta">—</span>
 </footer>

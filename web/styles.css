@@ -205,3 +205,89 @@ tr.untradable td { opacity: .55; }
   padding: 14px 22px; border-top: 1px solid var(--line);
   color: var(--dim); font-size: 12px; text-align: center;
 }
+
+/* ---------- 右下角提醒：持仓期风控（黄 / 红两档） ----------
+   数据来自 /api/alerts。分档只有**黄/红**：没有提醒时整块收起，
+   不显示"绿色 / 一切正常"（用户 2026-09-20 明确：不要绿）。
+   红色**缓慢闪烁**（用户 2026-09-18：「告警最好右下角闪烁弹窗」）。 */
+.alert-dock {
+  position: fixed; right: 18px; bottom: 18px; z-index: 40;
+  width: 372px; max-width: calc(100vw - 36px);
+  max-height: min(64vh, 540px);
+  display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line);
+  border-left: 4px solid var(--dim);
+  border-radius: 10px; overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+}
+.alert-dock[hidden] { display: none; }
+.alert-dock.lvl-yellow {
+  border-left-color: var(--warn);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45), 0 0 0 1px rgba(255, 183, 77, .28);
+}
+.alert-dock.lvl-red {
+  border-left-color: var(--neg);
+  animation: alert-pulse 1.7s ease-in-out infinite;
+}
+@keyframes alert-pulse {
+  0%, 100% { box-shadow: 0 10px 30px rgba(0,0,0,.45), 0 0 0 0 rgba(239, 83, 80, .55); }
+  50%      { box-shadow: 0 10px 30px rgba(0,0,0,.45), 0 0 0 7px rgba(239, 83, 80, 0); }
+}
+/* 尊重"减少动态效果"：闪烁改为静态描边，信息不丢 */
+@media (prefers-reduced-motion: reduce) {
+  .alert-dock.lvl-red {
+    animation: none;
+    box-shadow: 0 10px 30px rgba(0,0,0,.45), 0 0 0 1px rgba(239, 83, 80, .5);
+  }
+}
+
+.alert-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 10px 9px 12px; background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+}
+.alert-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--dim); flex: 0 0 auto;
+}
+.alert-dock.lvl-yellow .alert-dot { background: var(--warn); }
+.alert-dock.lvl-red .alert-dot { background: var(--neg); box-shadow: 0 0 8px var(--neg); }
+.alert-title { font-size: 12.5px; font-weight: 650; }
+.alert-sum {
+  margin-left: auto; color: var(--muted); font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.alert-close {
+  background: transparent; border: 0; color: var(--dim); cursor: pointer;
+  font: 17px/1 inherit; padding: 0 3px;
+}
+.alert-close:hover { color: var(--text); }
+
+.alert-list { overflow-y: auto; padding: 2px 12px; }
+.alert-item { padding: 8px 0; border-bottom: 1px solid rgba(36, 43, 61, .6); }
+.alert-item:last-child { border-bottom: 0; }
+.alert-item-top { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.alert-lvl {
+  flex: 0 0 auto; font-size: 11px; font-weight: 700;
+  padding: 1px 6px; border-radius: 4px;
+  border: 1px solid var(--line); color: var(--muted);
+}
+.alert-lvl.lvl-red { color: #ffd9d8; background: rgba(239, 83, 80, .18); border-color: #7a2b28; }
+.alert-lvl.lvl-yellow { color: #ffe6c0; background: rgba(255, 183, 77, .15); border-color: #6a4a1e; }
+.alert-base { font-weight: 650; font-size: 12.5px; }
+.alert-what { font-size: 12.5px; line-height: 1.5; }
+.alert-detail, .alert-action { font-size: 12px; line-height: 1.5; margin-top: 3px; }
+.alert-detail { color: var(--muted); }
+.alert-action { color: var(--accent); }
+.alert-item code {
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 3px; padding: 0 4px; font-size: 11.5px;
+}
+.alert-foot {
+  padding: 7px 12px; border-top: 1px solid var(--line);
+  color: var(--dim); font-size: 11px; line-height: 1.55;
+}
+/* 窄屏：底部整宽，避免遮住表格右列 */
+@media (max-width: 640px) {
+  .alert-dock { right: 10px; left: 10px; bottom: 10px; width: auto; max-height: 52vh; }
+}

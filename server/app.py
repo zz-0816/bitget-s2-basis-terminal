@@ -51,6 +51,8 @@ from common.market_calendar import (  # noqa: E402
 from common.samples import find_core_samples, iter_rows  # noqa: E402
 # 盘口深度口径的唯一实现（与 project2/agent_team.py 共用同一函数）
 from common.book_depth import book_depth as _book_depth  # noqa: E402
+# 统一提醒强度（黄/红）—— 与 project2/agent_team.py 的风控提醒同一份映射
+from common import alert_level as _alert_level  # noqa: E402
 
 # ---------------------------------------------------------------- 路径
 
@@ -59,6 +61,8 @@ SPREAD_DIR = os.path.join(BASE, "data", "spread")
 RAW_DIR = os.path.join(BASE, "data", "raw")
 STATIC_DIR = os.path.join(BASE, "web")
 DOCS_DIR = os.path.join(BASE, "docs")
+# 持仓期巡检的落盘告警（由 tools/position_watch.py 写；本服务**只读**）
+ALERT_FILE = os.path.join(BASE, "data", "positions", "alerts.json")
 
 PAIRS = [
     ("RTSLAUSDT",  "TSLAUSDT"),
@@ -904,6 +908,75 @@ def build_assess(base=None, size_usd=5000.0):
     return out
 
 
+def build_alerts():
+    """🔔 持仓期风控提醒（右下角弹窗的数据源）。
+
+    数据来自 `tools/position_watch.py` 落盘的 `data/positions/alerts.json`。
+    本服务**只读**它，绝不写 —— 那半边由巡检模块负责（见该模块文档字符串）。
+
+    统一提醒强度（黄/红）由 `common/alert_level.py` 给：
+      `critical` -> 🔴 红，`warn` -> 🟡 黄，`info` -> 不带等级（**没有绿**）。
+    ⚠️ 老版本落盘的 alerts.json 里可能**没有** `intensity` 字段，
+    所以这里按 `level` 兜底现算一遍，不让旧文件在页面上"掉色"。
+
+    无持仓单 / 文件缺失时返回 `available: false`（**不假装健康**，也不报"无风险"）。
+    """
+    if not os.path.exists(ALERT_FILE):
+        return {"available": False, "alerts": [], "intensity": None,
+                "intensity_counts": {_alert_level.YELLOW: 0, _alert_level.RED: 0},
+                "counts": {}, "note": "尚无巡检结果 —— 由 tools/position_watch.py "
+                                      "产生（没有持仓单时它不会凭空告警）"}
+
+    # ⚠️ 容忍 UTF-8 BOM：持仓单/告警文件可能被用户在 Windows 上用 PowerShell 写过
+    #    （本仓库已踩过三次同样的坑，见 docs/DATA_DICT.md 陷阱 #13）
+    data = None
+    for enc in ("utf-8-sig", "utf-8", "gbk"):
+        try:
+            with open(ALERT_FILE, encoding=enc) as fh:
+                data = json.load(fh)
+            break
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        except OSError as exc:
+            return {"available": False, "alerts": [], "intensity": None,
+                    "intensity_counts": {_alert_level.YELLOW: 0, _alert_level.RED: 0},
+                    "counts": {}, "note": "告警文件不可读：%s" % str(exc)[:120]}
+    if not isinstance(data, dict):
+        return {"available": False, "alerts": [], "intensity": None,
+                "intensity_counts": {_alert_level.YELLOW: 0, _alert_level.RED: 0},
+                "counts": {}, "note": "告警文件格式无法解析"}
+
+    alerts = []
+    for a in (data.get("alerts") or []):
+        if not isinstance(a, dict):
+            continue
+        lv = a.get("level")
+        it = a.get("intensity") or _alert_level.from_alert_level(lv)   # 旧文件兜底
+        alerts.append({
+            "level": lv, "base": a.get("base"), "code": a.get("code"),
+            "title": a.get("title"), "detail": a.get("detail"),
+            "action": a.get("action"), "ts": a.get("ts"),
+            "intensity": it,
+            "intensity_label": a.get("intensity_label") or _alert_level.name(it),
+        })
+    # 排序固定（红在前、同级按时间）-> 前端渲染确定
+    alerts.sort(key=lambda z: (-_alert_level.rank(z.get("intensity")), str(z.get("ts") or "")))
+    worst = _alert_level.worst([z.get("intensity") for z in alerts])
+    return {
+        "available": True,
+        "ts": data.get("ts"),
+        "positions": data.get("positions", 0),
+        "alerts": alerts,
+        "counts": data.get("counts") or {},
+        "intensity": worst,
+        "intensity_label": _alert_level.name(worst),
+        "intensity_counts": {k: sum(1 for z in alerts if z.get("intensity") == k)
+                             for k in (_alert_level.YELLOW, _alert_level.RED)},
+        "source": os.path.relpath(ALERT_FILE, BASE).replace("\\", "/"),
+        "note": "只告警、不自动下单；分级为黄/红两档（没有绿）。",
+    }
+
+
 # ---------------------------------------------------------------- 路由
 
 def _health():
@@ -933,6 +1006,7 @@ ROUTES = {
     "/api/session-compare": build_session_compare,
     "/api/data-status": build_data_status,
     "/api/assess": build_assess,
+    "/api/alerts": build_alerts,
     "/api/meta": lambda: {
         "pairs": [{"base": s[1:].replace("USDT", ""), "spot": s, "perp": p} for s, p in PAIRS],
         "session_labels": SESSION_LABEL,

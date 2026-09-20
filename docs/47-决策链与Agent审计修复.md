@@ -150,7 +150,7 @@ python tools\ui_check.py --url http://127.0.0.1:8787/   -> 前端验收通过
 | 1 | `thin_capacity` 阈值（$1,000）与**累计**口径不匹配 | 改阈值 = 行为变更（会让一条从不触发的规则开始触发），应由你定 |
 | 2 | ~~`thin_depth` 是否改用五档做单笔上限~~ | ✅ 已在 §7 处理：改成**四方向 ≤5bp 累计**（带滑点约束，不是裸五档） |
 | 3 | ~~agent 的容量改用实时盘口而非静态 csv~~ | ✅ 已在 §7 处理：深度口径收归 `common/book_depth.py`，页面与决策链逐标的 10/10 一致 |
-| 4 | `thin_depth` 的**触发判据**仍以首档为基准 | 它只影响"要不要提醒"，不影响规模；改成 ≤5bp 会削弱提醒强度，需要你确认 |
+| 4 | ~~`thin_depth` 的**触发判据**是否改用 ≤5bp~~ | ✅ 用户 2026-09-20 拍板：**保留"首档为基准"**，不改 ≤5bp —— 该判据只决定"要不要提醒"，改成 ≤5bp 会**削弱提醒强度**；提醒宁可早。见 §8 |
 
 > 现状偏保守（更易 stand_down，也更容易错杀）。§7.5 说明了为什么**这不算问题**：
 > 挡住决策的是多条互相独立的真实约束，不是某一个参数。
@@ -243,3 +243,90 @@ python tools\reproduce_check.py  # 104 项通过 / 0 失败
 > 这三条都指向同一个判断：**要不要把"能做多大规模"从"首档 × 25%"改成"五档累计"**。
 > 现状偏保守（更小的规模 → 更容易 stand_down），但也因此**更容易错杀**。
 > 这是策略口径的选择，不是 bug，需要你拍板。
+
+---
+
+## 8. 提醒强度：黄 / 红 两档（2026-09-20 · 用户拍板后的实现）
+
+### 8.1 拍板结论
+
+上文 §6 的第 4 条（`thin_depth` 触发判据）**已确认**：
+
+* **保留"首档为基准"**，**不改** ≤5bp —— 该判据只影响"要不要提醒"，不影响规模；
+  改成 ≤5bp 会**削弱提醒强度**。用户的判断是"**提醒宁可早**"。
+* 因此 §6 那张表里**已无待你拍板的项**（第 1 条 `thin_capacity` 阈值仍未动，属行为变更，
+  维持原样）。
+
+### 8.2 新增：统一的提醒强度等级（**只加字段，不改任何判断**）
+
+用户要求：提醒要有**强度等级**，且**两套提醒统一口径**；**不要绿**
+（没有提醒就不带等级，不占色位）。所以定义为**两档递增强度**：
+
+| 强度 | 含义 | 决策链风控 `risk_officer` | 持仓期巡检 `position_watch` |
+|---|---|---|---|
+| 🔴 **红** | 严重：**一票否决** / 裸露敞口 / 事件窗口，必须立刻处理 | `level = veto` | `level = critical` |
+| 🟡 **黄** | 值得看：会**改变动作**（缩规模 / 强制吃单 / 收紧），但不否决 | `level = caution` | `level = warn` |
+| （无色位） | 没有提醒就不显示 | 未触发的规则 | `level = info`（只记录） |
+
+**实现（单一来源，两处共用）**：
+
+* 新增 `common/alert_level.py` —— 映射 + 取"最严重的一条" + 控制台标签；
+  放在 `common/` 而非 `project2/`，因为项目一有硬约束"删掉 `project2/` 照样完整运行"。
+* `project2/agent_team.py`：每条规则与风控结论各加一个 `intensity` / `intensity_label` 字段；
+  `render_risk` 里**只有触发的那条**才显示强度。
+* `tools/position_watch.py`：每条告警加 `intensity` / `intensity_label`；
+  `alerts.json` 增加 `intensity_counts` 与整体 `intensity`（前端弹窗可直接取用）。
+
+> ⚠️ **强度不参与决策**：否决/缩规模仍由 `level` / `action` 决定，巡检仍由告警本身决定。
+> `intensity` 是**展示层**字段，加它不会让任何标的变得更易/更难通过。
+
+### 8.3 验证
+
+```powershell
+python common\alert_level.py                  # 6 项：映射 / 只有两档 / 取最严重
+python tools\position_watch.py --selftest      # 9 项（含"每条告警都带黄红、没有绿"）
+python project2\agent_team.py --decision-selftest   # 全部含 thin_depth 5 条边界
+python tools\reproduce_check.py               # 108 项通过（1 项失败为沙箱禁用回收站所致，与本次改动无关）
+```
+
+实测渲染（`--scenario thin`）：
+
+```
+[否决] agent:stale_quotes  ... <- 触发  [!] 红
+==> 风控结论: reject  [!] 红（agent:stale_quotes）
+```
+
+（Windows 控制台里 🔴/🟡 由 `common/console.py` 自动转写为 `[!]` / `[~]`，不会因编码崩掉。）
+
+### 8.4 前端接入：右下角提醒（2026-09-20）
+
+用户 2026-09-18 就要求过"**告警最好是右下角闪烁弹窗形式**"；本节把 §8.2 的强度等级接到页面上。
+
+| 层 | 改动 | 说明 |
+|---|---|---|
+| 后端 | 新增 `/api/alerts`（`server/app.py::build_alerts`） | **只读** `data/positions/alerts.json`；对老文件缺 `intensity` 时按 `level` **兜底现算**；文件缺失返回 `available:false`，**不假装健康** |
+| 页面 | `web/index.html` 新增 `#alert-dock`；`web/styles.css` 新增样式；`web/app.js` 新增 `loadAlerts()` | 固定在右下角，随主循环 20s 刷新 |
+
+三条刻意的设计：
+
+1. **没有提醒就整块收起** —— 不设"绿色 / 一切正常"档（承接"不要绿"）。
+2. **红色缓慢闪烁**（`lvl-red` 的 box-shadow 脉冲，1.7s）；并遵守
+   `prefers-reduced-motion`，把闪烁退化成静态描边（信息不丢，可访问性不牺牲）。
+3. 告警文本里带 markdown 风格的 `**粗体**` / 反引号，原样输出会变成**字面符号**
+   （本项目已踩过 4 次，`tools/ui_probe.js` 至今仍在盯这两个符号）。
+   前端统一走 `mdInline()`：先转义、再只把这两种标记渲染成 `<strong>` / `<code>`。
+   「收起」按**批次时间戳**记账，只有出现**新一批**告警才再次弹出。
+
+**验收（真浏览器 + 探针，Chrome headless）**：
+
+| 场景 | 探针结果 |
+|---|---|
+| 有告警（当前 `alerts.json`：红 1 / 黄 2） | `class=alert-dock lvl-red`，`display:flex`，高 387px，**0 处字面 `**` / 反引号**，0 console 报错 |
+| 无告警（指向不存在的告警文件） | `hidden` 属性在、`display:none`、高 0px，页面**没有**"一切正常/无提醒"字样 |
+| 点击「收起」 | 收起后 `display:none`，0 console 报错 |
+
+```powershell
+python server/app.py --port 8787
+python tools/ui_check.py --url http://127.0.0.1:8787/    # 前端验收通过
+python tools/reproduce_check.py                          # 108 项通过
+```

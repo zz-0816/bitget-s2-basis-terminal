@@ -34,6 +34,15 @@
   ③ **逆向选择加深**：现货腿 f_dmid 比开仓时更负 -> 提示
   ④ **行情停滞**：该腿长时间无成交 -> 提示"想平也平不掉"的风险
 
+━━ 提醒强度（黄 / 红）━━
+
+每条告警额外带一个**统一强度**（用户 2026-09-20 要求，两套提醒同口径）：
+
+    critical -> 🔴 红（必须立刻处理）   warn -> 🟡 黄（值得看）   info -> 不带等级
+
+**没有绿**：没有提醒就不带等级，不占色位。映射写在 `common/alert_level.py`，
+与决策链风控（`project2/agent_team.py`：veto -> 红、caution -> 黄）共用同一份实现。
+
 用法：
   python tools/position_watch.py                 # 跑一轮（给用户/前端取用）
   python tools/position_watch.py --loop --interval 60
@@ -52,6 +61,8 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 sys.path.insert(0, os.path.join(BASE, "project2"))
 from common.console import install as _install_console  # noqa: E402
+# 统一提醒强度（黄/红）：与决策链风控 `project2/agent_team.py` 共用一份映射
+from common import alert_level as _alert_level  # noqa: E402
 
 _install_console()
 
@@ -60,6 +71,9 @@ ALERT_FILE = os.path.join(BASE, "data", "positions", "alerts.json")
 
 # 告警等级：info 只记录；warn 值得看；critical 需要立刻处理（右下角弹窗用这个字段）
 LEVELS = ("info", "warn", "critical")
+# 统一提醒强度（黄/红）—— **没有绿**：没有提醒就不带等级，不占色位。
+#   映射见 `common/alert_level.py`：critical -> 红、warn -> 黄、info -> 不带等级。
+#   与决策链风控（`project2/agent_team.py`：veto -> 红、caution -> 黄）同口径。
 STALE_TRADE_MIN = 30.0
 
 
@@ -97,8 +111,12 @@ def load_positions(path=None):
 
 def _alert(level, base, code, title, detail, action):
     assert level in LEVELS
+    _intensity = _alert_level.from_alert_level(level)
     return {"level": level, "base": base, "code": code, "title": title,
             "detail": detail, "action": action,
+            # 统一提醒强度（黄/红）：critical -> 红、warn -> 黄、info -> 不带等级
+            "intensity": _intensity,
+            "intensity_label": _alert_level.name(_intensity),
             "ts": dt.datetime.now(dt.UTC).isoformat()}
 
 
@@ -211,7 +229,12 @@ def run_once(json_out=False, write_alerts=True):
         all_alerts += check_position(p)
     out = {"ts": now, "positions": len(pos), "alerts": all_alerts,
            "counts": {lv: sum(1 for a in all_alerts if a["level"] == lv)
-                      for lv in LEVELS}}
+                      for lv in LEVELS},
+           # 统一强度口径：黄/红（**没有绿**；无提醒即无色位）
+           "intensity_counts": {k: sum(1 for a in all_alerts
+                                       if a.get("intensity") == k)
+                                for k in (_alert_level.YELLOW, _alert_level.RED)},
+           "intensity": _alert_level.worst([a.get("intensity") for a in all_alerts])}
     if write_alerts:
         os.makedirs(os.path.dirname(ALERT_FILE), exist_ok=True)
         with open(ALERT_FILE, "w", encoding="utf-8", newline="\n") as fh:
@@ -225,12 +248,18 @@ def run_once(json_out=False, write_alerts=True):
     print("  持仓 %d 个 ｜ 告警：critical %d ｜ warn %d ｜ info %d"
           % (len(pos), out["counts"]["critical"], out["counts"]["warn"],
              out["counts"]["info"]))
+    print("  提醒强度（黄/红，无绿）：红 %d ｜ 黄 %d%s"
+          % (out["intensity_counts"][_alert_level.RED],
+             out["intensity_counts"][_alert_level.YELLOW],
+             ("  ==> 最严重：%s" % _alert_level.tag(out["intensity"]))
+             if out["intensity"] else ""))
     if not all_alerts:
         print("  [OK] 无告警")
     for a in all_alerts:
         icon = {"critical": "[!!]", "warn": "[! ]", "info": "[i ]"}[a["level"]]
+        itag = ("  %s" % _alert_level.tag(a.get("intensity"))) if a.get("intensity") else ""
         print()
-        print("  %s %s  %s" % (icon, a["base"], a["title"]))
+        print("  %s %s  %s%s" % (icon, a["base"], a["title"], itag))
         print("       %s" % a["detail"])
         print("       -> %s" % a["action"])
     print()
@@ -284,6 +313,17 @@ def selftest():
                 if isinstance(node.args[0], ast.Name) and node.args[0].id == "POS_FILE":
                     writes_pos.append("open(POS_FILE)")
     chk(not writes_pos, "**不写持仓文件**（只读用户提供的记录）")
+    # ⑥ 统一提醒强度：每条告警都带黄/红，且**没有绿**（无提醒不带等级）
+    a2 = check_position({"base": "NVDA", "qty_usd": 5000,
+                         "spot_filled": True, "perp_filled": False})
+    chk(all(x.get("intensity") in (_alert_level.YELLOW, _alert_level.RED) for x in a2),
+        "每条告警都带统一强度（黄/红），没有绿：%s"
+        % "、".join("%s=%s" % (x["code"], _alert_level.name(x.get("intensity")))
+                    for x in a2))
+    chk(all(x.get("intensity_label") != "绿" for x in a2 + b),
+        "**没有绿档**（没有提醒不带等级）")
+    chk(_alert_level.worst([x.get("intensity") for x in a2]) == _alert_level.RED,
+        "含 critical 的巡检 -> 整体强度取最严重 = 红")
     print("\n持仓期巡检自检%s" % ("通过" if ok else "**失败**"))
     return 0 if ok else 1
 

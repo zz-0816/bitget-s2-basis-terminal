@@ -391,6 +391,94 @@ async function loadAssess() {
   }
 }
 
+/* ---------------- 右下角提醒：持仓期风控（黄 / 红两档） ----------------
+   数据来自 /api/alerts（tools/position_watch.py 落盘的 alerts.json）。
+
+   两条约定：
+     ① **没有提醒就整块收起** —— 不设"绿色 / 一切正常"档（用户 2026-09-20 明确：不要绿）。
+     ② 只有**黄/红**两种色位：红 = 必须立刻处理，黄 = 值得看。 */
+
+// 告警文本里带 markdown 风格的 `**粗体**` 与 `` `代码` ``。
+// ⚠️ 原样输出会在页面上出现**字面星号/反引号**（本项目已踩过 4 次，
+//    前端探针 tools/ui_probe.js 至今仍在盯着这两个符号），
+//    所以这里先整体转义、再把这两种标记**渲染成元素**。
+function mdInline(s) {
+  return esc(s === null || s === undefined ? '' : String(s))
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+// 用户点过"收起"的那一批巡检（按批次时间戳记）。出现**新批次**才会再次弹出，
+// 否则每个刷新周期都弹一次会很烦。
+let ALERT_DISMISS_TS = null;
+
+function fmtAgo(iso) {
+  const t = Date.parse(iso || '');
+  if (isNaN(t)) return '';
+  const min = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (min < 1) return '刚刚';
+  if (min < 60) return min + ' 分钟前';
+  const h = Math.round(min / 60);
+  if (h < 24) return h + ' 小时前';
+  return Math.round(h / 24) + ' 天前';
+}
+
+async function loadAlerts() {
+  const dock = $('alert-dock');
+  if (!dock) return;
+  let r;
+  try {
+    r = await api('/api/alerts');
+  } catch (e) {
+    console.error(e);               // 可选功能不可用 -> 静默：不该拖死整页
+    return;
+  }
+  const alerts = (r && r.alerts) || [];
+  // ① 没有提醒（或还没有巡检结果）-> 整块收起，不占色位
+  if (!r || r.available === false || !alerts.length) {
+    dock.hidden = true;
+    return;
+  }
+  // ② 用户收起过且仍是同一批 -> 保持收起
+  if (ALERT_DISMISS_TS !== null && ALERT_DISMISS_TS === r.ts) return;
+
+  const lvl = (r.intensity === 'red') ? 'red' : 'yellow';
+  dock.className = 'alert-dock lvl-' + lvl;
+  dock.hidden = false;
+
+  const ic = r.intensity_counts || {};
+  $('alert-sum').textContent = '红 ' + (ic.red || 0) + ' · 黄 ' + (ic.yellow || 0) +
+    (r.positions ? ' ｜ 持仓 ' + r.positions : '');
+
+  $('alert-list').innerHTML = alerts.map(function (a) {
+    // 强度徽标：只有黄/红；无强度（info，只记录）用中性"记录"标
+    const badge = a.intensity
+      ? '<span class="alert-lvl lvl-' + a.intensity + '">' +
+          esc(a.intensity_label || '') + '</span>'
+      : '<span class="alert-lvl">记录</span>';
+    return '<div class="alert-item">' +
+      '<div class="alert-item-top">' + badge +
+        '<span class="alert-base">' + esc(a.base) + '</span>' +
+        '<span class="alert-what">' + mdInline(a.title) + '</span>' +
+      '</div>' +
+      (a.detail ? '<div class="alert-detail">' + mdInline(a.detail) + '</div>' : '') +
+      (a.action ? '<div class="alert-action">→ ' + mdInline(a.action) + '</div>' : '') +
+      '</div>';
+  }).join('');
+
+  const when = fmtAgo(r.ts);
+  $('alert-foot').textContent =
+    '巡检 ' + String(r.ts || '—').slice(0, 16).replace('T', ' ') +
+    (when ? '（' + when + '）' : '') +
+    ' ｜ 源 ' + (r.source || '—') +
+    ' ｜ 分级只有黄/红两档：没有提醒就不显示；只告警，不自动下单。';
+
+  $('alert-close').onclick = function () {
+    ALERT_DISMISS_TS = r.ts;
+    dock.hidden = true;
+  };
+}
+
 async function refresh() {
   try {
     const [ov, ses, st] = await Promise.all([
@@ -433,10 +521,14 @@ async function boot() {
   await loadTimeline();
   // 风险与理由单独加载：它不可用时**不影响**上面的策略视图（可选功能不该拖死整页）
   loadAssess();
+  // 右下角提醒同理：没有持仓单/告警文件时静默不显示
+  loadAlerts();
   tickClock();
   setInterval(tickClock, 1000);            // 时钟每秒走字（纯前端）
   setInterval(refresh, REFRESH_MS);
   setInterval(loadTimeline, REFRESH_MS * 3);
+  setInterval(loadAssess, REFRESH_MS * 3);
+  setInterval(loadAlerts, REFRESH_MS);
   setInterval(loadHealth, 30000);
 }
 boot();

@@ -394,6 +394,10 @@ def check_features():
         ("project2/agent_team.py", "def direction_conflict(", "辩论层·方向一致性"),
         ("project2/agent_team.py", "def adjudicate(", "辩论层·确定性裁决"),
         ("server/app.py", "/api/assess", "风险与理由接口"),
+        ("server/app.py", "def build_alerts(", "持仓提醒接口（黄/红两档）"),
+        ("common/alert_level.py", "def from_risk_level(", "提醒强度·统一映射（唯一实现）"),
+        ("tools/position_watch.py", "intensity", "巡检告警带统一强度"),
+        ("web/app.js", "function loadAlerts(", "右下角提醒弹窗"),
         ("project2/execution_cost.py", "def consult_gate(", "执行成本·闸门联动"),
         ("project2/execution_cost.py", "def selftest(", "执行成本·闸门否决自检"),
     ]
@@ -556,6 +560,17 @@ def check_features():
             bad("gzip 确定性自检失败", (r.stdout or "").strip()[-120:])
     except Exception as exc:  # noqa: BLE001
         bad("gzip 确定性自检无法运行", repr(exc))
+
+    # ---- 统一提醒强度（黄/红）：映射必须真的生效，且**不得冒出绿档** ----
+    try:
+        r = subprocess.run([sys.executable, "common/alert_level.py"],
+                           cwd=BASE, capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            ok("提醒强度·统一映射自检通过（6 项：黄/红两档、没有绿）")
+        else:
+            bad("提醒强度自检失败", (r.stdout or "").strip()[-160:])
+    except Exception as exc:  # noqa: BLE001
+        bad("提醒强度自检无法运行", repr(exc))
 
     # ---- 项目二：事件闸门的**否决路径**必须真的生效 ----
     # 只验证"闸门允许时一切正常"等于没验证闸门起作用。

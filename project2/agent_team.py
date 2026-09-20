@@ -63,6 +63,8 @@ from common.console import install  # noqa: E402
 # 盘口深度口径：与页面共用同一实现（`common/` 而不是 `project2/`，
 # 因为项目一有硬约束"删掉 project2/ 照样完整运行"）
 from common.book_depth import book_depth as _book_depth  # noqa: E402
+# 统一提醒强度（黄/红）：与持仓期巡检共用一份映射，避免两套提醒口径打架
+from common import alert_level as _alert_level  # noqa: E402
 
 install()
 
@@ -1878,6 +1880,11 @@ def risk_officer(base, cost=None, book=None, trader_out=None, debate=None,
     # （返回体必须能 json.dumps：函数对象既不可序列化，也会让"同输入同输出"失真）
     for r in R:
         r["qty_cap"] = None
+        # ---- 统一提醒强度（黄/红）：**只加一个字段**，不改任何判断与阈值 ----
+        #   见 `common/alert_level.py`：caution -> 黄、veto -> 红；未触发不带等级。
+        #   ⚠️ 这一档只用于"提醒有多强"，**不参与**否决/缩规模（那仍由 level/action 决定）。
+        r["intensity"] = _alert_level.from_risk_level(r["level"])
+        r["intensity_label"] = _alert_level.name(r["intensity"])
         if r["hit"] and r["action"] == "cap_size":
             rem = (r.pop("remedy", None) or (lambda: {"qty_usd": 0.0}))()
             r["qty_cap"] = round(max(0.0, min(qty, float(rem.get("qty_usd") or 0.0))), 2)
@@ -1903,6 +1910,10 @@ def risk_officer(base, cost=None, book=None, trader_out=None, debate=None,
 
     return {
         "officer": "risk", "verdict": verdict, "reason": reason,
+        # 统一提醒强度（黄/红）：取本次**所有触发规则里最严重**的一档；无触发 -> None
+        "intensity": _alert_level.worst([r["intensity"] for r in hits]),
+        "intensity_label": _alert_level.name(
+            _alert_level.worst([r["intensity"] for r in hits])),
         "rules": R, "hits": [r["id"] for r in hits],
         "vetoes": [r["id"] for r in vetoes], "cautions": [r["id"] for r in cautions],
         "qty_in_usd": round(qty, 2), "qty_out_usd": round(final_qty, 2),
@@ -1925,7 +1936,9 @@ def render_risk(r, verbose=True):
     for rule in r["rules"]:
         tag = {"veto": "[否决]", "caution": "[警示]"}.get(rule["level"], "[通过]")
         mark = " ← 触发" if rule["hit"] else ""
-        L.append("     %s %-20s %s%s" % (tag, rule["id"], rule["statement"], mark))
+        # 触发时才显示统一强度（黄/红）—— 没触发的规则不占一个色位
+        itag = ("  %s" % _alert_level.tag(rule.get("intensity"))) if rule["hit"] else ""
+        L.append("     %s %-20s %s%s%s" % (tag, rule["id"], rule["statement"], mark, itag))
         L.append("         实测: %s" % rule["measured"])
         L.append("         撤销条件: %s" % rule["falsifier"])
         if rule.get("qty_cap") is not None:
@@ -1933,7 +1946,10 @@ def render_risk(r, verbose=True):
                      % (rule["qty_cap"], rule.get("remedy_note", "")))
         elif rule["hit"] and rule.get("remedy_note"):
             L.append("         处置: %s" % rule["remedy_note"])
-    L.append("     ==> 风控结论: %s（%s）" % (r["verdict"], r["reason"]))
+    L.append("     ==> 风控结论: %s%s（%s）"
+             % (r["verdict"],
+                ("  " + _alert_level.tag(r.get("intensity"))) if r.get("intensity") else "",
+                r["reason"]))
     L.append("         规模 %.0f -> %.0f USD" % (r["qty_in_usd"], r["qty_out_usd"]))
     L.append("         本层未改动: %s" % "、".join(r["does_not_alter"]))
     if verbose:
