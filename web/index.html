@@ -7,36 +7,118 @@
 <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-<header class="top">
-  <div class="brand">
-    <span class="dot" id="live-dot"></span>
-    <h1>Basis Terminal</h1>
-    <span class="sub">rToken 现货 &nbsp;vs&nbsp; 美股永续 · 跨场所价差监控</span>
-  </div>
-  <div class="session-box" id="session-box">
-    <span class="sess-label" id="session-label">读取中…</span>
-    <span class="sess-label" id="route-label" title="平台路由：决定挂单能否省点差（与美股时段相差约 4 小时）">—</span>
-    <span class="sess-time" id="session-time"></span>
-  </div>
-</header>
+<a class="skip" href="#main-content">跳到主要内容</a>
 
-<main>
-  <!-- 1. 主题陈述：休市窗口 = 策略交易窗口 -->
+<!-- 全局常驻：顶栏 + 视图切换 + KPI 条（三个视图共用，不随切换变化） -->
+<div class="stickyhead">
+  <header class="top">
+    <div class="brand">
+      <span class="dot" id="live-dot"></span>
+      <h1>Basis Terminal</h1>
+      <span class="sub">rToken 现货 &nbsp;vs&nbsp; 美股永续 · 跨场所价差监控</span>
+    </div>
+    <div class="session-box" id="session-box">
+      <span class="sess-label" id="session-label">—</span>
+      <span class="sess-label" id="route-label" title="平台路由：决定挂单能否省点差（与美股时段相差约 4 小时）">—</span>
+      <span class="sess-time" id="session-time"></span>
+    </div>
+  </header>
+
+  <div class="stickybar">
+    <nav class="tabs" id="viewtabs" role="tablist" aria-label="视图切换">
+      <button role="tab" type="button" id="tab-monitor" data-view="monitor"
+              aria-selected="true" aria-controls="view-monitor">① 现在看盘</button>
+      <button role="tab" type="button" id="tab-decision" data-view="decision"
+              aria-selected="false" tabindex="-1" aria-controls="view-decision">② 该不该做</button>
+      <button role="tab" type="button" id="tab-evidence" data-view="evidence"
+              aria-selected="false" tabindex="-1" aria-controls="view-evidence">③ 凭什么信</button>
+      <button role="tab" type="button" id="tab-all" data-view="all"
+              aria-selected="false" tabindex="-1"
+              aria-controls="view-monitor view-decision view-evidence"
+              title="把三个视图一次全铺开（原长页模式）">全部</button>
+      <span class="tab-spacer"></span>
+      <button class="alert-pill" id="alert-pill" type="button" hidden
+              title="持仓期风控提醒 · 点击跳到「该不该做」">—</button>
+    </nav>
+    <div class="kpis" id="kpis">
+      <span class="kpi"><span class="kpi-k">监控配对</span><span class="kpi-v" id="m-pairs">—</span></span>
+      <span class="kpi"><span class="kpi-k">基差中位</span><span class="kpi-v" id="m-basis">—</span><span class="kpi-u">bp</span></span>
+      <span class="kpi"><span class="kpi-k">现货点差中位</span><span class="kpi-v" id="m-spot">—</span><span class="kpi-u">bp</span></span>
+      <span class="kpi"><span class="kpi-k">永续点差中位</span><span class="kpi-v" id="m-perp">—</span><span class="kpi-u">bp</span></span>
+      <span class="kpi"><span class="kpi-k">数据新鲜度</span><span class="kpi-v" id="m-fresh">—</span></span>
+      <button type="button" class="afoldall" id="foldall"
+              title="一次展开/收起当前视图里全部「口径」说明">展开口径</button>
+    </div>
+  </div>
+</div>
+
+<main id="main-content">
+
+<!-- ================= 视图 ① 现在看盘 ================= -->
+<div class="view" id="view-monitor" data-view="monitor" role="tabpanel" aria-labelledby="tab-monitor">
+
+  <!-- 机会名单（置顶）：按**策略自己的开仓门槛**筛出的可做标的。
+       判据与口径文本都由 /api/opportunities 给出 —— 页面不自己写 11.34，
+       否则"页面写的判据"和"代码用的判据"迟早漂成两个数。 -->
+  <section class="panel opps">
+    <h2>机会名单 <span class="hint" id="opp-hint">—</span></h2>
+    <div class="table-wrap">
+      <table id="opp-table">
+        <thead>
+          <tr>
+            <th>标的</th>
+            <th class="sep" title="永续价比现货价贵多少。正数 = 永续更贵，做法就是「买现货 + 卖永续」；负数表示现货更贵，这一单不值得做。">基差 (bp)</th>
+            <th title="比入选门槛高出多少。正数才进这份名单；数字越大，这一单的空间越大。">超出门槛 (bp)</th>
+            <th class="sep" title="价格不动、滑点在 5bp 以内时，这个标的实际能被吃掉多少美元。它决定这一单最多能做多大 —— 基差再大，吃不下也白搭。">≤5bp 可吃 (USD)</th>
+            <th class="sep" title="策略引擎对这一单的判断：可做 / 谨慎（要缩规模或放宽价位）/ 不做。点开下面「口径」有解释。">策略结论</th>
+            <th class="chev-col"></th>
+          </tr>
+        </thead>
+        <tbody id="opp-body">
+          <tr><td colspan="6"><span class="sk sk-row"></span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="hint" id="opp-note">—</p>
+    <details class="fold" data-fold="opps-criteria">
+      <summary>口径：谁进这份名单、依据是什么</summary>
+      <p class="fold-body" id="opp-criteria">—</p>
+    </details>
+    <!-- 白话说明（静态文本）：给"看不懂数据"的人一个入口。
+         数字让读者去点开具体标的看「进场证据」，这里只讲生意本身。 -->
+    <details class="fold" data-fold="opps-how">
+      <summary>这门生意怎么做（白话三步）</summary>
+      <div class="fold-body">
+        <p><strong>① 同时下两条腿</strong>：买现货（做多）＋ 卖永续（做空）。
+          两条腿方向相反，涨跌互相抵消 —— 所以这个策略<strong>不赌涨跌</strong>，
+          只赌「两者的价差」会收窄。</p>
+        <p><strong>② 赚的就是「永续比现货贵的那部分」</strong>：永续贵多少 bp，
+          等它回到 0，那一段就是空间。但要<strong>先扣掉执行成本</strong>
+          （点差 + 手续费 + 冲击 + 逆向选择），剩下的才是净的 ——
+          净的是负的，这一单就不该做。</p>
+        <p><strong>③ 最大的坑是「两条腿没同时成交」</strong>：只成交一条腿，
+          手上就剩一个<strong>没有对冲的方向敞口</strong>。
+          所以真正要盯的不是基差有多大，而是<strong>两条腿能不能一起成交</strong> ——
+          点开名单里的标的，展开的「进场证据」会直接给出这个概率。</p>
+        <p>什么时候<strong>不该</strong>进场：基差不够门槛、或两条腿有一条没有盘口、
+          或平台不在所内撮合窗口 —— 三条里任意一条不满足，都不该动手。</p>
+      </div>
+    </details>
+  </section>
+
+  <!-- 主题陈述：休市窗口 = 策略交易窗口（4 个指标已提到上方 KPI 条） -->
   <section class="panel thesis">
     <div class="thesis-main">
       <div class="thesis-kicker">策略窗口</div>
       <div class="thesis-title" id="window-title">—</div>
-      <p class="thesis-body" id="window-body">—</p>
-    </div>
-    <div class="thesis-side">
-      <div class="metric"><span class="m-v" id="m-pairs">—</span><span class="m-k">监控配对</span></div>
-      <div class="metric"><span class="m-v" id="m-basis">—</span><span class="m-k">基差中位 (bp)</span></div>
-      <div class="metric"><span class="m-v" id="m-spot">—</span><span class="m-k">现货点差中位 (bp)</span></div>
-      <div class="metric"><span class="m-v" id="m-perp">—</span><span class="m-k">永续点差中位 (bp)</span></div>
+      <details class="fold" data-fold="thesis">
+        <summary>口径：当前时段为什么可交易（或为什么不宜做市）</summary>
+        <p class="fold-body" id="window-body">—</p>
+      </details>
     </div>
   </section>
 
-  <!-- 2. 核心证据：同一标的、两个场所、点差差 100 倍 -->
+  <!-- 核心证据：同一标的、两个场所、点差差 100 倍 -->
   <section class="panel">
     <h2>同一标的，两个场所 <span class="hint">点差 = 交易成本；基差 = 交易机会</span></h2>
     <div class="table-wrap">
@@ -53,21 +135,28 @@
             <th class="sep" title="≤5bp 滑点内可吃下的名义额（5 档累计，四方向取最薄）。角标「现/永」= 当前瓶颈在哪条腿">≤5bp 可吃 (USD)</th>
           </tr>
         </thead>
-        <tbody><tr><td colspan="8" class="empty">加载中…</td></tr></tbody>
+        <tbody><tr><td colspan="8"><span class="sk sk-row"></span></td></tr></tbody>
       </table>
     </div>
-    <p class="foot">
-      基差 = (现货 mid / 永续 mid − 1) × 10000。 <strong>基差为负 = 永续更贵 → 交易方向为「多现货 / 空永续」。</strong>
-      永续支持做空与杠杆，因此不受「rToken 无法做空」的限制。
-      <br />
-      <strong>容量才是真正的瓶颈。</strong>两个量必须分开看，它们会给出<b>相反</b>的瓶颈腿结论：
-      <b>顶部挂单深度</b>（瞬时能吃多少）实测<b>永续更薄</b>；<b>已成交名义额</b>（长期规模）实测<b>现货更薄</b>。
-      表里的「≤5bp 可吃」用 <b>5 档累计</b>算 —— 只看最优一档会低估 30~280 倍
-      （如 TSLA 顶深 $97，而 ≤5bp 实际可吃 $26,957）。低于 $5,000 才标「深度不足」。
-    </p>
+    <details class="fold" data-fold="pairs-basis">
+      <summary>口径：基差符号与交易方向</summary>
+      <div class="fold-body">
+        基差 = (永续 mid / 现货 mid − 1) × 10000。 <strong>基差为正 = 永续更贵 → 交易方向为「多现货 / 空永续」。</strong>
+        永续支持做空与杠杆，因此不受「rToken 无法做空」的限制。
+      </div>
+    </details>
+    <details class="fold" data-fold="pairs-capacity">
+      <summary>口径：容量为什么必须分两个量看</summary>
+      <div class="fold-body">
+        <strong>容量才是真正的瓶颈。</strong>两个量必须分开看，它们会给出<b>相反</b>的瓶颈腿结论：
+        <b>顶部挂单深度</b>（瞬时能吃多少）实测<b>永续更薄</b>；<b>已成交名义额</b>（长期规模）实测<b>现货更薄</b>。
+        表里的「≤5bp 可吃」用 <b>5 档累计</b>算 —— 只看最优一档会低估 30~280 倍
+        （如 TSLA 顶深 $97，而 ≤5bp 实际可吃 $26,957）。低于 $5,000 才标「深度不足」。
+      </div>
+    </details>
   </section>
 
-  <!-- 3. 时间序列 -->
+  <!-- 时间序列 -->
   <section class="panel">
     <h2>基差与点差时序 <span class="hint" id="chart-hint">—</span></h2>
     <div class="chart-toolbar" id="chart-toolbar"></div>
@@ -79,60 +168,55 @@
       <span><i class="swatch band-closed"></i>休市窗口</span>
     </div>
   </section>
+</div>
 
-  <div class="grid2">
-    <!-- 4. 分时段点差：休市放大了多少 -->
-    <section class="panel">
-      <h2>分时段点差 <span class="hint">休市 vs 盘中</span></h2>
-      <div class="table-wrap">
-        <table id="session-table">
-          <thead>
-            <tr><th>标的</th><th>休市</th><th>盘前</th><th>盘中</th><th>盘后</th><th class="sep">倍数</th></tr>
-          </thead>
-          <tbody><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
-        </table>
-      </div>
-      <p class="foot">
-        「倍数」= 休市点差中位 ÷ 盘中点差中位。 <strong>这个倍数就是策略在休市窗口的收益来源。</strong>
-        盘中样本需等美股开盘后累积（当前若为休市时段，盘中列为空属正常）。
-      </p>
-    </section>
+<!-- ================= 视图 ② 该不该做 ================= -->
+<div class="view" id="view-decision" data-view="decision" role="tabpanel"
+     aria-labelledby="tab-decision" hidden>
 
-    <!-- 5. 执行决策：风险与理由（项目二能力；与上面的策略视角同页，是一套流水线） -->
-    <section class="panel">
-      <h2>执行决策 · 风险与理由
-        <span class="hint">「这一单该不该做、为什么、什么条件」—— 输出理由与警告，不代下单</span>
-      </h2>
-      <p class="thesis-line">
+  <!-- 执行决策：风险与理由（项目二能力） -->
+  <section class="panel">
+    <h2>执行决策 · 风险与理由
+      <span class="hint" id="assess-count">—</span>
+    </h2>
+    <div class="afilter" id="afilter" role="group" aria-label="按风险筛选">
+      <button type="button" class="chip active" data-f="all">全部</button>
+      <button type="button" class="chip" data-f="high">仅红</button>
+      <button type="button" class="chip" data-f="medium">仅黄</button>
+      <button type="button" class="chip" data-f="low">可做</button>
+      <button type="button" class="afoldall" id="afoldall">全部展开</button>
+    </div>
+    <div class="table-wrap">
+      <table id="assess-table">
+        <thead>
+          <tr>
+            <th>标的</th>
+            <th>风险</th>
+            <th>结论</th>
+            <th class="sep">主要原因</th>
+            <th class="sep">条件</th>
+            <th class="chev-col"></th>
+          </tr>
+        </thead>
+        <tbody id="assess-body">
+          <tr class="arow"><td colspan="6"><span class="sk sk-row"></span></td></tr>
+          <tr class="arow"><td colspan="6"><span class="sk sk-row"></span></td></tr>
+          <tr class="arow"><td colspan="6"><span class="sk sk-row"></span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="hint" id="assess-note"></p>
+    <details class="fold" data-fold="assess-why">
+      <summary>说明：这一单该不该做、为什么、什么条件</summary>
+      <div class="fold-body">
         上面告诉你<strong>哪里</strong>有价差；这里告诉你这一单<strong>该不该做、为什么</strong>。
         风险引擎给出<strong>可核验理由</strong>、<strong>条件点位</strong>与<strong>双向风险警告</strong>；
         <strong>它不下单，也不构成投资建议</strong>；低风险 ≠ 无风险。
-      </p>
-      <div class="table-wrap">
-        <table id="assess-table">
-          <thead>
-            <tr>
-              <th>标的</th>
-              <th>风险</th>
-              <th>结论</th>
-              <th class="sep">可核验理由 / 警告</th>
-              <th class="sep">条件</th>
-            </tr>
-          </thead>
-          <tbody id="assess-body"><tr><td colspan="5">加载中…</td></tr></tbody>
-        </table>
       </div>
-      <p class="hint" id="assess-note"></p>
-    </section>
+    </details>
+  </section>
 
-    <!-- 6. 数据状态：诚实标注局限 -->
-    <section class="panel">
-      <h2>数据状态 <span class="hint">诚实标注局限</span></h2>
-      <div id="status-body" class="status-body">加载中…</div>
-    </section>
-  </div>
-
-  <!-- 7. 交易结构说明 -->
+  <!-- 交易结构说明 -->
   <section class="panel">
     <h2>交易结构</h2>
     <div class="structure">
@@ -154,14 +238,49 @@
         <div class="leg-detail">风险：逆向选择 + 点差在开盘瞬间塌缩</div>
       </div>
     </div>
-    <p class="foot warn">
-      ⚠️ 本项目是<strong>做市型价差捕获</strong>，<strong>不是无风险套利</strong>：
-      散户无法做 mint/redeem。本页面为参赛作品展示，<strong>非投资建议</strong>；代币 ≠ 股权。
-    </p>
   </section>
+</div>
+
+<!-- ================= 视图 ③ 凭什么信 ================= -->
+<div class="view" id="view-evidence" data-view="evidence" role="tabpanel"
+     aria-labelledby="tab-evidence" hidden>
+
+  <div class="grid2">
+    <!-- 分时段点差：休市放大了多少 -->
+    <section class="panel">
+      <h2>分时段点差 <span class="hint">休市 vs 盘中</span></h2>
+      <div class="table-wrap">
+        <table id="session-table">
+          <thead>
+            <tr><th>标的</th><th>休市</th><th>盘前</th><th>盘中</th><th>盘后</th><th class="sep">倍数</th></tr>
+          </thead>
+          <tbody><tr><td colspan="6"><span class="sk sk-row"></span></td></tr></tbody>
+        </table>
+      </div>
+      <details class="fold" data-fold="session-ratio">
+        <summary>口径：「倍数」怎么算</summary>
+        <div class="fold-body">
+          「倍数」= 休市点差中位 ÷ 盘中点差中位。 <strong>这个倍数就是策略在休市窗口的收益来源。</strong>
+          盘中样本需等美股开盘后累积（当前若为休市时段，盘中列为空属正常）。
+        </div>
+      </details>
+    </section>
+
+    <!-- 数据状态：诚实标注局限 -->
+    <section class="panel">
+      <h2>数据状态 <span class="hint">诚实标注局限</span></h2>
+      <div id="status-body" class="status-body">
+        <div class="stat-row"><span class="stat-k">采样器心跳</span><span class="stat-v"><span class="sk sk-txt"></span></span></div>
+        <div class="stat-row"><span class="stat-k">采样轮数 / 行数</span><span class="stat-v"><span class="sk sk-txt"></span></span></div>
+        <div class="stat-row"><span class="stat-k">盘口采样总行数</span><span class="stat-v"><span class="sk sk-txt"></span></span></div>
+      </div>
+    </section>
+  </div>
+</div>
+
 </main>
 
-<!-- 8. 右下角提醒（持仓期风控 · 黄/红两档；只告警、不自动下单）
+<!-- 右下角提醒（持仓期风控 · 黄/红两档；只告警、不自动下单）
      数据来自 /api/alerts（tools/position_watch.py 落盘的 alerts.json）。
      没有提醒时整块收起 —— 不设"绿色 / 一切正常"档。 -->
 <aside class="alert-dock" id="alert-dock" aria-live="polite" hidden>
@@ -176,7 +295,12 @@
   <div class="alert-foot" id="alert-foot"></div>
 </aside>
 
+<!-- 全局页脚：免责声明**常驻不折叠**（合规优先，见 docs/48 §3.3） -->
 <footer class="bottom">
+  <p class="disclaimer">
+    <strong>风险与免责</strong>：本项目是<strong>做市型价差捕获</strong>，<strong>不是无风险套利</strong>：
+    散户无法做 mint/redeem。本页面为参赛作品展示，<strong>非投资建议</strong>；代币 ≠ 股权。
+  </p>
   <span id="footer-meta">—</span>
 </footer>
 

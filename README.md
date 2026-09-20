@@ -178,6 +178,25 @@ python tools\reproduce_check.py
 > ⚠️ `data/raw/`（历史 K 线，400 MB+）**不在仓库里**，这是刻意的体积取舍。
 > 所以方式 B 必须**先联网抓数**；直接 `python build_panel.py` 会（按设计）拒绝写入并提示你。
 
+### 一键启动（推荐）
+
+根目录双击 **`0-一键启动全部(双击运行).cmd`** —— 一次把四件常驻组件都拉起来，
+**幂等**（重复双击不会起第二份；判定依据都是权威来源，不猜）：
+
+| 组件 | 作用 | 判定"已在运行"的依据 |
+|---|---|---|
+| 采样守护 | 盘口 / 5 档深度 / 逐笔 / 全池 四个采样器 | `data/spread/.supervisor.lock` 里的 pid 是否存活 |
+| 外部看门狗 | 守护进程被**整体杀掉**时把它拉回来 | `data/logs/sampler_watchdog.pid` |
+| 窗口监测 | 每 30 分钟留痕 route / 覆盖率 / 停摆 | `data/reports/window_watch.csv` 的新鲜度 |
+| 前端服务 | 监控台 `http://127.0.0.1:8787` | 端口 8787 是否在监听 |
+
+命令行等价（`--check` 只报告不启动）：`python tools\start_all.py --check`。
+
+> 为什么值得加这一层：`docs/49` 记的 09-20 断流 12 小时 16 分，根因是
+> **守护进程被整体终止、而计划任务没注册成功 → 没有任何东西把它拉起来**。
+> 所以这里所有常驻组件都用「**分离进程 + 无窗口**」启动 —— **没有窗口可以被误关**；
+> 启动器本身**绝不 kill 任何进程**（自检里用 AST 钉住这条）。
+
 ### 启动监控台
 
 ```powershell
@@ -236,7 +255,7 @@ python tools\check_samplers.py     # 退出码 0 = 健康（实例数/节奏/重
 ├── kline_accumulator.py       历史 K 线累积（可回补，1m 仅约 13.9 天）
 ├── backfill_history.py        一次性历史回补（多粒度矩阵）
 ├── build_panel.py             基差面板构建（含防"空结果覆盖好结果"闸门）
-├── server/app.py              Basis Terminal 后端（仅标准库，7 个端点）
+├── server/app.py              Basis Terminal 后端（仅标准库，8 个端点）
 ├── web/                       前端监控台（原生 JS + 手写 SVG，无外部依赖）
 ├── scripts/                   守护/安装/协作脚本（PowerShell）
 ├── tools/                     运维与复核工具（自检、审计、分析、定位缺口）
@@ -259,9 +278,15 @@ python tools\check_samplers.py     # 退出码 0 = 健康（实例数/节奏/重
 | `GET /api/timeline` | 基差与点差时间序列 |
 | `GET /api/session-compare` | 分时段点差对比（休市 vs 盘中放大倍数） |
 | `GET /api/data-status` | 数据覆盖与采样器心跳（含 `spread_source`：`live` 还是 `archive(gz)`） |
+| `GET /api/assess` | **执行决策 · 风险与理由**：每个标的的结论 / 可核验理由 / 警告 / 条件点位 + **进场证据**（`cost` 子对象：`best_cost` / `p_both` / `p_part` / `half_s` / `maker_allowed` …） |
+| `GET /api/opportunities` | **机会名单**：按策略自己的开仓门槛筛出可做标的。判据三条「且」：基差 ≥ 门槛（11.34 bp）、两腿都可交易、处于所内撮合窗口。每条带 `evidence`（能不能挂上 / 划不划算 / 两腿同时成交概率）、`net_bp`（基差 − 成本）、`size_note`（名义额超过盘口深度时如实提示）。门槛唯一来源 `common/strategy_params.py` |
+| `GET /api/alerts` | 持仓期风控提醒（右下角弹窗数据源；**只读** `data/positions/alerts.json`） |
 | `GET /api/meta` | 配对数、时段标签、基差口径声明 |
 
-**性能**（实测，别再回退）：首屏 7 个端点合计 **266 ms**；`/api/data-status` 冷启动
+> 共 **9** 个端点（其中 `/api/meta` 是元数据；对外表述按惯例记 **8 个数据端点**）。
+
+**性能**（实测，别再回退）：首屏 8 个端点合计 **97 ms**（2026-09-20 实测，预热后；
+其中新增的 `/api/opportunities` 占 18 ms）。`/api/data-status` 冷启动
 曾要 26.7 秒、加缓存后 2.9 秒、改成 stale-while-revalidate 后**过期时也只需 2 ms**
 （后台线程重算 + 非阻塞锁去重）。回归测试：`python tools\verify_status_cache.py`。
 | `GET /api/meta` | 配对清单与时段标签 |

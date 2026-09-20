@@ -91,6 +91,31 @@ for fn, pat in (("build_panel.py", r"def basis_bp"), ("server/app.py", r"def bas
             ok = bool(re.search(pat, fh.read()))
         check("%-22s 定义 basis_bp()" % fn, ok)
 
+# ---------- 3) 页面上的**口径文字**也必须是标准口径 ----------
+# 为什么补这一层（2026-09-20 实测踩到）：
+#   上面两段只扫 **Python 源码**，"页面里写给人看的公式"没人管。
+#   而 web/index.html 的「口径」折叠里一直写着旧口径 `(现货 mid / 永续 mid − 1)`
+#   和「基差为负 = 永续更贵 → 多现货/空永续」—— 与代码**恰好相反**。
+#   结果是：代码全对、所有回归全绿，页面在骗人。
+#   口径回归必须覆盖"给人看的字"，否则同一个 bug 还会再来一次。
+print("\n页面口径文字扫描（web/ 里给人看的公式也要对）")
+WEB_FILES = ["web/index.html", "web/app.js"]
+OLD_PAT = re.compile(r"现货[^。；\n]{0,14}/\s*永续[^。；\n]{0,10}[-−]\s*1")
+NEW_PAT = re.compile(r"永续[^。；\n]{0,14}/\s*现货[^。；\n]{0,10}[-−]\s*1")
+for fn in WEB_FILES:
+    p = os.path.join(BASE, fn)
+    if not os.path.exists(p):
+        continue
+    with open(p, encoding="utf-8") as fh:
+        text = fh.read()
+    old_hits = OLD_PAT.findall(text)
+    check("%-20s 无旧口径 (现货 / 永续 − 1) 文字残留" % fn, not old_hits,
+          "" if not old_hits else "-> %s" % old_hits[:3])
+    if fn == "web/index.html":
+        check("%-20s 写明了标准口径 (永续 / 现货 − 1)" % fn,
+              bool(NEW_PAT.search(text)),
+              "" if NEW_PAT.search(text) else "-> 页面没有交代基差方向，读者无法自查")
+
 print("\n" + "=" * 78)
 if FAIL == 0:
     print("结论：口径已统一，符号一致，无内联公式残留。")

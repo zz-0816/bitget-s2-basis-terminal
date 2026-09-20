@@ -53,6 +53,9 @@ from common.samples import find_core_samples, iter_rows  # noqa: E402
 from common.book_depth import book_depth as _book_depth  # noqa: E402
 # 统一提醒强度（黄/红）—— 与 project2/agent_team.py 的风控提醒同一份映射
 from common import alert_level as _alert_level  # noqa: E402
+# 策略参数（开仓门槛等）—— **全项目唯一来源**；「机会名单」的入选判据用它，
+# 绝不在这里再写一个 11.34（两处各写一份就一定会漂）。
+from common import strategy_params as _sparams  # noqa: E402
 
 # ---------------------------------------------------------------- 路径
 
@@ -257,6 +260,28 @@ def live_cached(force=False):
 
             threading.Thread(target=_bg, daemon=True).start()
         return (data or {}), _LIVE["ts"]
+
+
+def live_now():
+    """**同步**取一次实时行情；已有缓存就直接返回。
+
+    ⚠️ 为什么需要它：`live_cached()` 是「立即返回旧值 + 后台刷新」，
+    所以在一个**刚启动的进程**里第一次调用它拿到的是 `{}`（实测踩到过）。
+    对「机会名单」这种"名单为空必须区分'真没有'和'还没取到'"的场景，
+    空缓存会被误读成"全部标的都没有行情"，因此这里同步预热一次。
+
+    代价只在冷启动付一次（实测 20 符号约 1.1 秒），之后走 15 秒缓存。
+    """
+    data, _ts = live_cached()
+    if data:
+        return data
+    new = fetch_live()
+    if new:
+        with _LIVE_LOCK:
+            _LIVE["data"] = new
+            _LIVE["ts"] = time.time()
+        return new
+    return {}
 
 
 # ---------------------------------------------------------------- 采样数据
@@ -828,6 +853,30 @@ def build_data_status():
     return st
 
 
+# 执行成本里「能不能真的进场」的那几个字段（白名单）。
+# 这些数 `project2/execution_cost.py` 一直都在算，只是**从没往接口传过** ——
+# 于是页面上只能看到"该不该做"的结论，看不到"凭什么说能进场"的证据。
+EVIDENCE_KEYS = (
+    "best_mode", "best_cost", "cost_mm", "cost_mix", "cost_tk",
+    "half_s", "half_p", "p_s", "p_p", "p_both", "p_part", "p_none",
+    "leg_risk", "miss", "maker_allowed", "route", "session",
+    "adv_s", "adv_p", "n_s", "n_p", "qty",
+)
+
+
+def _evidence(cost):
+    """摘出「进场证据」字段。缺字段就留 None —— **不造数**。"""
+    if not isinstance(cost, dict):
+        return None
+    out = {}
+    for k in EVIDENCE_KEYS:
+        v = cost.get(k)
+        if isinstance(v, float):
+            v = round(v, 4)
+        out[k] = v
+    return out
+
+
 def build_assess(base=None, size_usd=5000.0):
     """⭐ 风险与理由接口 —— 把项目二的能力接到统一页面上。
 
@@ -894,6 +943,8 @@ def build_assess(base=None, size_usd=5000.0):
             "conditions": a["conditions"],
             "source_count": len(a["sources"]),
             "mode": a["mode"],
+            # 「进场证据」：能不能挂上、吃下多少、两腿同时成交的概率（见 EVIDENCE_KEYS）
+            "cost": _evidence(cost),
         })
     order = {"high": 0, "medium": 1, "low": 2}
     items.sort(key=lambda z: (order.get(z.get("risk_level"), 9),
@@ -905,6 +956,180 @@ def build_assess(base=None, size_usd=5000.0):
     if base is None:
         _ASSESS_CACHE["data"] = out
         _ASSESS_CACHE["ts"] = time.time()
+    return out
+
+
+# 机会名单缓存：与 assess 同节奏（30 秒）。名单是分钟级判断，
+# 而 build_overview 要读盘口文件、build_assess 要跑双腿模型，都不该每 20 秒重算。
+_OPP_CACHE = {"data": None, "ts": 0.0}
+_OPP_CACHE_SEC = 30
+
+
+def build_opportunities():
+    """🎯 机会名单 —— 按**策略自己的开仓门槛**筛出当前可做标的。
+
+    判据**全部读现有字段与现有参数，不在这里新造任何阈值**：
+
+        ① basis_bp ≥ ENTRY_THR_BP（11.34 bp = 费用门槛 = 回测 main_cfg.entry）
+        ② tradable（两条腿的盘口都存在 —— 缺一条腿根本没法成交）
+        ③ route == in_house（策略只在所内撮合窗口挂单）
+
+    三条是「且」的关系，缺一条就不算机会。
+
+    **为什么只列达标的**：这就是策略的口径 —— 回测里够门槛才开仓。
+    把不够门槛的也列出来，等于教人去做回测里根本不会开的单。
+    所以不达标的**只给一条「最接近」的提示**（让空名单不至于毫无信息），
+    完整的不达标清单不进这个接口。
+
+    数据来源都是现成的：`build_overview()`（实时盘口 + 5 档容量）
+    融 `build_assess()`（策略自己的风险结论）。都不重算，只做合并与筛选。
+    """
+    now = time.time()
+    if _OPP_CACHE["data"] is not None and (now - _OPP_CACHE["ts"]) < _OPP_CACHE_SEC:
+        return _OPP_CACHE["data"]
+
+    # 冷启动同步预热行情：否则新进程里第一次调用会拿到空缓存，
+    # 名单会错报成"全部无行情"（live_cached 是异步的，见 live_now 的说明）。
+    live_now()
+
+    ov = build_overview()
+    now_utc = dt.datetime.now(dt.UTC)
+    rt = route_of(now_utc)
+    in_house = (rt == "in_house")
+
+    # 进场证据用的测算规模：跟 assess 用同一个数（默认 $5,000），口径不另起一套
+    size_usd = 5000.0
+
+    # 策略自己的风险结论（可核验理由/结论）。它不可用时**不影响**名单本身，
+    # 只是少一列结论 —— 可选功能不该拖死主功能。
+    verdict_by_base = {}
+    try:
+        _a = build_assess()
+        if _a.get("available"):
+            size_usd = _a.get("size_usd") or size_usd
+            for _it in (_a.get("items") or []):
+                verdict_by_base[_it.get("base")] = _it
+    except Exception:                                    # noqa: BLE001
+        pass
+
+    items, unqualified, positive = [], [], []
+    for e in ov:
+        base = e.get("base")
+        bb = e.get("basis_bp")
+        cap = e.get("capacity") or {}
+        tradable = e.get("tradable")
+        v = verdict_by_base.get(base) or {}
+        row = {
+            "base": base,
+            "spot_mid": (e.get("spot") or {}).get("mid"),
+            "perp_mid": (e.get("perp") or {}).get("mid"),
+            "basis_bp": bb,
+            "margin_bp": _sparams.margin_bp(bb),
+            "basis_side": e.get("basis_side"),
+            "tradable": tradable,
+            "missing_leg": cap.get("missing_leg"),
+            "depth_within_5bp_usd": cap.get("depth_within_5bp_usd"),
+            "d5_median": cap.get("d5_median"),
+            "thin_ratio": cap.get("thin_ratio"),
+            "binding_leg_top": cap.get("binding_leg_top"),
+            "thin_usd": cap.get("thin_usd"),
+            "session_now": e.get("session_now"),
+            "risk_level": v.get("risk_level"),
+            "verdict": v.get("verdict"),
+            "event_severity": v.get("event_severity"),
+            "top_warning": (v.get("warnings") or [None])[0],
+        }
+
+        # ---- 进场证据（能不能挂上、吃下多少、两腿同时成交的概率）----
+        ev = v.get("cost")
+        row["evidence"] = ev
+        row["net_bp"] = (round(bb - ev["best_cost"], 2)
+                         if (ev and ev.get("best_cost") is not None and bb is not None)
+                         else None)
+        d5 = row.get("depth_within_5bp_usd")
+        if d5 is None or size_usd is None:
+            row["size_fits"] = None
+            row["size_note"] = None
+        else:
+            row["size_fits"] = bool(d5 >= size_usd)
+            # 名义额超过"≤5bp 能被吃掉"的量时如实说一声 —— 否则"净 +18 bp"
+            # 会让人以为能做 $5,000，而盘口其实只吃得下 $1,445。
+            row["size_note"] = (None if row["size_fits"]
+                                else "测算按 $%s 计；盘口只吃得下 $%s，实际只能做小得多的一单"
+                                     % ("{:,.0f}".format(size_usd), "{:,.0f}".format(d5)))
+
+        # ---- 判据（顺序即"先卡哪一条"）----
+        if bb is None:
+            row["blocked"] = "无实时行情"
+        elif not in_house:
+            row["blocked"] = "非所内撮合窗口（route=%s）" % rt
+        elif tradable is False:
+            row["blocked"] = "两腿缺一（%s 盘口为空），无法成交" % (row["missing_leg"] or "?")
+        elif bb < _sparams.ENTRY_THR_BP:
+            row["blocked"] = "基差低于门槛 %.2f bp" % _sparams.ENTRY_THR_BP
+        else:
+            items.append(row)
+            continue
+        unqualified.append(row)
+        if bb is not None and bb > 0 and tradable:
+            positive.append(row)
+
+    # 排序：基差高者优先（策略口径：basis 越高 = 永续越贵 = 越值得做）
+    items.sort(key=lambda r: -(r["basis_bp"] or 0))
+
+    closest = None
+    if positive:
+        c = max(positive, key=lambda r: r["basis_bp"])
+        closest = {
+            "base": c["base"],
+            "basis_bp": c["basis_bp"],
+            "gap_bp": round(_sparams.ENTRY_THR_BP - c["basis_bp"], 2),
+            "margin_bp": c["margin_bp"],
+        }
+
+    out = {
+        "available": True,
+        "size_usd": size_usd,
+        "threshold": {
+            "entry_thr_bp": _sparams.ENTRY_THR_BP,
+            "exit_thr_bp": _sparams.EXIT_THR_BP,
+            "max_hold_hours": _sparams.MAX_HOLD_HOURS,
+            "source": _sparams.SOURCE,
+            "direction": _sparams.DIRECTION,
+        },
+        "window": {
+            "route": rt,
+            "route_label": ROUTE_LABEL.get(rt, rt),
+            "in_house": in_house,
+            "session": session_of(now_utc)[0],
+        },
+        "scan": {
+            "total": len(ov),
+            "tradable": sum(1 for e in ov if e.get("tradable") is True),
+            "positive_basis": len(positive),
+            "qualified": len(items),
+        },
+        "closest": closest,
+        "items": items,
+        # 口径原文由后端给出（前端只渲染）—— 保证页面上写的判据就是代码用的判据。
+        # ⚠️ 这段是**给用户读的**，所以：不写文件路径、不写代码符号（main_cfg / route=…
+        #    这类），改用白话。口径的出处留在 docs 与本模块注释里，不往页面上搬。
+        "criteria": (
+            "这份名单只回答一件事：现在有没有「值得做、而且做得到」的单。"
+            "入选要同时满足三条："
+            "① 基差 ≥ %.2f bp —— 基差就是永续价比现货价贵多少；%.2f bp 是策略的费用门槛，"
+            "够不着就赚不回手续费；"
+            "② 现货和永续两边的盘口都在 —— 任何一条腿没有挂单，这一单根本成交不了；"
+            "③ 平台此刻在所内撮合窗口 —— 只有这时挂单能省点差，别的时段挂了也白挂。"
+            "排序：基差大的排前面，因为它代表的空间更大。做法是%s。"
+            "不在名单里的，就是这三条里至少缺一条。"
+            "名单空着属正常：策略回测 65 天里够门槛的开仓只有 190 笔，平均一天不到 3 笔。"
+            % (_sparams.ENTRY_THR_BP, _sparams.ENTRY_THR_BP, _sparams.DIRECTION)
+        ),
+        "disclaimer": "名单是策略门槛的筛选结果，不是收益承诺，也不构成投资建议；本页面不下单。",
+    }
+    _OPP_CACHE["data"] = out
+    _OPP_CACHE["ts"] = time.time()
     return out
 
 
@@ -972,7 +1197,10 @@ def build_alerts():
         "intensity_label": _alert_level.name(worst),
         "intensity_counts": {k: sum(1 for z in alerts if z.get("intensity") == k)
                              for k in (_alert_level.YELLOW, _alert_level.RED)},
-        "source": os.path.relpath(ALERT_FILE, BASE).replace("\\", "/"),
+        # ⚠️ 页面**不显示文件路径**（用户明确要求：前端不需要"文件所在位置"这种证据）。
+        #    给用户看的是一句白话来源；真实文件路径留在 `source_ref` 里备查。
+        "source": "持仓期巡检",
+        "source_ref": os.path.relpath(ALERT_FILE, BASE).replace("\\", "/"),
         "note": "只告警、不自动下单；分级为黄/红两档（没有绿）。",
     }
 
@@ -1006,6 +1234,7 @@ ROUTES = {
     "/api/session-compare": build_session_compare,
     "/api/data-status": build_data_status,
     "/api/assess": build_assess,
+    "/api/opportunities": build_opportunities,
     "/api/alerts": build_alerts,
     "/api/meta": lambda: {
         "pairs": [{"base": s[1:].replace("USDT", ""), "spot": s, "perp": p} for s, p in PAIRS],

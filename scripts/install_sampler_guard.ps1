@@ -79,7 +79,8 @@ if (-not $registered) {
 Write-Host ""
 Write-Host "注意：现在仍在运行的旧采样器进程不会被自动接管（各有单实例锁）。"
 Write-Host "      若要立刻切换到守护模式，可先结束旧进程再运行守护："
-Write-Host '        Get-Process python | Where-Object { $_.Id -ne $PID } | Stop-Process -Force'Write-Host "        powershell -ExecutionPolicy Bypass -File scripts\sampler_supervisor.ps1"
+Write-Host '        Get-Process python | Where-Object { $_.Id -ne $PID } | Stop-Process -Force'
+Write-Host "        powershell -ExecutionPolicy Bypass -File scripts\sampler_supervisor.ps1"
 Write-Host ""
 Write-Host "查看状态窗口："
 Write-Host "        powershell -ExecutionPolicy Bypass -File scripts\status_window.ps1"

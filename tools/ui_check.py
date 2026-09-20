@@ -77,6 +77,8 @@ def main(argv=None):
     ap.add_argument("--timeout", type=int, default=90000)
     ap.add_argument("--allow-literal", action="store_true",
                     help="允许字面 ** 标记（默认不允许）")
+    ap.add_argument("--no-view-sweep", action="store_true",
+                    help="不切视图（默认会把 ②③/全部 各切一次再体检一遍）")
     ap.add_argument("--json-out", default=None)
     args = ap.parse_args(argv)
 
@@ -98,63 +100,141 @@ def main(argv=None):
         return 0
 
     tmp = tempfile.mkdtemp(prefix="ui-check-")
-    out_png = os.path.join(tmp, "page.png")
-    out_json = args.json_out or os.path.join(tmp, "result.json")
-    cmd = [node, shot, "--url", args.url, "--out", out_png, "--json", out_json,
-           "--eval-file", probe, "--width", str(args.width),
-           "--height", str(args.height), "--viewport", "--wait", str(args.wait),
-           "--timeout", str(args.timeout), "--browser", browser]
-    if args.click:
-        cmd += ["--click", args.click, "--settle", "1500"]
-    if args.until:
-        cmd += ["--until", args.until]
-
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
-                       encoding="utf-8", errors="replace")
-    if not os.path.exists(out_json):
-        print("  [FAIL] 浏览器没跑出结果（退出码 %d）" % p.returncode)
-        print((p.stdout or "")[-600:] or (p.stderr or "")[-600:])
-        return 1
-
-    with open(out_json, encoding="utf-8") as fh:
-        r = json.load(fh)
-    probe_v = r.get("probe") or {}
-    st = r.get("stats") or {}
-    fails = []
-
     ok = True
 
-    def chk(cond, label, detail=""):
-        nonlocal ok
-        ok = ok and bool(cond)
-        print("  [%s] %s%s" % ("OK " if cond else "!! ", label,
-                               ("  —— " + detail) if detail else ""))
+    def shot_once(click, tag):
+        """跑一次真浏览器 + 探针，返回结果 dict（失败返回 None）。"""
+        out_png = os.path.join(tmp, "page-%s.png" % tag)
+        out_json = os.path.join(tmp, "result-%s.json" % tag)
+        cmd = [node, shot, "--url", args.url, "--out", out_png, "--json", out_json,
+               "--eval-file", probe, "--width", str(args.width),
+               "--height", str(args.height), "--viewport", "--wait", str(args.wait),
+               "--timeout", str(args.timeout), "--browser", browser]
+        if click:
+            cmd += ["--click", click, "--settle", "1500"]
+        if args.until:
+            cmd += ["--until", args.until]
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                           encoding="utf-8", errors="replace")
+        if not os.path.exists(out_json):
+            print("  [!! ] 浏览器没跑出结果（%s，退出码 %d）" % (tag, p.returncode))
+            print("        " + ((p.stdout or "")[-400:] or (p.stderr or "")[-400:])
+                  .replace("\n", "\n        "))
+            return None
+        with open(out_json, encoding="utf-8") as fh:
+            return json.load(fh)
 
-    vw = probe_v.get("viewport") or args.width
-    chk(not probe_v.get("overflow_x"),
-        "无横向溢出（文档 %s ≤ 视口 %s）"
-        % (probe_v.get("doc_w"), vw),
-        "关键列会被推到屏幕外" if probe_v.get("overflow_x") else "")
-    if args.allow_literal:
-        print("  [ ~ ] 字面标记检查被跳过（--allow-literal）")
-    else:
-        chk(probe_v.get("literal_bold", 0) == 0,
-            "无字面 `**粗体**`（%d 处）" % probe_v.get("literal_bold", 0),
-            "标题/表格用 esc() 输出，markdown 不会被渲染")
-        chk(probe_v.get("literal_code", 0) == 0,
-            "无字面反引号（%d 处）" % probe_v.get("literal_code", 0))
-    chk(not probe_v.get("clipped"),
-        "无文字被截断", str(probe_v.get("clipped"))[:70])
-    chk(not probe_v.get("offscreen_right"),
-        "无元素越出视口右缘", str(probe_v.get("offscreen_right"))[:70])
-    chk(not probe_v.get("stuck_loading"),
-        "无卡住的『加载中…』占位符", str(probe_v.get("stuck_loading"))[:70])
-    chk(not r.get("console_errors"),
-        "无 console 报错", "; ".join(r.get("console_errors") or [])[:90])
-    print("  [ ~ ] 页面统计：%d 面板 / %d 表格 / %d 行 / 正文 %d 字"
-          % (st.get("panels", 0), st.get("tables", 0), st.get("rows", 0),
-             st.get("visible_text", 0)))
-    print("  [ ~ ] 截图：%s" % r.get("screenshot"))
+    def check_one(r, tag, header):
+        """对一次页面加载做完整体检；返回该次是否全绿。"""
+        p = r.get("probe") or {}
+        st = r.get("stats") or {}
+        local = []
+
+        def c(cond, label, detail=""):
+            local.append(bool(cond))
+            print("  [%s] %s%s" % ("OK " if cond else "!! ", label,
+                                   ("  —— " + detail) if detail else ""))
+
+        print("  ── %s" % header)
+        vw = p.get("viewport") or args.width
+        c(not p.get("overflow_x"),
+          "无横向溢出（文档 %s ≤ 视口 %s）" % (p.get("doc_w"), vw),
+          "关键列会被推到屏幕外" if p.get("overflow_x") else "")
+        if args.allow_literal:
+            print("  [ ~ ] 字面标记检查被跳过（--allow-literal）")
+        else:
+            c(p.get("literal_bold", 0) == 0,
+              "无字面 `**粗体**`（%d 处）" % p.get("literal_bold", 0),
+              "标题/表格用 esc() 输出，markdown 不会被渲染")
+            c(p.get("literal_code", 0) == 0,
+              "无字面反引号（%d 处）" % p.get("literal_code", 0))
+            # ⚠️ innerText 不含 display:none 的内容 —— 折叠里的坑必须**展开后**再测一遍
+            c(p.get("literal_bold_expanded", 0) == 0,
+              "全部展开后仍无字面 `**`（%d 处）" % p.get("literal_bold_expanded", 0))
+            c(p.get("literal_code_expanded", 0) == 0,
+              "全部展开后仍无字面反引号（%d 处）" % p.get("literal_code_expanded", 0))
+        c(not p.get("clipped"),
+          "无文字被截断", str(p.get("clipped"))[:70])
+        c(not p.get("offscreen_right"),
+          "无元素越出视口右缘", str(p.get("offscreen_right"))[:70])
+        c(not p.get("stuck_loading"),
+          "无卡住的『加载中…』占位符", str(p.get("stuck_loading"))[:70])
+        c(not r.get("console_errors"),
+          "无 console 报错", "; ".join(r.get("console_errors") or [])[:90])
+
+        # ---- 决策表专项（docs/48 §3.5.5 / §7 第 7~9 条）----
+        if p.get("assess_rows"):
+            rh = p.get("assess_max_row_h", 0)
+            c(rh <= 64,
+              "决策表默认行高 ≤ 64px（实测 %spx；改版前 236px）" % rh,
+              "又退回成文字墙了" if rh > 64 else "")
+            c(p.get("detail_overflow", 0) == 0,
+              "展开后单元格不越出行边界（%d 处）" % p.get("detail_overflow", 0))
+            w0, w1 = p.get("table_w_collapsed"), p.get("table_w_expanded")
+            c(w0 is None or w1 is None or abs(w1 - w0) <= 2,
+              "展开前后表格总宽不变（%s -> %s px）" % (w0, w1))
+            c(not p.get("overflow_x_expanded"),
+              "全部展开后仍无横向溢出（文档 %s ≤ 视口 %s）"
+              % (p.get("doc_w_expanded"), vw))
+            c(p.get("detail_clipped", 0) == 0,
+              "展开后的细节不被截断（%d 处）" % p.get("detail_clipped", 0))
+        else:
+            print("  [ ~ ] 该视图没有决策表（跳过行高检查）")
+
+        # ---- 机会名单专项（与决策表同一套红线：它也会展开看「进场证据」）----
+        if p.get("opp_rows"):
+            rh = p.get("opp_max_row_h", 0)
+            c(rh <= 64,
+              "机会名单默认行高 ≤ 64px（实测 %spx）" % rh,
+              "又退回成文字墙了" if rh > 64 else "")
+            c(p.get("opp_detail_overflow", 0) == 0,
+              "机会名单展开后不越出行边界（%d 处）" % p.get("opp_detail_overflow", 0))
+            w0, w1 = p.get("opp_table_w_collapsed"), p.get("opp_table_w_expanded")
+            c(w0 is None or w1 is None or abs(w1 - w0) <= 2,
+              "机会名单展开前后表宽不变（%s -> %s px）" % (w0, w1))
+            c(p.get("opp_detail_clipped", 0) == 0,
+              "机会名单展开后的证据不被截断（%d 处）"
+              % p.get("opp_detail_clipped", 0))
+        else:
+            print("  [ ~ ] 该视图没有机会名单（或名单为空，跳过检查）")
+
+        print("  [ ~ ] 页面统计：%d 面板 / %d 表格 / %d 行 / 正文 %d 字"
+              % (st.get("panels", 0), st.get("tables", 0), st.get("rows", 0),
+                 st.get("visible_text", 0)))
+        return all(local)
+
+    # ---- 首次截图：**失败重试一次** ----
+    # 为什么加重试（2026-09-20 实测踩到）：全量自检里这一条曾偶发变红，
+    # 而它失败时**只留下"浏览器没跑出结果"**，看不出是超时、浏览器没起来、
+    # 还是页面卡在骨架屏。机器负载高时 headless Chrome 冷启动失败是真实存在的，
+    # 一次重试能把"偶发"和"真回归"分开 —— 真回归重试还是失败。
+    r0 = shot_once(args.click, "default")
+    if r0 is None:
+        print("  [ ~ ] 首次截图失败，重试一次…")
+        r0 = shot_once(args.click, "default-retry")
+    if r0 is None:
+        print("  [FAIL] 两次都无法从浏览器拿到结果 —— 这**不是**布局问题，"
+              "是本机浏览器/负载问题；请重跑，或增大 --timeout")
+        return 1
+    ok = check_one(r0, "default", "默认加载%s" % ("（点击 %s）" % args.click
+                                                  if args.click else ""))
+    print("  [ ~ ] 截图：%s" % r0.get("screenshot"))
+
+    # ---- 三视图轮询（docs/48 §7）：默认首屏只看得到 ①，
+    #      ②③ 的表格与长文本必须切过去才知道有没有单独溢出 / 单独踩字面符号。
+    #      指定了 --click 说明跑的是**别的场景**（如 8788 的另一个应用），此时不轮询；
+    #      --until 只是等待条件，与轮询兼容。 ----
+    if args.click:
+        print("  [ ~ ] 指定了 --click，跳过多视图轮询")
+    elif not args.no_view_sweep:
+        for v in ("decision", "evidence", "all"):
+            rv = shot_once('#viewtabs button[data-view="%s"]' % v, v)
+            if rv is None:
+                ok = False
+                continue
+            if not check_one(rv, v, "视图「%s」" % v):
+                ok = False
+
     print("\n前端验收%s" % ("通过" if ok else "**失败**"))
     return 0 if ok else 1
 

@@ -156,6 +156,7 @@ TOOLS = [
     "tools/reproduce_check.py", "common/samples.py",
     "tools/friction_budget.py", "tools/precise_fill_analysis.py",
     "tools/audit_samples.py", "tools/capacity_curve.py",
+    "tools/audit_manifest_b.py", "tools/gap_capacity_report.py",
     "tools/verify_basis_convention.py", "tools/verify_status_cache.py",
     "common/console.py", "common/market_calendar.py",
     "common/book_depth.py",
@@ -398,7 +399,35 @@ def check_features():
         ("common/alert_level.py", "def from_risk_level(", "提醒强度·统一映射（唯一实现）"),
         ("tools/position_watch.py", "intensity", "巡检告警带统一强度"),
         ("web/app.js", "function loadAlerts(", "右下角提醒弹窗"),
+        # 改版（docs/48）：3 视图 + 折叠 + 决策表重构 —— 被回退会立刻变红
+        ("web/index.html", 'id="viewtabs"', "视图切换（3 视图 + 全部兜底）"),
+        ("web/app.js", "function applyView(", "视图路由（URL hash 深链）"),
+        ("web/app.js", "function renderAssess(", "决策表：结论行 + 展开理由卡"),
+        ("web/styles.css", ".fold > summary", "折叠（原生 details，键盘可用）"),
+        # 采样守护的外部看门狗（09-20 断流 12 小时后补的兜底；**不改采样逻辑**）
+        ("tools/sampler_watchdog.py", "def ensure_loop(", "采样守护·外部看门狗（防断流）"),
+        ("tools/sampler_watchdog.py", "def pid_alive(", "看门狗·纯 ctypes 进程存活判定"),
+        # 一键启动器（幂等；**不 kill 任何进程**）
+        ("tools/start_all.py", "def comp_supervisor(", "一键启动·采样守护"),
+        ("tools/start_all.py", "def comp_server(", "一键启动·前端服务"),
         ("project2/execution_cost.py", "def consult_gate(", "执行成本·闸门联动"),
+        # 机会名单（首页置顶）：判据 = 策略**自己的**开仓门槛，不新增阈值
+        ("common/strategy_params.py", "def verify_against_backtest(",
+         "策略参数·门槛唯一来源 + 与回测核对"),
+        ("server/app.py", "def build_opportunities(", "机会名单接口（按开仓门槛筛选）"),
+        ("server/app.py", "def live_now(", "实时行情·同步预热（冷启动不误报『全无行情』）"),
+        ("web/app.js", "function renderOpps(", "首页机会名单渲染"),
+        ("web/index.html", 'id="opp-body"', "机会名单面板（置顶）"),
+        ("web/styles.css", ".opp-hit", "机会名单·达标行强调"),
+        # 进场证据（回答用户的问题："凭什么证明我能进场"）：
+        # 成本引擎里的字段必须真的传到接口、再传到页面 —— 少一环就退化成"只有结论、没有证据"
+        ("server/app.py", "def _evidence(", "进场证据·字段白名单（成本引擎 → 接口）"),
+        ("web/app.js", "function oppEvidenceHTML(", "机会名单·展开「进场证据」"),
+        # 前端取数鲁棒性（自检偶发变红后修的）：单接口失败不许拖死整组、骨架屏不许永久转圈
+        ("web/app.js", "function fetchOne(", "前端取数·单接口失败不拖死整组"),
+        ("web/app.js", "function sweepSkeletons(", "前端·残留骨架屏兜底（不留永久转圈）"),
+        ("tools/ui_probe.js", "opp_max_row_h", "探针·机会名单也要过行高红线"),
+        ("tools/ui_check.py", "opp_detail_overflow", "验收·机会名单展开后不越界"),
         ("project2/execution_cost.py", "def selftest(", "执行成本·闸门否决自检"),
     ]
     for rel, needle, desc in must:
@@ -463,10 +492,9 @@ def check_features():
                      # ⚠️ 用**条件等待**而不是固定等待：冷启动时 /api/data-status 实测要
                      #    6.2 秒、/api/assess 4.5 秒，固定 9 秒在这种机器负载下会偶发超时
                      #    （实测踩到：报"卡住的占位符"，其实只是还没加载完）。
-                     #    条件 = 页面上不再有任何写着"加载中/读取中"的占位符。
-                     "--until", "Array.from(document.querySelectorAll("
-                                "'.loading,.empty')).every(function(e){"
-                                "return !/加载中|读取中/.test(e.innerText||'');})",
+                     #    条件 = 页面上**不再有任何骨架屏**（改版后占位符是 .sk，
+                     #    三条数据线全部渲染完才会消失）。
+                     "--until", "!document.querySelector('.sk')",
                      "--timeout", "150000"],
                     cwd=BASE, capture_output=True, text=True, timeout=420,
                     encoding="utf-8", errors="replace")
@@ -476,8 +504,13 @@ def check_features():
                 elif _r.returncode == 0:
                     ok("前端布局验收通过（真浏览器：无溢出/无字面标记/无截断）")
                 else:
-                    _why = " ｜ ".join(x.strip() for x in _lines
-                                       if "[!! ]" in x)[:170]
+                    # ⚠️ 这里原来只匹配 "[!! ]"，于是**首次截图失败**（打的是 "[FAIL]"）
+                    # 会被吞成"见 tools/ui_check.py 输出" —— 2026-09-20 实测踩到：
+                    # 全量自检报"前端布局验收失败"却没有任何原因，查了半天。
+                    # 凡是能说明原因的行都要带出来。
+                    _why = " ｜ ".join(
+                        x.strip() for x in _lines
+                        if "[!! ]" in x or "[FAIL]" in x)[:170]
                     bad("前端布局验收失败", _why or "见 tools/ui_check.py 输出")
         finally:
             _srv.terminate()
@@ -571,6 +604,50 @@ def check_features():
             bad("提醒强度自检失败", (r.stdout or "").strip()[-160:])
     except Exception as exc:  # noqa: BLE001
         bad("提醒强度自检无法运行", repr(exc))
+
+    # ---- 策略参数：机会名单的门槛必须与**回测 main_cfg** 一致（口径不得漂） ----
+    try:
+        r = subprocess.run([sys.executable, "common/strategy_params.py"],
+                           cwd=BASE, capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            ok("策略参数自检通过（9 项：门槛为正 / 余量符号 / 与回测 main_cfg 一致）")
+        else:
+            bad("策略参数自检失败", (r.stdout or "").strip()[-160:])
+    except Exception as exc:  # noqa: BLE001
+        bad("策略参数自检无法运行", repr(exc))
+
+    # ---- 基差口径：**页面文本**也必须与代码同口径（这层以前没有，实测漏过 bug） ----
+    try:
+        r = subprocess.run([sys.executable, "tools/verify_basis_convention.py"],
+                           cwd=BASE, capture_output=True, text=True, timeout=120)
+        if r.returncode == 0:
+            ok("基差口径回归通过（含 web/ 页面文字扫描 —— 防止「页面写反」再次发生）")
+        else:
+            bad("基差口径回归失败", (r.stdout or "").strip()[-200:])
+    except Exception as exc:  # noqa: BLE001
+        bad("基差口径回归无法运行", repr(exc))
+
+    # ---- 采样守护的外部看门狗：必须能跑，且**绝不 kill 任何进程**（源码级断言） ----
+    try:
+        r = subprocess.run([sys.executable, "tools/sampler_watchdog.py", "--selftest"],
+                           cwd=BASE, capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            ok("采样看门狗自检通过（5 项：进程存活判定 / 只读 / 绝不 kill）")
+        else:
+            bad("采样看门狗自检失败", (r.stdout or "").strip()[-160:])
+    except Exception as exc:  # noqa: BLE001
+        bad("采样看门狗自检无法运行", repr(exc))
+
+    # ---- 一键启动器：必须能跑，且**绝不 kill 任何进程**（源码级断言） ----
+    try:
+        r = subprocess.run([sys.executable, "tools/start_all.py", "--selftest"],
+                           cwd=BASE, capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            ok("一键启动器自检通过（5 项：幂等判定 / 不 kill / 端口探测）")
+        else:
+            bad("一键启动器自检失败", (r.stdout or "").strip()[-160:])
+    except Exception as exc:  # noqa: BLE001
+        bad("一键启动器自检无法运行", repr(exc))
 
     # ---- 项目二：事件闸门的**否决路径**必须真的生效 ----
     # 只验证"闸门允许时一切正常"等于没验证闸门起作用。
