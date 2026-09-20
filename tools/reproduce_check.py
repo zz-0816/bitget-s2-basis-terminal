@@ -157,6 +157,7 @@ TOOLS = [
     "tools/friction_budget.py", "tools/precise_fill_analysis.py",
     "tools/audit_samples.py", "tools/capacity_curve.py",
     "tools/audit_manifest_b.py", "tools/gap_capacity_report.py",
+    "tools/b_side_gap_representativeness.py",
     "tools/verify_basis_convention.py", "tools/verify_status_cache.py",
     "common/console.py", "common/market_calendar.py",
     "common/book_depth.py",
@@ -403,6 +404,10 @@ def check_features():
         ("web/app.js", "function renderSignals(", "小白三问渲染（页面不自己判断）"),
         ("web/index.html", "view-signals", "小白三问视图容器"),
         ("tools/ui_probe.js", "sig_badges_blank", "验收·三张卡结论确实渲染了"),
+        # 缺口「代表性」检验：用乙侧首档回答"少了这 12h16m 会不会让窗口统计偏移"
+        # （结论与 docs/49 原判断相反，所以这个工具必须能被复跑核对）
+        ("tools/b_side_gap_representativeness.py", "def load_spot(",
+         "缺口代表性·乙侧首档三层对照（同周末/同钟点/相邻日）"),
         ("common/alert_level.py", "def from_risk_level(", "提醒强度·统一映射（唯一实现）"),
         ("tools/position_watch.py", "intensity", "巡检告警带统一强度"),
         ("web/app.js", "function loadAlerts(", "右下角提醒弹窗"),
