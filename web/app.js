@@ -31,17 +31,19 @@ function reduced() {
 
 /* 数据缓存：先存进 DATA，再按「当前可见的视图」渲染。
    好处是切换视图零网络等待（10 行表格重绘 <1ms），也避免重绘隐藏 DOM。 */
-const DATA = { overview: null, sessions: null, status: null, assess: null, alerts: null, opps: null };
+const DATA = { overview: null, sessions: null, status: null, assess: null, alerts: null, opps: null, signals: null };
 
-/* ---------------- 视图路由 ---------------- */
+/* ---------------- 视图路由 ----------------
+   默认视图是 `signals`（小白三问）—— 新手打开页面先要的是"我现在该干嘛"，
+   而不是"10 个标的的基差中位数是多少"。专业视图仍然都在，只是排到后面。 */
 
-const VIEWS = ['monitor', 'decision', 'evidence', 'all'];
-const VIEW_TITLE = { monitor: '现在看盘', decision: '该不该做', evidence: '凭什么信', all: '全部' };
+const VIEWS = ['signals', 'monitor', 'decision', 'evidence', 'all'];
+const VIEW_TITLE = { signals: '怎么做', monitor: '现在看盘', decision: '该不该做', evidence: '凭什么信', all: '全部' };
 
 function currentView() {
   let h = (location.hash || '').replace(/^#/, '');
   try { h = decodeURIComponent(h); } catch (e) { /* 保持原样 */ }
-  return VIEWS.indexOf(h) >= 0 ? h : 'monitor';
+  return VIEWS.indexOf(h) >= 0 ? h : 'signals';
 }
 function isVisible(v) { const cur = currentView(); return cur === 'all' || cur === v; }
 
@@ -763,7 +765,14 @@ async function loadAlerts() {
   }
   const alerts = (r && r.alerts) || [];
   const pill = $('alert-pill');
-  // ① 没有提醒（或还没有巡检结果）-> 整块收起，不占色位
+  // ① 没有在跟踪的持仓 -> 这批告警属于**已结束的头寸**，不该当"现在的事"弹出来。
+  //    实测踩到：09-20 弹的是 09-18 的红色告警，而持仓单早已不在 —— 吓人且不真实。
+  if (r && r.available && r.tracked === false) {
+    dock.hidden = true;
+    if (pill) pill.hidden = true;
+    return;
+  }
+  // ② 没有提醒（或还没有巡检结果）-> 整块收起，不占色位
   if (!r || r.available === false || !alerts.length) {
     dock.hidden = true;
     if (pill) pill.hidden = true;
@@ -1008,6 +1017,206 @@ async function loadOpps() {
   renderOpps();
 }
 
+/* ================= 小白三问（默认视图） =================
+   与后端 `build_signals()` 同一套原则：
+     · 页面**不自己判断"能不能买"** —— 四道判据的结论全部由 /api/signals 给；
+     · 页面**不写任何阈值**（门槛数字只出现在后端返回的文案里）；
+     · 取不到数据时显示"数据不足"，**绝不显示"暂无风险"** —— 后者是幻觉。
+   取不到 `DATA.signals` 时**直接返回**，保留骨架屏交给 sweepSkeletons 兜底。 */
+
+const SIG_TONE = {
+  act: { s: 'act', t: '可以做' },
+  caution: { s: 'caution', t: '谨慎' },
+  wait: { s: 'wait', t: '再等等' },
+  stop: { s: 'stop', t: '先处理风险' },
+  unknown: { s: 'unknown', t: '数据不足' },
+};
+const SIG_BUY = {
+  ready: { s: 'act', t: '可以开仓' },
+  caution: { s: 'caution', t: '谨慎 · 缩小规模' },
+  wait: { s: 'wait', t: '还不能开仓' },
+  off_window: { s: 'wait', t: '不在交易时段' },
+  no_data: { s: 'unknown', t: '取不到盘口' },
+};
+const SIG_SELL = {
+  holding: { s: 'caution', t: '持仓中' },
+  flat: { s: 'ok', t: '当前无持仓' },
+  stale: { s: 'unknown', t: '巡检数据已过期' },
+  unknown: { s: 'unknown', t: '无法判断' },
+};
+const SIG_RISK = {
+  red: { s: 'stop', t: '有红色提醒' },
+  yellow: { s: 'caution', t: '有黄色提醒' },
+  none: { s: 'ok', t: '当下没发现要处理的' },
+  stale: { s: 'unknown', t: '巡检数据已过期' },
+  unknown: { s: 'unknown', t: '无法判断' },
+};
+const SIG_MARK = { act: '✓', caution: '!', wait: '·', stop: '×', unknown: '?' };
+
+function sigPct(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
+  const n = Number(v);
+  return (n * 100).toFixed(n < 0.01 ? 2 : 1) + '%';
+}
+
+/* 不带正负号的数（算式里用）：fmtBp 会给正数加 "+"，
+   写成「基差 +50.48 − 成本 +10.95」读起来像两个加数，容易误会。 */
+function sigNum(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
+  return Number(v).toFixed(2);
+}
+
+function sigBadge(id, meta) {
+  const el = $(id);
+  if (el) el.textContent = meta.t;
+  return meta.s;
+}
+
+function renderSignals() {
+  const S = DATA.signals;
+  if (!S || !S.available) return;
+
+  // ---- 一句话结论 ----
+  const hl = S.headline || {};
+  const tn = SIG_TONE[hl.tone] || SIG_TONE.unknown;
+  const headEl = $('sig-head');
+  if (headEl) headEl.dataset.tone = tn.s;
+  setText('sig-mark', SIG_MARK[tn.s] || '?');
+  setText('sig-headline', hl.text || '—');
+  setText('sig-sub', hl.sub || '');
+  setText('sig-stamp', S.generated_bj ? '数据时间 ' + S.generated_bj + '（北京）' : '');
+
+  // ---- ① 现在能买吗 ----
+  const B = S.buy || {};
+  const buyEl = $('sig-buy');
+  if (buyEl) buyEl.dataset.state = sigBadge('sig-buy-badge', SIG_BUY[B.state] || SIG_BUY.no_data);
+  const ul = $('sig-buy-checks');
+  if (ul) {
+    ul.innerHTML = (B.checks || []).map((c) =>
+      '<li class="sig-chk ' + (c.ok ? 'ok' : 'no') + '">' +
+        '<span class="sig-chk-i" aria-hidden="true">' + (c.ok ? '✓' : '×') + '</span>' +
+        '<span class="sig-chk-t"><strong>' + esc(c.label) + '</strong>' +
+        '<span class="sig-chk-d">' + mdInline(c.detail || '') + '</span></span>' +
+      '</li>').join('');
+  }
+  const bd = $('sig-buy-body');
+  if (bd) {
+    let h = '';
+    if (B.how) h += '<p class="sig-note">' + mdInline(B.how) + '</p>';
+    const cs = B.candidates || [];
+    if (cs.length) {
+      h += cs.map((c) =>
+        '<div class="sig-cand">' +
+          '<div class="sig-cand-top"><strong>' + esc(c.base) + '</strong>' +
+            '<span class="' + cls(c.net_bp) + '">净 ' + fmtBp(c.net_bp) + ' bp</span></div>' +
+          '<div class="sig-cand-eq">基差 ' + sigNum(c.basis_bp) + ' bp − 成本 ' + sigNum(c.cost_bp) +
+            ' bp' + (c.cost_mode ? '（' + esc(c.cost_mode) + '）' : '') + '</div>' +
+          '<div class="sig-cand-meta">' +
+            (c.verdict ? '引擎：' + esc(c.verdict) : '引擎：—') +
+            (c.p_part === null || c.p_part === undefined
+              ? '' : ' ｜ 只成交一条腿的历史概率 ' + sigPct(c.p_part)) +
+            (c.size_fits === false ? ' ｜ 规模受限' : '') +
+          '</div>' +
+          (c.size_note ? '<div class="sig-cand-warn">' + mdInline(c.size_note) + '</div>' : '') +
+        '</div>').join('');
+    }
+    if (B.engine_note) h += '<p class="sig-note sig-note-warn">' + mdInline(B.engine_note) + '</p>';
+    bd.innerHTML = h;
+  }
+
+  // ---- ② 什么时候卖 ----
+  const L = S.sell || {};
+  const sellEl = $('sig-sell');
+  if (sellEl) sellEl.dataset.state = sigBadge('sig-sell-badge', SIG_SELL[L.state] || SIG_SELL.unknown);
+  const ld = $('sig-sell-body');
+  if (ld) {
+    ld.innerHTML =
+      (L.holding_note ? '<p class="sig-note">' + mdInline(L.holding_note) + '</p>' : '') +
+      '<ol class="sig-rules">' + (L.rules || []).map((r) =>
+        '<li><div class="sig-rule-c">' + esc(r.cond) + '</div>' +
+        '<div class="sig-rule-w">' + mdInline(r.why) + '</div></li>').join('') + '</ol>';
+  }
+
+  // ---- ③ 现在有没有风险 ----
+  const R = S.risk || {};
+  const riskEl = $('sig-risk');
+  // 没有在跟踪的持仓时，这一格说的不是"没风险"，而是"持仓类风险本页不适用" ——
+  // 两者必须分开说，否则就成了"没有提醒 = 安全"的幻觉。
+  const rm = (R.tracked === false)
+    ? { s: 'ok', t: '没有在跟踪的持仓' }
+    : (SIG_RISK[R.state] || SIG_RISK.unknown);
+  if (riskEl) riskEl.dataset.state = sigBadge('sig-risk-badge', rm);
+  const rd = $('sig-risk-body');
+  if (rd) {
+    const ic = R.counts || {};
+    let h = '<div class="sig-pills">';
+    if (R.tracked === false) {
+      h += '<span class="sig-pill plain">当前没有在跟踪的持仓</span>';
+      if (R.historical_alerts) {
+        h += '<span class="sig-pill plain">另有 ' + R.historical_alerts +
+             ' 条已结束头寸的历史告警（不计入当前）</span>';
+      }
+    } else {
+      h += '<span class="sig-pill stop">红 ' + (ic.red || 0) + '</span>' +
+           '<span class="sig-pill caution">黄 ' + (ic.yellow || 0) + '</span>';
+      if (R.freshness_min !== null && R.freshness_min !== undefined && R.freshness_min > 0) {
+        h += '<span class="sig-pill plain">巡检于 ' +
+             fmtAgo(new Date(Date.now() - R.freshness_min * 60000).toISOString()) + '</span>';
+      }
+    }
+    h += '</div>';
+
+    // 结构性原因：今天"卡在哪一条"（来自机会名单的聚合，不是这里新算的）
+    const st = R.structural || [];
+    if (st.length) {
+      h += '<div class="sig-block"><div class="sig-block-h">今天挡在门外的是：</div>' +
+        st.map((b) => '<div class="sig-block-r"><span>' + esc(b.label) + '</span>' +
+          '<b>' + b.count + ' 个标的</b></div>').join('') + '</div>';
+    }
+    const a = R.assess;
+    if (a) {
+      h += '<div class="sig-block"><div class="sig-block-h">策略引擎的横向判定：</div>' +
+        '<div class="sig-block-r"><span>高风险</span><b>' + a.high + ' / ' + a.total + '</b></div>' +
+        '<div class="sig-block-r"><span>中风险</span><b>' + a.medium + ' / ' + a.total + '</b></div>' +
+        '<div class="sig-block-r"><span>低风险（可执行）</span><b>' + a.low + ' / ' + a.total + '</b></div>' +
+        '</div>';
+    }
+    // 具体提醒（最多 3 条）—— 原样展示巡检给的处置，不替它转述
+    const al = (R.alerts || []).slice(0, 3);
+    if (al.length) {
+      h += '<div class="sig-alerts">' + al.map((z) =>
+        '<div class="sig-alert lvl-' + esc(z.intensity || 'none') + '">' +
+          '<div class="sig-alert-t"><span class="sig-alert-l">' +
+            esc(z.intensity_label || '记录') + '</span>' + esc(z.base) + ' · ' +
+            mdInline(z.title || '') + '</div>' +
+          (z.detail ? '<div class="sig-alert-d">' + mdInline(z.detail) + '</div>' : '') +
+          (z.action ? '<div class="sig-alert-a">→ ' + mdInline(z.action) + '</div>' : '') +
+        '</div>').join('') + '</div>';
+    }
+    rd.innerHTML = h;
+  }
+
+  const th = S.threshold || {};
+  setText('sig-criteria',
+    '门槛来自策略参数模块（' + (th.source || '—') + '）：开仓 ≥ ' + fmtBp(th.entry_thr_bp) +
+    ' bp ｜ 平仓 ≤ ' + fmtBp(th.exit_thr_bp) + ' bp ｜ 最长持有 ' + (th.max_hold_hours || '—') +
+    ' 小时。方向：' + (th.direction || '—') + '。' +
+    '「现在能买吗」的四道判据由后端按固定顺序判定（窗口 → 两条腿的盘口 → 基差门槛 → ' +
+    '扣掉执行成本后的净空间），页面只做渲染、不自己判断。' +
+    '「什么时候卖」的三条规则取自同一份参数。' +
+    '「风险」来自持仓期巡检（只有黄/红两档，没有绿）。');
+  setText('sig-disclaimer', S.disclaimer || '');
+}
+
+/* 小白三问随主循环刷新：它的判据依赖实时基差与巡检结果，必须跟着走。
+   接口不可用时**静默**（可选功能不该拖死整页），骨架屏由 sweepSkeletons 兜底。 */
+async function loadSignals() {
+  try {
+    const r = await api('/api/signals');
+    if (r && r.available) { DATA.signals = r; renderSignals(); }
+  } catch (e) { console.error(e); }
+}
+
 /* ---------------- 渲染总入口 ----------------
    三个视图的表格都是 10 行量级，重绘成本可忽略（<1ms），所以**全部渲染**：
    这样隐藏视图里不会残留骨架屏，切过去一定是现成的内容。
@@ -1024,6 +1233,7 @@ function renderAll() {
   }
   renderOpps();
   renderAssess();
+  renderSignals();
   syncFoldAll();
 }
 
@@ -1101,11 +1311,25 @@ async function boot() {
   applyView(currentView(), { animate: false, scroll: false });   // 先定视图，再取数
 
   const pill = $('alert-pill');
-  if (pill) pill.addEventListener('click', () => go('decision'));
+  if (pill) pill.addEventListener('click', () => go('signals'));
 
-  await loadHealth();
-  await refresh();
-  await loadTimeline();
+  // 小白视图的下钻入口：一次委托，`.sig-link` 增删都不用改这里
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest ? e.target.closest('.sig-link') : null;
+    if (b && b.dataset.goto) go(b.dataset.goto);
+  });
+
+  // ⚠️ 加载顺序是有讲究的（冷启动实测踩到）：
+  //    改版后默认视图是「怎么做」，但 `loadSignals()` 原本排在
+  //    `await refresh()` / `await loadTimeline()` 后面 —— 而冷启动时
+  //    /api/data-status 要 6.2 秒、/api/assess 要 4.5 秒，串行等下来，
+  //    **首屏最重要的那三张卡反而是最后一个开始加载的**，
+  //    真浏览器截图拍到的就是"标题是 ?、三张卡全是骨架"的空壳（body 只有 662px）。
+  //    所以：默认视图**优先且最先发起**。
+  //    另一个好处：`/api/signals` 内部会把机会名单与风险引擎都算一遍并缓存（30 秒），
+  //    所以它回来之后，/api/opportunities 与 /api/assess 基本都是**缓存命中**。
+  await Promise.all([loadHealth(), loadSignals()]);
+  await Promise.all([refresh(), loadTimeline()]);
   // 机会名单随主循环刷新（它的判据依赖实时基差，必须跟着走）
   loadOpps();
   // 风险与理由单独加载：它不可用时**不影响**上面的策略视图（可选功能不该拖死整页）
@@ -1120,6 +1344,7 @@ async function boot() {
   setInterval(loadAssess, REFRESH_MS * 3);
   setInterval(loadOpps, REFRESH_MS);
   setInterval(loadAlerts, REFRESH_MS);
+  setInterval(loadSignals, REFRESH_MS);
   setInterval(loadHealth, 30000);
   // 兜底：25 秒后清掉任何残留骨架屏（不让页面永远转圈）
   setTimeout(sweepSkeletons, 25000);

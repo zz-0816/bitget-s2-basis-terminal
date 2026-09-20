@@ -52,6 +52,23 @@
 
   var basisEl = document.getElementById("basis-ts");
 
+  /* ---- 小白三问（默认视图）：三张卡的结论有没有真的渲染出来 ----
+     为什么单独探这一块：这一页的价值全在"结论有没有出来"。
+     接口挂了或渲染漏了时，页面**看起来仍然是正常的** —— 有标题、有边框、
+     有三张卡，只是徽标停在占位符"—"上。这种失败肉眼最容易放过。 */
+  var sigCards = document.querySelectorAll(".sig-card");
+  var sigBadgeIds = ["sig-buy-badge", "sig-sell-badge", "sig-risk-badge"];
+  var sigBadges = sigBadgeIds.map(function (id) {
+    var el = document.getElementById(id);
+    return el ? (el.textContent || "").trim() : "(缺元素)";
+  });
+  var sigHead = document.getElementById("sig-headline");
+  var sigHeadTxt = sigHead ? (sigHead.textContent || "").trim() : "";
+  var sigChecks = document.querySelectorAll("#sig-buy-checks .sig-chk");
+  var sigStateList = Array.prototype.map.call(sigCards, function (el) {
+    return el.dataset.state || "";
+  });
+
   /* ---- 表格：默认行高 / 展开后的越界与宽度稳定性 ----
      ⚠️ 两张表用**同一套红线**：决策表（#assess-table）与机会名单（#opp-table）。
      机会名单也会展开（点行看「进场证据」），所以它同样要过行高与越界检查 ——
@@ -139,7 +156,16 @@
     table_w_collapsed: A.w,
     opp_rows: O.n,
     opp_max_row_h: Math.round(O.maxH),
-    opp_table_w_collapsed: O.w
+    opp_table_w_collapsed: O.w,
+    sig_cards: sigCards.length,
+    sig_checks: sigChecks.length,
+    sig_badges: sigBadges,
+    sig_badges_blank: sigBadges.filter(function (t) {
+      return !t || t === "—" || t === "(缺元素)";
+    }).length,
+    sig_states: sigStateList,
+    sig_headline: sigHeadTxt.slice(0, 120),
+    sig_headline_blank: !sigHeadTxt || !!(sigHead && sigHead.querySelector(".sk"))
   };
   Object.keys(exp).forEach(function (k) { out[k] = exp[k]; });
   return out;

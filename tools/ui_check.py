@@ -198,6 +198,26 @@ def main(argv=None):
         else:
             print("  [ ~ ] 该视图没有机会名单（或名单为空，跳过检查）")
 
+        # ---- 小白三问专项（默认视图）----
+        # 这一页最危险的失败形态是「看着正常但结论没出来」：三张卡的边框和标题都在，
+        # 只有徽标停在占位符「—」上。所以这里逐个断言结论是否真的渲染了。
+        if p.get("sig_cards"):
+            c(p.get("sig_cards") == 3,
+              "小白三问三张卡都在（实测 %d）" % p.get("sig_cards"))
+            c(p.get("sig_checks") == 4,
+              "「现在能买吗」四道判据齐全（实测 %d）" % p.get("sig_checks"),
+              "判据少了就会漏掉『卡在哪一条』" if p.get("sig_checks") != 4 else "")
+            c(p.get("sig_badges_blank", 0) == 0,
+              "三张卡的结论徽标都已填上（%s）" % " / ".join(p.get("sig_badges") or []),
+              "徽标还是占位符 = 接口没回来或渲染漏了"
+              if p.get("sig_badges_blank") else "")
+            c(not p.get("sig_headline_blank"),
+              "一句话结论已渲染（%s）" % (p.get("sig_headline") or "")[:46])
+            c(all(s for s in (p.get("sig_states") or [])),
+              "三张卡都带了状态（%s）" % ", ".join(p.get("sig_states") or []))
+        else:
+            print("  [ ~ ] 没有小白三问卡片（若默认视图已改，请同步本检查）")
+
         print("  [ ~ ] 页面统计：%d 面板 / %d 表格 / %d 行 / 正文 %d 字"
               % (st.get("panels", 0), st.get("tables", 0), st.get("rows", 0),
                  st.get("visible_text", 0)))
@@ -220,14 +240,16 @@ def main(argv=None):
                                                   if args.click else ""))
     print("  [ ~ ] 截图：%s" % r0.get("screenshot"))
 
-    # ---- 三视图轮询（docs/48 §7）：默认首屏只看得到 ①，
-    #      ②③ 的表格与长文本必须切过去才知道有没有单独溢出 / 单独踩字面符号。
+    # ---- 视图轮询（docs/48 §7）：默认首屏只看得到 ①，
+    #      其余视图的表格与长文本必须切过去才知道有没有单独溢出 / 单独踩字面符号。
+    #      ⚠️ 新增「小白三问」后默认视图变成 signals，**monitor 必须补进这一串** ——
+    #      否则它会从"没被默认加载、也没被轮询"变成**完全没人测**的视图。
     #      指定了 --click 说明跑的是**别的场景**（如 8788 的另一个应用），此时不轮询；
     #      --until 只是等待条件，与轮询兼容。 ----
     if args.click:
         print("  [ ~ ] 指定了 --click，跳过多视图轮询")
     elif not args.no_view_sweep:
-        for v in ("decision", "evidence", "all"):
+        for v in ("monitor", "decision", "evidence", "all"):
             rv = shot_once('#viewtabs button[data-view="%s"]' % v, v)
             if rv is None:
                 ok = False

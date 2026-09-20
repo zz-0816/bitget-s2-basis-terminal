@@ -26,19 +26,21 @@
 
   <div class="stickybar">
     <nav class="tabs" id="viewtabs" role="tablist" aria-label="视图切换">
+      <button role="tab" type="button" id="tab-signals" data-view="signals"
+              aria-selected="true" aria-controls="view-signals">① 怎么做</button>
       <button role="tab" type="button" id="tab-monitor" data-view="monitor"
-              aria-selected="true" aria-controls="view-monitor">① 现在看盘</button>
+              aria-selected="false" tabindex="-1" aria-controls="view-monitor">② 现在看盘</button>
       <button role="tab" type="button" id="tab-decision" data-view="decision"
-              aria-selected="false" tabindex="-1" aria-controls="view-decision">② 该不该做</button>
+              aria-selected="false" tabindex="-1" aria-controls="view-decision">③ 该不该做</button>
       <button role="tab" type="button" id="tab-evidence" data-view="evidence"
-              aria-selected="false" tabindex="-1" aria-controls="view-evidence">③ 凭什么信</button>
+              aria-selected="false" tabindex="-1" aria-controls="view-evidence">④ 凭什么信</button>
       <button role="tab" type="button" id="tab-all" data-view="all"
               aria-selected="false" tabindex="-1"
-              aria-controls="view-monitor view-decision view-evidence"
-              title="把三个视图一次全铺开（原长页模式）">全部</button>
+              aria-controls="view-signals view-monitor view-decision view-evidence"
+              title="把四个视图一次全铺开（原长页模式）">全部</button>
       <span class="tab-spacer"></span>
       <button class="alert-pill" id="alert-pill" type="button" hidden
-              title="持仓期风控提醒 · 点击跳到「该不该做」">—</button>
+              title="持仓期风控提醒 · 点击跳到「怎么做」">—</button>
     </nav>
     <div class="kpis" id="kpis">
       <span class="kpi"><span class="kpi-k">监控配对</span><span class="kpi-v" id="m-pairs">—</span></span>
@@ -53,6 +55,100 @@
 </div>
 
 <main id="main-content">
+
+<!-- ================= 视图 ⓪ 怎么做（默认 · 给新手） =================
+     这一页只回答三个问题：现在能不能买 / 什么时候卖 / 现在有没有风险。
+     判据、阈值、白话文案**全部来自后端 /api/signals** —— 页面不自己写 11.34，
+     也不自己判断“能不能买”，否则“页面说的”和“代码用的”迟早漂成两个数。
+     取不到数据时显示“数据不足”，**绝不显示“暂无风险”**（那是幻觉）。 -->
+<div class="view" id="view-signals" data-view="signals" role="tabpanel"
+     aria-labelledby="tab-signals">
+
+  <!-- 一句话结论：给只想看一行的人 -->
+  <section class="sig-head" id="sig-head" data-tone="unknown">
+    <div class="sig-head-mark" id="sig-mark" aria-hidden="true">?</div>
+    <div class="sig-head-main">
+      <div class="sig-headline" id="sig-headline"><span class="sk sk-txt"></span></div>
+      <div class="sig-sub" id="sig-sub">—</div>
+    </div>
+    <div class="sig-stamp" id="sig-stamp">—</div>
+  </section>
+
+  <div class="sig-grid">
+
+    <!-- ① 现在能买吗 -->
+    <section class="sig-card" id="sig-buy" data-state="unknown">
+      <header class="sig-card-h">
+        <span class="sig-q">1</span>
+        <h2>现在能买吗</h2>
+        <span class="sig-badge" id="sig-buy-badge">—</span>
+      </header>
+      <ul class="sig-checks" id="sig-buy-checks">
+        <li><span class="sk sk-txt"></span></li>
+        <li><span class="sk sk-txt"></span></li>
+      </ul>
+      <div class="sig-body" id="sig-buy-body"></div>
+    </section>
+
+    <!-- ② 什么时候卖 -->
+    <section class="sig-card" id="sig-sell" data-state="unknown">
+      <header class="sig-card-h">
+        <span class="sig-q">2</span>
+        <h2>什么时候卖</h2>
+        <span class="sig-badge" id="sig-sell-badge">—</span>
+      </header>
+      <div class="sig-body" id="sig-sell-body"><span class="sk sk-txt"></span></div>
+    </section>
+
+    <!-- ③ 现在有没有风险 -->
+    <section class="sig-card" id="sig-risk" data-state="unknown">
+      <header class="sig-card-h">
+        <span class="sig-q">3</span>
+        <h2>现在有没有风险</h2>
+        <span class="sig-badge" id="sig-risk-badge">—</span>
+      </header>
+      <div class="sig-body" id="sig-risk-body"><span class="sk sk-txt"></span></div>
+    </section>
+
+  </div>
+
+  <p class="hint" id="sig-disclaimer">—</p>
+
+  <!-- 下钻入口：小白视图是入口，不是终点。
+       看完三张卡想知道"凭什么"，必须能一键走到对应的专业视图，
+       否则新手在这里就断头了（这是"流程"而不是"页面"的优化）。 -->
+  <div class="sig-links">
+    <button type="button" class="sig-link" data-goto="monitor">
+      想看 10 个标的的实时盘口与深度 →</button>
+    <button type="button" class="sig-link" data-goto="decision">
+      想看每个标的的完整风险理由与条件 →</button>
+    <button type="button" class="sig-link" data-goto="evidence">
+      想知道这些数据够不够信 →</button>
+  </div>
+
+  <details class="fold" data-fold="sig-howto">
+    <summary>这三张卡怎么读（30 秒版）</summary>
+    <div class="fold-body">
+      <p><strong>① 现在能买吗</strong>：四道判据要<strong>全部</strong>打勾才叫能做。
+        任何一条不满足，下面会直接告诉你<strong>卡在哪一条、差多少</strong>。</p>
+      <p><strong>这门生意不是"买股票等它涨"</strong>：是同时下两条腿 ——
+        买现货 + 卖永续。涨跌互相抵消，赚的只是两者的<strong>价差收窄</strong>。</p>
+      <p><strong>② 什么时候卖</strong>：三条规则，满足任意一条就平。
+        这三条是回测里定死的，不是临场判断。</p>
+      <p><strong>③ 现在有没有风险</strong>：只有黄、红两档提醒，
+        <strong>没有"绿色 / 一切正常"</strong>——没有提醒不等于没有风险，
+        只代表巡检当下没有发现需要你处理的事。</p>
+      <p><strong>最重要的一句</strong>：基差大 ≠ 能赚钱。
+        门槛只是"费用线"，真正决定赚不赚的是<strong>扣掉执行成本之后还剩多少</strong>。
+        第 ① 张卡的第 4 条就是算这个。</p>
+    </div>
+  </details>
+
+  <details class="fold" data-fold="sig-criteria">
+    <summary>口径：卡上的数字分别从哪来</summary>
+    <p class="fold-body" id="sig-criteria">—</p>
+  </details>
+</div>
 
 <!-- ================= 视图 ① 现在看盘 ================= -->
 <div class="view" id="view-monitor" data-view="monitor" role="tabpanel" aria-labelledby="tab-monitor">

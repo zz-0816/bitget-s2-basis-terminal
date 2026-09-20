@@ -66,6 +66,15 @@ STATIC_DIR = os.path.join(BASE, "web")
 DOCS_DIR = os.path.join(BASE, "docs")
 # 持仓期巡检的落盘告警（由 tools/position_watch.py 写；本服务**只读**）
 ALERT_FILE = os.path.join(BASE, "data", "positions", "alerts.json")
+# 持仓单（用户手写 / 巡检读取）。**它在不在，决定上面那份告警是不是"当前"的。**
+# 踩过的坑：头寸平掉、open.json 删了以后，alerts.json 会一直躺在磁盘上，
+# 于是页面把**两天前的红色告警**当成"现在发生的事"弹出来。
+POS_FILE = os.path.join(BASE, "data", "positions", "open.json")
+# 巡检结果超过这么久就**不再当作"当前无风险"**，改口径为"数据过期，无法判断"。
+# 为什么需要：`alerts.json` 是**落盘快照**，没人巡检时它会一直躺在磁盘上。
+# 实测踩到过：09-20 页面上弹的是 09-18 的提醒，而持仓单文件早已不在 ——
+# 若不多这一层，小白会把两天前的告警当成"现在发生的事"。
+ALERT_STALE_MIN = 180.0
 
 PAIRS = [
     ("RTSLAUSDT",  "TSLAUSDT"),
@@ -157,6 +166,39 @@ def basis_side(basis):
     if basis < 0:
         return "空现货 / 多永续"
     return "—"
+
+
+def next_in_house_start(now_utc, horizon_days=8):
+    """下一个「所内撮合窗口」的起点（UTC）；已在窗口内则返回 None。
+
+    新手最先问的就是"那我什么时候能做"。口径**不在这里重写** ——
+    直接问 `common/market_calendar.route_of`（唯一实现）：
+    先按 30 分钟粗扫找到跃变的那一格，再在格内按分钟细化到准确时刻。
+
+    8 天内都扫不到窗口就**如实返回 None**（不猜一个时间出来糊弄）。
+    """
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=dt.UTC)
+    if route_of(now_utc) == "in_house":
+        return None
+    t0 = now_utc.replace(second=0, microsecond=0)
+    step = dt.timedelta(minutes=30)
+    prev, coarse = t0, None
+    for i in range(1, int(horizon_days * 48) + 1):
+        t = t0 + step * i
+        if route_of(t) == "in_house":
+            coarse = (prev, t)
+            break
+        prev = t
+    if coarse is None:
+        return None
+    lo, hi = coarse
+    t = lo
+    while t < hi:
+        t = t + dt.timedelta(minutes=1)
+        if route_of(t) == "in_house":
+            return t
+    return hi
 
 
 # ---------------------------------------------------------------- HTTP
@@ -964,6 +1006,16 @@ def build_assess(base=None, size_usd=5000.0):
 _OPP_CACHE = {"data": None, "ts": 0.0}
 _OPP_CACHE_SEC = 30
 
+# 「不达标原因」的稳定代号 → 白话标签。顺序 = 代码里判据的先后（先卡哪一条排前面），
+# 与 `build_opportunities` 的 if/elif 顺序**必须一致**，否则"卡在哪一条"会误导。
+BLOCK_ORDER = ("no_quote", "off_window", "missing_leg", "below_threshold")
+BLOCK_LABEL = {
+    "no_quote": "没有实时行情",
+    "off_window": "不在所内撮合窗口",
+    "missing_leg": "有一条腿没有盘口",
+    "below_threshold": "基差没到门槛",
+}
+
 
 def build_opportunities():
     """🎯 机会名单 —— 按**策略自己的开仓门槛**筛出当前可做标的。
@@ -1059,15 +1111,24 @@ def build_opportunities():
                                      % ("{:,.0f}".format(size_usd), "{:,.0f}".format(d5)))
 
         # ---- 判据（顺序即"先卡哪一条"）----
+        # `blocked_code` 是同一判据的**稳定代号**，供「小白三问」视图做聚合与白话翻译。
+        # 为什么不用 `blocked` 文本聚合：那段文本里带 `route=stockroute`、`AAPL` 这类
+        # 变量，同一类原因会碎成多条，数不出"卡在哪一条的最多"。
         if bb is None:
             row["blocked"] = "无实时行情"
+            row["blocked_code"] = "no_quote"
         elif not in_house:
             row["blocked"] = "非所内撮合窗口（route=%s）" % rt
+            row["blocked_code"] = "off_window"
         elif tradable is False:
             row["blocked"] = "两腿缺一（%s 盘口为空），无法成交" % (row["missing_leg"] or "?")
+            row["blocked_code"] = "missing_leg"
         elif bb < _sparams.ENTRY_THR_BP:
             row["blocked"] = "基差低于门槛 %.2f bp" % _sparams.ENTRY_THR_BP
+            row["blocked_code"] = "below_threshold"
         else:
+            row["blocked_code"] = None
+            row["blocked"] = None
             items.append(row)
             continue
         unqualified.append(row)
@@ -1111,6 +1172,24 @@ def build_opportunities():
         },
         "closest": closest,
         "items": items,
+        # 不达标清单的**聚合**（按稳定代号计数）。给「小白三问」视图回答
+        # "今天卡在哪一条" —— 这才是让空名单有信息量的东西。
+        # 顺序固定（先卡哪一条就在前），前端渲染确定。
+        "blocked_summary": [
+            {"code": c, "count": n, "label": BLOCK_LABEL.get(c, c)}
+            for c, n in sorted(
+                ((c, sum(1 for r in unqualified if r.get("blocked_code") == c))
+                 for c in BLOCK_ORDER),
+                key=lambda kv: BLOCK_ORDER.index(kv[0]))
+            if n
+        ],
+        # 每个不达标标的的**一句话原因**（含具体数值），供展开查看
+        "blocked_detail": [
+            {"base": r["base"], "code": r.get("blocked_code"),
+             "reason": r.get("blocked"), "basis_bp": r.get("basis_bp"),
+             "margin_bp": r.get("margin_bp")}
+            for r in unqualified
+        ],
         # 口径原文由后端给出（前端只渲染）—— 保证页面上写的判据就是代码用的判据。
         # ⚠️ 这段是**给用户读的**，所以：不写文件路径、不写代码符号（main_cfg / route=…
         #    这类），改用白话。口径的出处留在 docs 与本模块注释里，不往页面上搬。
@@ -1145,12 +1224,22 @@ def build_alerts():
     所以这里按 `level` 兜底现算一遍，不让旧文件在页面上"掉色"。
 
     无持仓单 / 文件缺失时返回 `available: false`（**不假装健康**，也不报"无风险"）。
+
+    ⚠️ `tracked` 这个字段是后加的，它解决一个真实的误导：
+    `alerts.json` 是**落盘快照**。头寸平掉、`open.json` 删掉之后，这份文件不会自己消失，
+    于是页面会把**几天前的红色告警**当成"现在发生的事"弹出来（2026-09-20 实测：
+    弹的是 09-18 的批次，持仓单早已不在）。所以这里同时给出：
+      · `tracked` —— 现在还有没有在跟踪的持仓单（`open.json` 在不在）
+      · `stale`   —— 这份快照是不是已经过期
+    前端据此决定"当当前风险显示"还是"当历史批次收起来"。
     """
+    tracked = os.path.exists(POS_FILE)
     if not os.path.exists(ALERT_FILE):
         return {"available": False, "alerts": [], "intensity": None,
                 "intensity_counts": {_alert_level.YELLOW: 0, _alert_level.RED: 0},
-                "counts": {}, "note": "尚无巡检结果 —— 由 tools/position_watch.py "
-                                      "产生（没有持仓单时它不会凭空告警）"}
+                "counts": {}, "tracked": tracked, "stale": False,
+                "note": "尚无巡检结果 —— 由 tools/position_watch.py "
+                        "产生（没有持仓单时它不会凭空告警）"}
 
     # ⚠️ 容忍 UTF-8 BOM：持仓单/告警文件可能被用户在 Windows 上用 PowerShell 写过
     #    （本仓库已踩过三次同样的坑，见 docs/DATA_DICT.md 陷阱 #13）
@@ -1165,11 +1254,13 @@ def build_alerts():
         except OSError as exc:
             return {"available": False, "alerts": [], "intensity": None,
                     "intensity_counts": {_alert_level.YELLOW: 0, _alert_level.RED: 0},
-                    "counts": {}, "note": "告警文件不可读：%s" % str(exc)[:120]}
+                    "counts": {}, "tracked": tracked, "stale": False,
+                    "note": "告警文件不可读：%s" % str(exc)[:120]}
     if not isinstance(data, dict):
         return {"available": False, "alerts": [], "intensity": None,
                 "intensity_counts": {_alert_level.YELLOW: 0, _alert_level.RED: 0},
-                "counts": {}, "note": "告警文件格式无法解析"}
+                "counts": {}, "tracked": tracked, "stale": False,
+                "note": "告警文件格式无法解析"}
 
     alerts = []
     for a in (data.get("alerts") or []):
@@ -1187,10 +1278,22 @@ def build_alerts():
     # 排序固定（红在前、同级按时间）-> 前端渲染确定
     alerts.sort(key=lambda z: (-_alert_level.rank(z.get("intensity")), str(z.get("ts") or "")))
     worst = _alert_level.worst([z.get("intensity") for z in alerts])
+    stale = False
+    if data.get("ts"):
+        try:
+            _t = dt.datetime.fromisoformat(str(data["ts"]).replace("Z", "+00:00"))
+            if _t.tzinfo is None:
+                _t = _t.replace(tzinfo=dt.UTC)
+            stale = (dt.datetime.now(dt.UTC) - _t).total_seconds() / 60.0 >= ALERT_STALE_MIN
+        except ValueError:
+            stale = False
     return {
         "available": True,
         "ts": data.get("ts"),
         "positions": data.get("positions", 0),
+        # 现在还有没有在跟踪的持仓单；没有的话这批告警只是**历史快照**
+        "tracked": tracked,
+        "stale": stale,
         "alerts": alerts,
         "counts": data.get("counts") or {},
         "intensity": worst,
@@ -1203,6 +1306,403 @@ def build_alerts():
         "source_ref": os.path.relpath(ALERT_FILE, BASE).replace("\\", "/"),
         "note": "只告警、不自动下单；分级为黄/红两档（没有绿）。",
     }
+
+
+_SIGNAL_CACHE = {"data": None, "ts": 0.0}
+_SIGNAL_CACHE_SEC = 30
+
+
+def _bj_str(ts_utc):
+    """UTC -> 北京时间可读串。给用户看的时间**一律北京时间**（与平台口径一致）。"""
+    if ts_utc is None:
+        return None
+    return ts_utc.astimezone(dt.timezone(dt.timedelta(hours=8))).strftime("%m-%d %H:%M")
+
+
+def build_signals():
+    """🐣 「小白三问」：现在能买吗 / 什么时候卖 / 现在有没有风险。
+
+    ⚠️ 这一层**不产生任何新判断、不定义任何新阈值**，只把三份已有结果翻译成白话：
+
+        · `build_opportunities()`      -> 能不能开仓（窗口 / 两腿盘口 / 基差门槛）
+        · `common.strategy_params`     -> 卖出的规则（平仓门槛、最长持有）
+        · `build_alerts()` + `build_assess()` -> 风险
+
+    所有数字都从上面三处**原样取**。模板是确定性的，**这条链路上没有 LLM**，
+    所以不存在"编一个理由"的可能 —— 这正是本项目对抗幻觉的一贯做法。
+
+    失败时返回 `available: false` 并说明原因，**绝不退化成"看起来一切正常"**。
+    """
+    now = time.time()
+    if (_SIGNAL_CACHE["data"] is not None
+            and (now - _SIGNAL_CACHE["ts"]) < _SIGNAL_CACHE_SEC):
+        return _SIGNAL_CACHE["data"]
+
+    now_utc = dt.datetime.now(dt.UTC)
+    try:
+        opp = build_opportunities()
+    except Exception as exc:                                   # noqa: BLE001
+        return {"available": False,
+                "error": "机会名单不可用：%s: %s" % (type(exc).__name__, exc)}
+    if not opp.get("available"):
+        return {"available": False,
+                "error": opp.get("error") or "机会名单不可用"}
+
+    thr = opp.get("threshold") or {}
+    win = opp.get("window") or {}
+    scan = opp.get("scan") or {}
+    entry_bp = thr.get("entry_thr_bp")
+    exit_bp = thr.get("exit_thr_bp")
+    max_hold = thr.get("max_hold_hours")
+    in_house = bool(win.get("in_house"))
+    closest = opp.get("closest")
+    qualified = opp.get("items") or []
+    blocked = opp.get("blocked_summary") or []
+    detail = opp.get("blocked_detail") or []
+
+    # 风险引擎的结论 —— 两个视图都要用（① 判"引擎说这一单能不能做"；③ 做横向汇总）。
+    # 只取一次，后面复用；`build_assess` 自带 30 秒缓存，不会重复计算。
+    try:
+        assess_data = build_assess()
+    except Exception:                                          # noqa: BLE001
+        assess_data = {"available": False}
+    verdict_of = {}
+    if assess_data.get("available"):
+        for _it in (assess_data.get("items") or []):
+            verdict_of[_it.get("base")] = _it
+
+    # 下一个窗口起点（只在非窗口期才算；口径来自 common/market_calendar）
+    nxt = None
+    if not in_house:
+        try:
+            nxt = next_in_house_start(now_utc)
+        except Exception:                                      # noqa: BLE001
+            nxt = None
+
+    # ---------------- ① 现在能买吗 ----------------
+    leg_missing = [d.get("base") for d in detail if d.get("code") == "missing_leg"]
+    checks = []
+
+    # 判据①：窗口（与 build_opportunities 的 if/elif 顺序一致：先卡这一条）
+    if in_house:
+        checks.append({"ok": True, "label": "处于所内撮合窗口",
+                       "detail": "此刻挂单能按「挂单方」计费，这是策略唯一划算的时段。"})
+    else:
+        d = "现在是「%s」—— 这个时段挂单要按「吃单方」收费，赚不回手续费。" % (
+            win.get("route_label") or win.get("route") or "非所内")
+        if nxt is not None:
+            hrs = (nxt - now_utc).total_seconds() / 3600.0
+            d += "下一个可以做的时段：%s（北京），约 %.1f 小时后。" % (_bj_str(nxt), hrs)
+        else:
+            d += "未来 8 天内查不到可做时段。"
+        checks.append({"ok": False, "label": "处于所内撮合窗口", "detail": d})
+
+    # 判据②：得**有标的**两条腿的盘口齐全
+    # ⚠️ 语义要点：缺腿的标的（如 SOXL）**不挡别人** —— 它在机会名单里已经被排除。
+    #    所以这条判据问的是"有没有能成交的标的"，而不是"是不是个个都齐全"；
+    #    第一版按后者判，结果"1 个标的达标"和"× 两条腿的盘口都在"同时出现，
+    #    新手会读成"不能做"，与结论矛盾。
+    tradable_n, total_n = (scan.get("tradable") or 0), (scan.get("total") or 0)
+    if tradable_n >= 1:
+        d = "%d / %d 个标的的现货与永续盘口都能取到。" % (tradable_n, total_n)
+        if leg_missing:
+            d += "（%s 有一条腿取不到盘口，它做不了 —— 盘口为空不是「价格不好」，是「没法成交」；" \
+                 "但它不影响其它标的。）" % "、".join(leg_missing)
+        checks.append({"ok": True, "label": "有标的的两条腿盘口齐全", "detail": d})
+    elif total_n:
+        checks.append({"ok": False, "label": "有标的的两条腿盘口齐全",
+                       "detail": "全部 %d 个标的都至少有一条腿取不到盘口 —— "
+                                 "现在什么都成交不了。" % total_n})
+    else:
+        checks.append({"ok": False, "label": "有标的的两条腿盘口齐全",
+                       "detail": "当前没有取到可用的盘口数据。"})
+
+    # 判据③：基差够门槛
+    if qualified:
+        checks.append({"ok": True, "label": "基差够门槛（≥ %.2f bp）" % entry_bp,
+                       "detail": "有 %d 个标的达标。" % len(qualified)})
+    elif closest:
+        checks.append({"ok": False, "label": "基差够门槛（≥ %.2f bp）" % entry_bp,
+                       "detail": "最接近的是 %s：现在 %.2f bp，还差 %.2f bp。" % (
+                           closest.get("base"), closest.get("basis_bp") or 0.0,
+                           closest.get("gap_bp") or 0.0)})
+    else:
+        checks.append({"ok": False, "label": "基差够门槛（≥ %.2f bp）" % entry_bp,
+                       "detail": "当前没有任何标的是正基差（永续比现货贵），这一单没有空间。"})
+
+    # 候选（够门槛的）—— 带上执行成本、净空间、以及"只成交一条腿"的概率。
+    # ⚠️ 这四个数必须一起给：本项目最容易误导人的就是把"基差大"当成"能赚钱"。
+    cands = []
+    for r in qualified:
+        ev = r.get("evidence") or {}
+        cands.append({
+            "base": r.get("base"),
+            "basis_bp": r.get("basis_bp"),
+            "margin_bp": r.get("margin_bp"),
+            "cost_bp": ev.get("best_cost"),
+            "cost_mode": ev.get("best_mode"),
+            "net_bp": r.get("net_bp"),
+            "p_both": ev.get("p_both"),
+            "p_part": ev.get("p_part"),
+            "verdict": (verdict_of.get(r.get("base")) or {}).get("verdict"),
+            "risk_level": (verdict_of.get(r.get("base")) or {}).get("risk_level"),
+            "depth_within_5bp_usd": r.get("depth_within_5bp_usd"),
+            "size_fits": r.get("size_fits"),
+            "size_note": r.get("size_note"),
+        })
+    profitable = [c for c in cands if (c.get("net_bp") or 0) > 0]
+
+    # 判据④：扣掉执行成本之后还剩多少 —— 这一步是新手最容易漏掉的
+    # （门槛 11.34 bp 是"费用线"，但真正决定赚不赚的是「基差 − 实际执行成本」）
+    if profitable:
+        checks.append({
+            "ok": True, "label": "扣掉执行成本后还有空间",
+            "detail": "；".join(
+                "%s：基差 %.2f bp − 成本 %.2f bp = 净 %+.2f bp"
+                % (c["base"], c["basis_bp"] or 0.0, c["cost_bp"] or 0.0, c["net_bp"] or 0.0)
+                for c in profitable[:3])})
+    elif cands:
+        checks.append({
+            "ok": False, "label": "扣掉执行成本后还有空间",
+            "detail": "够门槛的 %d 个标的，扣掉执行成本后全是负的 —— 基差赚不回手续费，"
+                      "这一单不该做。" % len(cands)})
+    else:
+        checks.append({
+            "ok": False, "label": "扣掉执行成本后还有空间",
+            "detail": "现在没有够门槛的标的，这一条无从谈起。"})
+
+    # 状态判定。⚠️ `ready` **只留给风险引擎自己说「可执行」**的时候 ——
+    # 门槛是这套系统里最浅的一层，光过门槛不等于该做（本项目实测：过门槛的标的
+    # 仍可能被逆向选择/腿风险挡掉）。引擎没这么说就一律不显示"可以开仓"。
+    go_cands = [c for c in profitable if "可执行" in (c.get("verdict") or "")]
+    if scan.get("total") and scan.get("tradable") == 0:
+        buy_state = "no_data"
+    elif not in_house:
+        buy_state = "off_window"
+    elif go_cands:
+        buy_state = "ready"
+    elif profitable:
+        buy_state = "caution"
+    else:
+        buy_state = "wait"
+
+    buy = {
+        "title": "现在能买吗",
+        "state": buy_state,
+        "checks": checks,
+        "direction": thr.get("direction"),
+        "how": "开仓 = 同时下两条腿：买现货 + 卖永续（方向相反，涨跌互相抵消，"
+               "只赌两者的价差收窄）。必须一起成交 —— 只成交一条腿就变成裸的方向敞口。",
+        "candidates": cands,
+        # 引擎的结论原文（"谨慎"/"不做"…）—— 直接把引擎的话摆出来，不替它转述成结论
+        "engine_note": (
+            "风险引擎这一层的口径是**只看成本是否为正**，它拿不到基差、"
+            "所以无法判断「基差够不够覆盖成本」—— 因此只要成本为正，"
+            "它最多只会给「谨慎（缩小规模 / 放宽价位）」，不会给「可执行」。"
+            "真正判断赚不赚要看上面第 ④ 条的净空间。"
+            if profitable else None),
+    }
+
+    # ---------------- ② 什么时候卖 ----------------
+    alerts = {}
+    try:
+        alerts = build_alerts()
+    except Exception:                                          # noqa: BLE001
+        alerts = {"available": False}
+
+    fresh_min = None
+    if alerts.get("ts"):
+        try:
+            _t = dt.datetime.fromisoformat(str(alerts["ts"]).replace("Z", "+00:00"))
+            if _t.tzinfo is None:
+                _t = _t.replace(tzinfo=dt.UTC)
+            fresh_min = (now_utc - _t).total_seconds() / 60.0
+        except ValueError:
+            fresh_min = None
+
+    if not alerts.get("available"):
+        hold_state, hold_note = "unknown", (
+            "还没有巡检结果，无法判断当前有没有持仓。"
+            "（没有持仓单时巡检不会凭空告警，所以没有结果 ≠ 没有风险。）")
+    elif not alerts.get("tracked"):
+        # 没有持仓单 = 没有在跟踪的头寸。磁盘上那份 alerts.json 只是**已结束头寸的历史快照**，
+        # 不能当"当前持仓状态"用（这正是它曾经被误当成两天前实时风险的原因）。
+        hold_state = "flat"
+        hold_note = "现在没有在跟踪的持仓（没有持仓单）。"
+        if alerts.get("alerts"):
+            hold_note += ("磁盘上还留着一份 %s 前的巡检快照，那是已结束头寸的历史记录，"
+                          "不当作当前状态。" % _humanize_min(fresh_min))
+    elif fresh_min is not None and fresh_min >= ALERT_STALE_MIN:
+        hold_state, hold_note = "stale", (
+            "巡检结果已经是 %s 前的了，不能当作「现在的持仓状态」。"
+            % _humanize_min(fresh_min))
+    elif alerts.get("positions"):
+        hold_state, hold_note = "holding", "巡检显示当前有 %d 个持仓在盯。" % alerts["positions"]
+    else:
+        hold_state, hold_note = "flat", "巡检显示当前没有持仓。"
+
+    sell = {
+        "title": "什么时候卖",
+        "state": hold_state,
+        "holding_note": hold_note,
+        "rules": [
+            {"n": 1,
+             "cond": "基差回落到 ≤ %.2f bp" % (exit_bp if exit_bp is not None else 0.0),
+             "why": "赚的就是「开仓时的基差 − 平仓时的基差」。回落到 0 意味着这段空间已经收完，"
+                    "再拿着就不是在赚价差，而是在承担方向风险。"},
+            {"n": 2,
+             "cond": "持有满 %s 小时" % _trim_num(max_hold),
+             "why": "到点强制平仓，不再等。回测里就是这么定的 —— 避免「再等等看」"
+                    "把一次收敛拖成一次套牢。"},
+            {"n": 3,
+             "cond": "出现风控告警（黄 / 红）",
+             "why": "按告警里给的处置做（补腿 / 撤单 / 缩规模），不要自己判断。"
+                    "提醒只有黄、红两档，**没有绿** —— 不提醒 ≠ 安全。"},
+        ],
+        "exit_thr_bp": exit_bp,
+        "max_hold_hours": max_hold,
+    }
+
+    # ---------------- ③ 现在有没有风险 ----------------
+    ic = alerts.get("intensity_counts") or {}
+    red, yellow = int(ic.get(_alert_level.RED) or 0), int(ic.get(_alert_level.YELLOW) or 0)
+    # 告警列表只在**有在跟踪的持仓**时才当"当前风险"呈现；
+    # 没有持仓单时这批告警属于已结束的头寸，收进 historical_alerts 计数即可。
+    tracked = bool(alerts.get("tracked"))
+    live_alerts = (alerts.get("alerts") or []) if tracked else []
+    historical = 0 if tracked else len(alerts.get("alerts") or [])
+    if historical:
+        red = yellow = 0                       # 历史批次不占当前红/黄的色位
+
+    if not alerts.get("available"):
+        risk_state = "unknown"
+    elif not tracked:
+        # 没有在跟踪的持仓 -> 持仓类风险本页不适用；**结构性风险仍在下面照常给**
+        risk_state = "none"
+    elif fresh_min is not None and fresh_min >= ALERT_STALE_MIN:
+        risk_state = "stale"
+    elif red:
+        risk_state = "red"
+    elif yellow:
+        risk_state = "yellow"
+    else:
+        risk_state = "none"
+
+    structural = []
+    for b in blocked:
+        structural.append({"code": b.get("code"), "count": b.get("count"),
+                           "label": b.get("label")})
+    # 风险引擎的横向汇总（多少标的被判高风险）—— 取不到就不写，不编。
+    # 复用上面已经取过一次的 `assess_data`，不重复计算。
+    assess_sum = None
+    if assess_data.get("available"):
+        its = assess_data.get("items") or []
+        assess_sum = {
+            "size_usd": assess_data.get("size_usd"),
+            "total": len(its),
+            "high": sum(1 for z in its if z.get("risk_level") == "high"),
+            "medium": sum(1 for z in its if z.get("risk_level") == "medium"),
+            "low": sum(1 for z in its if z.get("risk_level") == "low"),
+        }
+
+    risk = {
+        "title": "现在有没有风险",
+        "state": risk_state,
+        "counts": {"red": red, "yellow": yellow},
+        "tracked": tracked,
+        "historical_alerts": historical,
+        "freshness_min": (round(fresh_min, 1) if fresh_min is not None else None),
+        "alerts": live_alerts[:6],
+        "structural": structural,
+        "assess": assess_sum,
+    }
+
+    # ---------------- 一句话结论（确定性优先级）----------------
+    def _cand_line(c):
+        return "%s：基差 %.2f bp − 成本 %.2f bp = 净 %+.2f bp（引擎：%s）" % (
+            c.get("base"), c.get("basis_bp") or 0.0, c.get("cost_bp") or 0.0,
+            c.get("net_bp") or 0.0, c.get("verdict") or "—")
+
+    if risk_state == "red":
+        head = {"tone": "stop",
+                "text": "先处理红色提醒，再谈开仓。",
+                "sub": "有 %d 条红色风控提醒 —— 点下面「风险」看具体是什么、怎么处置。" % red}
+    elif buy_state == "ready" and risk_state in ("none", "yellow"):
+        head = {"tone": "act",
+                "text": "现在可以开仓：%s。" % "、".join(
+                    "%s（净 %+.2f bp）" % (c["base"], c["net_bp"] or 0.0)
+                    for c in go_cands[:3]),
+                "sub": "记住是同时下两条腿：买现货 + 卖永续。平仓规则见「什么时候卖」。"}
+    elif buy_state == "caution":
+        head = {"tone": "caution",
+                "text": "有 %d 个标的够门槛，扣掉成本也还有空间 —— 但风险引擎的结论是「谨慎」。"
+                        % len(profitable),
+                "sub": " ｜ ".join(_cand_line(c) for c in profitable[:2]) +
+                       "。引擎拿不到基差，所以只要成本为正它就一律给「谨慎」；"
+                       "它的意思是缩小规模、放宽价位再挂，不是「放心做」。"}
+    elif buy_state == "off_window":
+        s = "现在不是能做的时段。"
+        if nxt is not None:
+            s = "现在不是能做的时段 —— 下一个是 %s（北京），约 %.1f 小时后。" % (
+                _bj_str(nxt), (nxt - now_utc).total_seconds() / 3600.0)
+        head = {"tone": "wait", "text": s,
+                "sub": "不在所内撮合窗口时挂单要按吃单方收费，赚不回手续费，所以策略只在那段时间做。"}
+    elif buy_state == "no_data":
+        head = {"tone": "unknown", "text": "取不到实时盘口，现在判断不了。",
+                "sub": "没有数据时既不能说能买、也不能说不能买 —— 不要凭感觉动手。"}
+    elif closest:
+        head = {"tone": "wait",
+                "text": "还不能开仓 —— %s 的基差 %.2f bp，离门槛还差 %.2f bp。" % (
+                    closest.get("base"), closest.get("basis_bp") or 0.0,
+                    closest.get("gap_bp") or 0.0),
+                "sub": "门槛 %.2f bp 是策略的费用线：够不着就赚不回手续费。" % (entry_bp or 0)}
+    else:
+        head = {"tone": "wait", "text": "现在没有值得做的标的。",
+                "sub": "名单空着属正常 —— 回测 65 天里够门槛的开仓只有 190 笔，平均一天不到 3 笔。"}
+
+    if fresh_min is not None and fresh_min >= ALERT_STALE_MIN and risk_state == "stale":
+        head["sub"] = (head.get("sub") or "") + (
+            " ⚠️ 持仓巡检数据已过期 %s，风险一栏仅供参考。"
+            % _humanize_min(fresh_min))
+
+    out = {
+        "available": True,
+        "generated_utc": now_utc.isoformat(),
+        "generated_bj": _bj_str(now_utc),
+        "headline": head,
+        "buy": buy,
+        "sell": sell,
+        "risk": risk,
+        "threshold": thr,
+        "window": win,
+        "next_window_bj": _bj_str(nxt),
+        "disclaimer": "以上是策略门槛的机械翻译，不是投资建议，也不构成收益承诺；"
+                      "本页面不下单。低风险 ≠ 无风险。",
+    }
+    _SIGNAL_CACHE["data"] = out
+    _SIGNAL_CACHE["ts"] = time.time()
+    return out
+
+
+def _trim_num(v):
+    """11.34 -> "11.34"；48.0 -> "48"（页面上不显示多余的小数点）。"""
+    if v is None:
+        return "—"
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return ("%d" % f) if abs(f - round(f)) < 1e-9 else ("%g" % f)
+
+
+def _humanize_min(mins):
+    if mins is None:
+        return "未知"
+    if mins < 60:
+        return "%.0f 分钟" % mins
+    if mins < 60 * 24:
+        return "%.1f 小时" % (mins / 60.0)
+    return "%.1f 天" % (mins / 1440.0)
 
 
 # ---------------------------------------------------------------- 路由
@@ -1235,6 +1735,7 @@ ROUTES = {
     "/api/data-status": build_data_status,
     "/api/assess": build_assess,
     "/api/opportunities": build_opportunities,
+    "/api/signals": build_signals,
     "/api/alerts": build_alerts,
     "/api/meta": lambda: {
         "pairs": [{"base": s[1:].replace("USDT", ""), "spot": s, "perp": p} for s, p in PAIRS],

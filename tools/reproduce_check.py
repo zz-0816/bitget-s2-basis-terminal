@@ -396,11 +396,18 @@ def check_features():
         ("project2/agent_team.py", "def adjudicate(", "辩论层·确定性裁决"),
         ("server/app.py", "/api/assess", "风险与理由接口"),
         ("server/app.py", "def build_alerts(", "持仓提醒接口（黄/红两档）"),
+        # 小白三问（默认视图）：让"新手能不能看懂该干嘛"这件事也被自检守住
+        ("server/app.py", "def build_signals(", "小白三问接口（买/卖/风险）"),
+        ("server/app.py", "def next_in_house_start(", "下一个所内窗口（口径取自日历模块）"),
+        ("server/app.py", "blocked_code", "不达标原因·稳定代号（供聚合）"),
+        ("web/app.js", "function renderSignals(", "小白三问渲染（页面不自己判断）"),
+        ("web/index.html", "view-signals", "小白三问视图容器"),
+        ("tools/ui_probe.js", "sig_badges_blank", "验收·三张卡结论确实渲染了"),
         ("common/alert_level.py", "def from_risk_level(", "提醒强度·统一映射（唯一实现）"),
         ("tools/position_watch.py", "intensity", "巡检告警带统一强度"),
         ("web/app.js", "function loadAlerts(", "右下角提醒弹窗"),
-        # 改版（docs/48）：3 视图 + 折叠 + 决策表重构 —— 被回退会立刻变红
-        ("web/index.html", 'id="viewtabs"', "视图切换（3 视图 + 全部兜底）"),
+        # 改版（docs/48）：多视图 + 折叠 + 决策表重构 —— 被回退会立刻变红
+        ("web/index.html", 'id="viewtabs"', "视图切换（4 视图 + 全部兜底）"),
         ("web/app.js", "function applyView(", "视图路由（URL hash 深链）"),
         ("web/app.js", "function renderAssess(", "决策表：结论行 + 展开理由卡"),
         ("web/styles.css", ".fold > summary", "折叠（原生 details，键盘可用）"),
@@ -486,6 +493,46 @@ def check_features():
             if not _up:
                 warn("前端布局验收：临时服务未起来，跳过")
             else:
+                # ---- /api/signals 契约检查（小白三问）----
+                # 这一层最容易出的错不是崩，而是**悄悄给出误导结论**：判据没齐、
+                # 徽标空着、或者"可以开仓"却没通过全部判据。所以这里查的是**不变量**，
+                # 不只是"接口有没有返回 200"。
+                try:
+                    import json as _json
+                    _sj = _json.loads(_url.urlopen(
+                        _base + "/api/signals", timeout=25).read().decode("utf-8"))
+                except Exception as exc:                        # noqa: BLE001
+                    _sj = None
+                    bad("小白三问接口不可用", repr(exc)[:90])
+                if isinstance(_sj, dict):
+                    _errs = []
+                    if not _sj.get("available"):
+                        _errs.append("available=false")
+                    for _k in ("headline", "buy", "sell", "risk", "threshold"):
+                        if not isinstance(_sj.get(_k), dict):
+                            _errs.append("缺 %s" % _k)
+                    _chk = ((_sj.get("buy") or {}).get("checks") or [])
+                    if len(_chk) != 4:
+                        _errs.append("判据 %d 条（应为 4）" % len(_chk))
+                    if any(not (c.get("label") and c.get("detail")) for c in _chk):
+                        _errs.append("有条判据缺 label/detail")
+                    _risk = _sj.get("risk") or {}
+                    if "tracked" not in _risk:
+                        _errs.append("risk 缺 tracked（历史批次会被当成当前风险）")
+                    _sell = _sj.get("sell") or {}
+                    if not (_sell.get("state") and _sell.get("holding_note")):
+                        _errs.append("sell 缺状态或持仓说明")
+                    if len(_sell.get("rules") or []) != 3:
+                        _errs.append("平仓规则 %d 条（应为 3）"
+                                     % len(_sell.get("rules") or []))
+                    _st = (_sj.get("buy") or {}).get("state")
+                    if _st in ("ready", "caution") and not all(c.get("ok") for c in _chk):
+                        _errs.append("state=%s 但判据未全通过（会误导新手）" % _st)
+                    if _errs:
+                        bad("小白三问接口契约不符", "；".join(_errs)[:150])
+                    else:
+                        ok("小白三问接口契约通过（4 条判据 / 买入 %s / 风险 %s）"
+                           % (_st, _risk.get("state")))
                 _r = subprocess.run(
                     [sys.executable, "tools/ui_check.py", "--url", _base + "/",
                      "--wait", "2500",
