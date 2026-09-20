@@ -58,6 +58,17 @@ SPEC = (
      "on=只在出现新条目时才调 LLM（**省成本的主要手段**）；off=每轮都调"),
     ("POSITION_WATCH_SECONDS", "60", "持仓期风控巡检间隔（秒）"),
     ("POSITION_WATCH_ENABLED", "on", "是否启用持仓期巡检"),
+
+    # ---- Bitget 私有接口（只读优先）----
+    # ⚠️ 三个密钥字段**只在 .env 或真实环境变量里**，绝不写进代码/文档/日志。
+    #    名字里含 SECRET / PASSPHRASE，`--check` 与 `--json` 会自动打码
+    #    （见 `is_secret_name()`）。
+    ("BITGET_API_KEY", "", "Bitget API Key（**只读权限即可**看仓位与资金）"),
+    ("BITGET_API_SECRET", "", "Bitget API Secret"),
+    ("BITGET_API_PASSPHRASE", "", "创建 key 时自己设的口令（passphrase）"),
+    ("BITGET_TRADE_ENABLED", "off",
+     "**下单能力总开关，默认 off**。即使上面三个 key 带交易权限，"
+     "开关为 off 时下单函数直接返回'未启用'，代码走不到发送那一步"),
 )
 
 _loaded = None
@@ -148,6 +159,18 @@ def mask(secret):
     return secret[:6] + "…" + secret[-4:] + "（%d 字符）" % len(secret)
 
 
+#: 名字里含这些词的字段一律打码。
+#: ⚠️ **不能只判断 "KEY"**：本模块原来就是 `if "KEY" in name`，
+#: 而 `BITGET_API_SECRET` / `BITGET_API_PASSPHRASE` **都不含 "KEY"** ——
+#: 一旦加了这类字段，`--check` 与 `--json` 会把密钥**明文打印出来**。
+#: 这是加私有接口配置时必须先堵的洞（本文件与 common/bitget_private.py 同一批改动）。
+_SECRET_HINTS = ("KEY", "SECRET", "PASSPHRASE", "TOKEN", "PASSWORD", "PRIVATE")
+
+
+def is_secret_name(name):
+    return any(h in (name or "").upper() for h in _SECRET_HINTS)
+
+
 def describe():
     """人可读的当前配置（key 打码）。**报告/日志里引用这一段即可说清用了哪个模型**。"""
     c = load()
@@ -160,7 +183,7 @@ def describe():
              ""]
     for name, _d, desc in SPEC:
         val = c[name]
-        shown = mask(val) if "KEY" in name else (val or "（空）")
+        shown = mask(val) if is_secret_name(name) else (val or "（空）")
         lines.append("  %-24s %-26s [%s]" % (name, shown, _source.get(name, "?")))
         lines.append("  %-24s %s" % ("", desc))
     lines.append("")
@@ -205,6 +228,18 @@ def write_example(path=None):
         "# ---- 持仓期风控巡检 ----",
         "POSITION_WATCH_ENABLED=on",
         "POSITION_WATCH_SECONDS=60",
+        "",
+        "# ---- Bitget 私有接口（看真实仓位与资金）----",
+        "# 在 Bitget 创建 API Key 时勾选权限；**建议先只勾「只读」**，确认无误再考虑交易权限。",
+        "# 这三行只留在本机 .env 里（已在 .gitignore），绝不要贴进聊天/报告/提交。",
+        "BITGET_API_KEY=",
+        "BITGET_API_SECRET=",
+        "BITGET_API_PASSPHRASE=",
+        "",
+        "# 下单能力总开关，默认 off。",
+        "# ⚠️ 即使上面的 key 带交易权限，off 时下单函数也直接返回「未启用」——",
+        "#    这是有意的：**让「不能下单」成为默认状态，而不是默认能力**。",
+        "BITGET_TRADE_ENABLED=off",
         "",
     ]
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -252,8 +287,11 @@ def main(argv=None):
     if args.json:
         import json
         c = dict(load())
-        if c.get("LLM_API_KEY"):
-            c["LLM_API_KEY"] = mask(c["LLM_API_KEY"])
+        # ⚠️ 打码要看**名字**，不能只看 LLM_API_KEY —— 否则新增的 SECRET / PASSPHRASE
+        #    会在这里明文输出（`--json` 的输出常被贴进报告/聊天）
+        for _k in list(c):
+            if is_secret_name(_k) and c.get(_k):
+                c[_k] = mask(c[_k])
         c["_source"] = _source
         c["_llm_ready"] = llm_ready()
         print(json.dumps(c, ensure_ascii=False, indent=2))

@@ -692,6 +692,43 @@ tr.opp-row { box-shadow: inset 2px 0 0 var(--accent); }
 .sig-link:hover { border-color: var(--accent); background: var(--panel-2); }
 .sig-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* ---------- 我的账户（只读） ---------- */
+.acc-off {
+  padding: 16px 18px; border-radius: 9px;
+  background: var(--panel-2); border-left: 3px solid var(--accent);
+}
+.acc-off-h { font-size: 15px; font-weight: 650; margin-bottom: 7px; }
+.acc-off-d { color: var(--muted); font-size: 13px; line-height: 1.75; margin-bottom: 5px; }
+.acc-off-c {
+  margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--line);
+  color: var(--muted); font-size: 12.5px; line-height: 2;
+}
+.acc-off-c code {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 4px; padding: 1px 5px; font-size: 12px;
+}
+
+/* 待处理：只成交一条腿 —— 整页最该被看见的东西 */
+.acc-naked {
+  margin-bottom: 14px; padding: 13px 16px; border-radius: 9px;
+  background: #241010; border: 1px solid #4a2323; border-left: 3px solid var(--neg);
+}
+.acc-naked-h { color: var(--neg); font-size: 14px; font-weight: 650; margin-bottom: 9px; }
+.acc-naked-r {
+  font-size: 13px; line-height: 1.7; color: var(--text);
+  padding: 7px 0; border-top: 1px dashed #4a2323;
+}
+.acc-naked-r:first-of-type { border-top: 0; }
+.acc-naked-r b { color: var(--neg); }
+
+.acc-badge {
+  display: inline-block; padding: 2px 9px; border-radius: 5px;
+  font-size: 12px; font-weight: 650;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+}
+.acc-badge.ok { color: var(--pos); border-color: #1d4741; background: #10241f; }
+.acc-badge.stop { color: var(--neg); border-color: #4a2323; background: #241010; }
+
 /* ---------- reduced-motion：所有非必要动效降级为瞬时 ---------- */
 @media (prefers-reduced-motion: reduce) {
   .view.on, .kpi-v.bump { animation: none; }

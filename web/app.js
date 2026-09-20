@@ -31,7 +31,7 @@ function reduced() {
 
 /* 数据缓存：先存进 DATA，再按「当前可见的视图」渲染。
    好处是切换视图零网络等待（10 行表格重绘 <1ms），也避免重绘隐藏 DOM。 */
-const DATA = { overview: null, sessions: null, status: null, assess: null, alerts: null, opps: null, signals: null };
+const DATA = { overview: null, sessions: null, status: null, assess: null, alerts: null, opps: null, signals: null, account: null };
 
 /* ---------------- 测算金额（用户可改） ----------------
    它**只影响测算**：冲击成本、盘口吃不吃得下、净空间。
@@ -116,8 +116,8 @@ function initSize() {
    默认视图是 `signals`（小白三问）—— 新手打开页面先要的是"我现在该干嘛"，
    而不是"10 个标的的基差中位数是多少"。专业视图仍然都在，只是排到后面。 */
 
-const VIEWS = ['signals', 'monitor', 'decision', 'evidence'];
-const VIEW_TITLE = { signals: '怎么做', monitor: '现在看盘', decision: '该不该做', evidence: '凭什么信' };
+const VIEWS = ['signals', 'monitor', 'decision', 'evidence', 'account'];
+const VIEW_TITLE = { signals: '怎么做', monitor: '现在看盘', decision: '该不该做', evidence: '凭什么信', account: '我的账户' };
 
 function currentView() {
   let h = (location.hash || '').replace(/^#/, '');
@@ -1345,6 +1345,136 @@ async function loadSignals() {
   } catch (e) { console.error(e); }
 }
 
+/* ================= 我的账户（只读） =================
+   设计见 `docs/54`。三条红线：
+     · 没配密钥 -> 如实说「无法判断」，**不拿手写 open.json 冒充真实持仓**；
+     · 这个页签**永不下单**（下单能力由 BITGET_TRADE_ENABLED 单独控制，默认 off）；
+     · 「有没有两条腿」由后端按**交易所真实余额/仓位**判定，页面只渲染、不自己判断。 */
+
+const ACC_STATE = {
+  both: { t: '两条腿都在', cls: 'ok' },
+  spot_only: { t: '只有现货腿 —— 裸露', cls: 'stop' },
+  perp_only: { t: '只有永续腿 —— 裸露', cls: 'stop' },
+  flat: { t: '空仓', cls: '' },
+};
+
+function renderAccount() {
+  const A = DATA.account;
+  if (!A) return;
+  setText('acc-hint', A.available ? '真实仓位与资金 · 只读' : '未接入');
+
+  // ---- 待处理：只成交一条腿（最危险的一类）----
+  const nakedEl = $('acc-naked');
+  if (nakedEl) {
+    const ns = A.naked || [];
+    if (ns.length) {
+      nakedEl.hidden = false;
+      nakedEl.innerHTML =
+        '<div class="acc-naked-h">⚠️ 有 ' + ns.length +
+        ' 个持仓只成交了一条腿 —— 这是裸露的方向敞口，必须立刻处理</div>' +
+        ns.map((r) =>
+          '<div class="acc-naked-r"><b>' + esc(r.base) + '</b>　' +
+          esc((ACC_STATE[r.state] || {}).t || r.state) + '<br>' +
+          mdInline((r.action || {}).why || '') + '</div>').join('');
+    } else {
+      nakedEl.hidden = true;
+    }
+  }
+
+  // ---- 账户总览 / 未接入原因 ----
+  const body = $('acc-body');
+  const wrap = $('acc-table-wrap');
+  if (body) {
+    if (!A.available) {
+      // ⚠️ 这里是**最重要的一条红线**：没有密钥就直说"看不到"，
+      //    绝不用手写文件里的数字冒充"你的真实持仓"（那是幻觉）。
+      body.innerHTML =
+        '<div class="acc-off">' +
+          '<div class="acc-off-h">没有接入账户 —— 现在看不到你的真实持仓</div>' +
+          '<div class="acc-off-d">' + mdInline(A.reason || '（未说明原因）') + '</div>' +
+          (A.note ? '<div class="acc-off-d">' + mdInline(A.note) + '</div>' : '') +
+          '<div class="acc-off-c">怎么接上（三步）：<br>' +
+            '① 在 Bitget 创建 API Key，<strong>先只勾只读</strong>；<br>' +
+            '② 把三个值写进本机 <code>.env</code>：' +
+            '<code>BITGET_API_KEY</code> / <code>BITGET_API_SECRET</code> / ' +
+            '<code>BITGET_API_PASSPHRASE</code>（已在 .gitignore，不会入库）；<br>' +
+            '③ 跑 <code>python common/bitget_private.py --probe</code> 逐条验证接口。' +
+          '</div>' +
+        '</div>';
+      if (wrap) wrap.hidden = true;
+    } else {
+      const n = (A.rows || []).length;
+      const hedged = (A.rows || []).filter((r) => r.state === 'both').length;
+      body.innerHTML =
+        '<div class="sig-pills">' +
+          '<span class="sig-pill">标的 ' + n + '</span>' +
+          '<span class="sig-pill' + (hedged ? '' : ' plain') + '">对冲完好 ' + hedged + '</span>' +
+          '<span class="sig-pill' + ((A.naked || []).length ? ' stop' : ' plain') + '">裸露 ' +
+            (A.naked || []).length + '</span>' +
+          (A.spot_usd_total ? '<span class="sig-pill plain">现货市值 $' +
+            Number(A.spot_usd_total).toLocaleString('en-US') + '</span>' : '') +
+          '<span class="sig-pill plain">下单能力：' +
+            (A.trade_enabled ? '<strong>已开启</strong>' : '关闭（默认）') + '</span>' +
+        '</div>' +
+        (A.note ? '<p class="sig-note sig-note-warn">' + mdInline(A.note) + '</p>' : '');
+      if (wrap) wrap.hidden = false;
+    }
+  }
+
+  // ---- 持仓表 ----
+  const rows = $('acc-rows');
+  if (rows && A.available) {
+    const rs = A.rows || [];
+    rows.innerHTML = rs.length ? rs.map((r) => {
+      const m = ACC_STATE[r.state] || {};
+      return '<tr' + (r.naked ? ' class="untradable"' : '') + '>' +
+        '<td><b>' + esc(r.base) + '</b></td>' +
+        '<td class="sep"><span class="acc-badge ' + esc(m.cls || '') + '">' +
+          esc(m.t || r.state) + '</span></td>' +
+        '<td>' + sigQty(r.spot_qty) + '</td>' +
+        '<td>' + sigQty(r.perp_size) + '</td>' +
+        '<td class="sep">' + (r.spot_usd === null ? '—' : '$' + sigMoney(r.spot_usd)) + '</td>' +
+        '<td class="sep">' + (r.perp_usd === null ? '—' : '$' + sigMoney(r.perp_usd)) + '</td>' +
+        '<td class="sep">' + esc(((r.action || {}).action) || '—') + '</td>' +
+        '</tr>';
+    }).join('') : '<tr><td colspan="7" class="hint">账户里没有任何配对标的的持仓。</td></tr>';
+  }
+
+  const why = $('acc-why');
+  if (why) {
+    why.innerHTML = mdInline(
+      '这个页签把**交易所里的真实余额与仓位**读出来，按配对拼成"这一对腿到底在不在"。' +
+      '它回答的是之前只能靠手写文件回答的问题：**我到底有没有建好仓。**' +
+      '\n\n为什么重要：' +
+      '① 靠手写持仓单（data/positions/open.json）时，你平掉仓位忘了删文件，' +
+      '页面就会拿旧数据当现状；' +
+      '② 现在由**交易所的状态**判定，页面上永远不会出现"你以为有、其实没有"的持仓；' +
+      '③ 只成交一条腿这件事，从"你要自己想起来"变成"页面直接标红"。' +
+      '\n\n安全边界（三条，都可以自己去代码里核）：' +
+      '① 这个页签**只读**，没有任何下单路径；' +
+      '② 下单能力由 BITGET_TRADE_ENABLED 单独控制，**默认 off** —— ' +
+      '密钥给了也不会变成"系统会下单"；' +
+      '③ 密钥只从本机 .env 读，config 的打码逻辑覆盖 KEY/SECRET/PASSPHRASE 三类字段，' +
+      '--check 与 --json 都不会明文打印。');
+  }
+}
+
+/* 数量：小数量保留 6 位，大数量不显示无意义小数 */
+function sigQty(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
+  const n = Number(v);
+  if (n === 0) return '0';
+  return Math.abs(n) >= 1000 ? sigMoney(n) : Number(n.toFixed(6)).toString();
+}
+
+/* 账户信息变化慢（60 秒缓存），单独一个慢节拍，不跟着主循环每 20 秒打一次 */
+async function loadAccount() {
+  try {
+    const r = await api('/api/account');
+    if (r) { DATA.account = r; renderAccount(); }
+  } catch (e) { console.error(e); }
+}
+
 /* ---------------- 渲染总入口 ----------------
    三个视图的表格都是 10 行量级，重绘成本可忽略（<1ms），所以**全部渲染**：
    这样隐藏视图里不会残留骨架屏，切过去一定是现成的内容。
@@ -1362,6 +1492,7 @@ function renderAll() {
   renderOpps();
   renderAssess();
   renderSignals();
+  renderAccount();
   syncFoldAll();
 }
 
@@ -1465,6 +1596,9 @@ async function boot() {
   loadAssess();
   // 右下角提醒同理：没有持仓单/告警文件时静默不显示
   loadAlerts();
+  // 账户信息变化慢（后端 60 秒缓存），单独一个慢节拍，不跟着主循环每 20 秒打
+  loadAccount();
+  setInterval(loadAccount, REFRESH_MS * 3);
 
   tickClock();
   setInterval(tickClock, 1000);            // 时钟每秒走字（纯前端）

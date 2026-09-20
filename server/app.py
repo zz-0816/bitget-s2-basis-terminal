@@ -1878,6 +1878,93 @@ def _humanize_min(mins):
     return "%.1f 天" % (mins / 1440.0)
 
 
+_ACCOUNT_CACHE = {"data": None, "ts": 0.0}
+_ACCOUNT_CACHE_SEC = 60
+
+
+def build_account():
+    """👤 我的账户 —— **真实**仓位与资金（只读）。
+
+    设计见 `docs/54`。三条诚实红线：
+
+      ① 没配密钥、或接口路径还没用真 key 验证过 -> 返回 `available: false`
+         并**说清原因**；**绝不**用手写的 `open.json` 冒充"真实持仓"；
+      ② 这个接口**只读**，永不下单；下单能力由 `BITGET_TRADE_ENABLED` 单独控制，
+         默认 off（`place_order()` 在 off 时直接返回"未启用"）；
+      ③ "有没有两条腿"由**交易所的真实余额/仓位**判定（
+         `common/bitget_private.pair_legs`），不信任页面状态 —— 这正是用户提的做法。
+
+    联网失败一律降级为 `available: false` + 原因，**不抛异常拖死页面**。
+    """
+    now = time.time()
+    if (_ACCOUNT_CACHE["data"] is not None
+            and (now - _ACCOUNT_CACHE["ts"]) < _ACCOUNT_CACHE_SEC):
+        return _ACCOUNT_CACHE["data"]
+
+    out = {"available": False, "reason": None, "verified": False,
+           "trade_enabled": False, "rows": [], "naked": [], "actions": [],
+           "spot_usd_total": None, "note": None}
+    try:
+        import common.bitget_private as bp
+    except Exception as exc:                                   # noqa: BLE001
+        out["reason"] = "私有接口模块不可用：%s: %s" % (type(exc).__name__, exc)
+        _ACCOUNT_CACHE.update({"data": out, "ts": time.time()})
+        return out
+
+    out["verified"] = bool(getattr(bp, "VERIFIED_WITH_REAL_KEY", False))
+    out["trade_enabled"] = bool(bp.trade_enabled())
+    out["proxy"] = getattr(bp, "PROXY_URL", None)
+
+    ok, missing = bp.available()
+    if not ok:
+        out["reason"] = ("未配置 Bitget 密钥（缺 %s）—— 页面无法显示真实持仓。"
+                         "配置方法见 docs/54；密钥只放本机 .env，不会入库。"
+                         % "、".join(missing))
+        out["note"] = ("没有密钥时页面**不会**猜你的持仓："
+                       "「什么时候卖」那张卡会如实显示'无法判断'。")
+        _ACCOUNT_CACHE.update({"data": out, "ts": time.time()})
+        return out
+
+    spot, e1 = bp.read_spot_assets()
+    pos, e2 = bp.read_positions()
+    if e1 or e2:
+        out["reason"] = "读取账户失败：%s" % "；".join(x for x in (e1, e2) if x)
+        _ACCOUNT_CACHE.update({"data": out, "ts": time.time()})
+        return out
+
+    rows = bp.pair_legs(PAIRS, spot, pos)
+
+    # 用页面已有的实时中间价把数量折成 USD（拿不到价就留 None —— 不估）
+    live, _ts = live_cached()
+    def _mid(spot_sym, perp_sym):
+        a = (live.get(spot_sym) or {}).get("mid")
+        b = (live.get(perp_sym) or {}).get("mid")
+        return a or b
+    for r in rows:
+        m = _mid(r["spot_symbol"], r["perp_symbol"])
+        r["price"] = m
+        r["spot_usd"] = round(r["spot_qty"] * m, 2) if (m and r["spot_qty"]) else None
+        r["perp_usd"] = round(abs(r["perp_size"]) * m, 2) if (m and r["perp_size"]) else None
+        r["action"] = bp.recommend_action(r)
+
+    out["rows"] = rows
+    out["naked"] = [r for r in rows if r.get("naked")]
+    out["actions"] = [{"base": r["base"], **(r["action"] or {})}
+                      for r in rows if r.get("action")
+                      and r["action"].get("action") != "hold"]
+    out["spot_usd_total"] = round(
+        sum(r["spot_usd"] for r in rows if r.get("spot_usd")), 2) or None
+    out["available"] = True
+    if not out["verified"]:
+        out["note"] = ("⚠️ 这些接口路径**还没用真 key 验证过**（Bitget 文档站是 JS 渲染的，"
+                       "本机抓不到正文）。跑 `python common/bitget_private.py --probe` "
+                       "会逐条验证；若报 404/参数错，按提示改 "
+                       "`common/bitget_private.py` 的 ENDPOINTS 一处即可。"
+                       "在上面那个数字变成 verified 之前，请以交易所 App 为准。")
+    _ACCOUNT_CACHE.update({"data": out, "ts": time.time()})
+    return out
+
+
 # ---------------------------------------------------------------- 路由
 
 def _health():
@@ -1939,6 +2026,7 @@ ROUTES = {
     "/api/opportunities": build_opportunities,
     "/api/signals": build_signals,
     "/api/alerts": build_alerts,
+    "/api/account": build_account,
     "/api/meta": lambda: {
         "pairs": [{"base": s[1:].replace("USDT", ""), "spot": s, "perp": p} for s, p in PAIRS],
         "session_labels": SESSION_LABEL,

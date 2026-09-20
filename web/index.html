@@ -34,6 +34,8 @@
               aria-selected="false" tabindex="-1" aria-controls="view-decision">③ 该不该做</button>
       <button role="tab" type="button" id="tab-evidence" data-view="evidence"
               aria-selected="false" tabindex="-1" aria-controls="view-evidence">④ 凭什么信</button>
+      <button role="tab" type="button" id="tab-account" data-view="account"
+              aria-selected="false" tabindex="-1" aria-controls="view-account">⑤ 我的账户</button>
       <span class="tab-spacer"></span>
       <button class="alert-pill" id="alert-pill" type="button" hidden
               title="持仓期风控提醒 · 点击跳到「怎么做」">—</button>
@@ -382,6 +384,50 @@
       </div>
     </section>
   </div>
+</div>
+
+<!-- ================= 视图 ⑤ 我的账户 =================
+     真实仓位与资金（只读）。设计见 docs/54。
+     三条诚实红线：没配密钥就说"无法判断"、不拿手写 open.json 冒充真实持仓、
+     这个页签**永不下单**（下单能力由 BITGET_TRADE_ENABLED 单独控制，默认 off）。 -->
+<div class="view" id="view-account" data-view="account" role="tabpanel"
+     aria-labelledby="tab-account" hidden>
+
+  <section class="panel acc">
+    <h2>我的账户 <span class="hint" id="acc-hint">—</span></h2>
+
+    <!-- 待处理：只成交一条腿的持仓（最危险的一类） -->
+    <div id="acc-naked" class="acc-naked" hidden></div>
+
+    <div id="acc-body">
+      <div class="stat-row"><span class="stat-k">账户状态</span>
+        <span class="stat-v"><span class="sk sk-txt"></span></span></div>
+    </div>
+
+    <div class="table-wrap" id="acc-table-wrap" hidden>
+      <table id="acc-table">
+        <thead>
+          <tr>
+            <th>标的</th>
+            <th class="sep" title="由交易所的真实余额与仓位判定：两条腿都在 / 只有一条腿（危险）/ 空仓">形态</th>
+            <th>现货数量</th>
+            <th>永续仓位</th>
+            <th class="sep">现货市值 (USD)</th>
+            <th class="sep">永续名义 (USD)</th>
+            <th class="sep">建议</th>
+          </tr>
+        </thead>
+        <tbody id="acc-rows">
+          <tr><td colspan="7"><span class="sk sk-row"></span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <details class="fold" data-fold="acc-why">
+      <summary>说明：这个页签是什么、密钥怎么配、安全边界在哪</summary>
+      <div class="fold-body" id="acc-why">—</div>
+    </details>
+  </section>
 </div>
 
 </main>

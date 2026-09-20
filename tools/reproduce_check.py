@@ -164,6 +164,7 @@ TOOLS = [
     "common/prompts.py", "common/rag_memory.py",
     "tools/news_sources.py", "tools/sentiment_sampler.py",
     "tools/position_watch.py",
+    "common/bitget_private.py",
 ]
 
 
@@ -434,6 +435,14 @@ def check_features():
         ("server/app.py", "recommended_usd", "建议规模·进接口（opportunities/signals）"),
         ("web/app.js", "sig-cand-rec", "建议规模·候选行右侧突出显示"),
         ("server/app.py", "PROXY_URL", "实时行情·代理优先直连兜底（防 SNI 阻断）"),
+        # 我的账户（只读）：真实仓位与资金。安全红线都要能被自检守住
+        ("common/bitget_private.py", "def sign(", "私有接口·签名（纯函数，可单测）"),
+        ("common/bitget_private.py", "def pair_legs(", "两腿配对·由交易所真实状态判定"),
+        ("common/bitget_private.py", "def place_order(", "下单·默认拒发（未启用即返回）"),
+        ("common/config.py", "def is_secret_name(",
+         "密钥打码·覆盖 KEY/SECRET/PASSPHRASE（否则 --check 会明文打印）"),
+        ("server/app.py", "/api/account", "我的账户接口（只读，无 key 时如实报不可用）"),
+        ("web/app.js", "function renderAccount(", "我的账户渲染（页面不自己判断持仓）"),
         ("server/app.py", "def build_opportunities(", "机会名单接口（按开仓门槛筛选）"),
         ("server/app.py", "def live_now(", "实时行情·同步预热（冷启动不误报『全无行情』）"),
         ("web/app.js", "function renderOpps(", "首页机会名单渲染"),
@@ -476,8 +485,20 @@ def check_features():
         bad("后端纯函数自检无法运行", repr(exc))
 
     try:
-        r = subprocess.run([sys.executable, "tools/window_watch.py", "--selftest"],
-                           cwd=BASE, capture_output=True, text=True, timeout=60)
+        _r = _run(["common/bitget_private.py", "--selftest"], 60)
+        if _r.returncode == 0:
+            _n = sum(1 for x in (_r.stdout or "").splitlines()
+                     if x.strip().startswith("[OK "))
+            ok("私有接口自检通过（%d 项：签名确定性 / 两腿配对四形态 / 无 key 不装可用 / "
+               "下单默认拒发）" % _n)
+        else:
+            bad("bitget_private --selftest 退出码 %d" % _r.returncode,
+                (_r.stdout or "").strip()[-160:])
+    except Exception as exc:  # noqa: BLE001
+        bad("私有接口自检无法运行", repr(exc))
+
+    try:
+        r = _run(["tools/window_watch.py", "--selftest"], 60)
         if r.returncode == 0:
             ok("停摆自检实际运行通过（6 个场景）")
         else:
@@ -654,8 +675,7 @@ def check_features():
             (["common/prompts.py", "--selftest"], "prompt 契约能抓到被删条款"),
     ):
         try:
-            r = subprocess.run([sys.executable] + args, cwd=BASE,
-                               capture_output=True, text=True, timeout=60)
+            r = _run(args, 60)
             if r.returncode == 0:
                 ok(desc)
             else:
