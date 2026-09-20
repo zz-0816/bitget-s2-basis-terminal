@@ -215,6 +215,17 @@ def main(argv=None):
               "一句话结论已渲染（%s）" % (p.get("sig_headline") or "")[:46])
             c(all(s for s in (p.get("sig_states") or [])),
               "三张卡都带了状态（%s）" % ", ".join(p.get("sig_states") or []))
+            # ---- 测算金额输入（用户可填自己的金额）----
+            c(p.get("size_input_present"),
+              "测算金额输入框存在（当前值 %s）" % p.get("size_input_value"))
+            c(bool(p.get("size_note")),
+              "金额提示已渲染（%s）" % (p.get("size_note") or "")[:56],
+              "提示为空 = 输入框的值没被后端确认，用户不知道现在按多少算"
+              if not p.get("size_note") else "")
+            c((p.get("size_scope_len") or 0) > 40,
+              "「金额影响什么」已说明（%d 字）" % (p.get("size_scope_len") or 0),
+              "缺这段会让用户以为填大一点就能过门槛"
+              if (p.get("size_scope_len") or 0) <= 40 else "")
         else:
             print("  [ ~ ] 没有小白三问卡片（若默认视图已改，请同步本检查）")
 

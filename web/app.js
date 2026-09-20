@@ -33,6 +33,85 @@ function reduced() {
    好处是切换视图零网络等待（10 行表格重绘 <1ms），也避免重绘隐藏 DOM。 */
 const DATA = { overview: null, sessions: null, status: null, assess: null, alerts: null, opps: null, signals: null };
 
+/* ---------------- 测算金额（用户可改） ----------------
+   它**只影响测算**：冲击成本、盘口吃不吃得下、净空间。
+   **不改变任何阈值** —— 门槛 11.34 bp 是策略参数，与金额无关。
+   ⚠️ 三个端点都要带上它，否则「怎么做」按用户金额算、而「机会名单 / 该不该做」
+      还按默认 $5,000 算 —— 同一个页面上两套数，是最糟的那种不一致。 */
+const SIZE_PATHS = ['/api/signals', '/api/opportunities', '/api/assess'];
+const SIZE_KEY = 'basis.size';
+const SIZE_DEFAULT = 5000;
+const SIZE_MIN = 10;
+const SIZE_MAX = 1000000;
+
+/* 当前输入框里的**原始值**（可能是用户敲到一半的 "5"）。
+   刻意不在这里做合法性判断 —— **合法性由后端定**，后端会回落默认并给出
+   `size_note` 说明原因，页面照实显示。客户端只管"存不存"和"发不发"。 */
+let SIZE_RAW = null;
+let SIZE_TIMER = null;
+
+function getStoredSize() {
+  let v = NaN;
+  try { v = parseFloat(localStorage.getItem(SIZE_KEY)); } catch (e) { /* 隐私模式等 */ }
+  if (!isFinite(v) || v < SIZE_MIN || v > SIZE_MAX) return SIZE_DEFAULT;
+  return v;
+}
+
+function currentSizeRaw() {
+  return (SIZE_RAW === null) ? String(getStoredSize()) : SIZE_RAW;
+}
+
+function withSize(p) {
+  return SIZE_PATHS.indexOf(p) >= 0
+    ? p + '?size_usd=' + encodeURIComponent(currentSizeRaw()) : p;
+}
+
+/* 改金额要重算双腿模型（实测冷态 ~5 秒：10 个标的 × 两腿）。这期间**必须给反馈** ——
+   否则用户会以为输入框坏了（页面看着像卡住）。 */
+function setSizeBusy(on, raw) {
+  const note = $('sig-size-note');
+  const box = $('sig-size');
+  if (box) box.classList.toggle('busy', !!on);
+  if (on && note) {
+    const v = parseFloat(raw);
+    note.textContent = '正在按 $' + (isFinite(v) ? v.toLocaleString('en-US') : raw) +
+                       ' 重新测算…';
+    note.className = 'sig-size-note busy';
+    note.hidden = false;
+  }
+}
+
+/* 金额输入：防抖 500ms 重取三个端点。
+   ⚠️ 三个端点必须**一起**重取 —— 只重取一个会让「怎么做」与「机会名单」
+      显示两套金额下的数，那是最糟的不一致。 */
+function initSize() {
+  const si = $('size-input');
+  if (!si) return;
+  si.value = String(getStoredSize());          // 用持久化的值回填（HTML 里写的是默认值）
+  si.addEventListener('input', () => {
+    SIZE_RAW = si.value;
+    if (SIZE_TIMER) clearTimeout(SIZE_TIMER);
+    SIZE_TIMER = setTimeout(() => {
+      SIZE_TIMER = null;
+      const v = parseFloat(si.value);
+      // 只在**合法**时持久化；非法值不落盘，但仍然发给后端让它解释为什么没生效
+      try {
+        if (isFinite(v) && v >= SIZE_MIN && v <= SIZE_MAX) {
+          localStorage.setItem(SIZE_KEY, String(v));
+        }
+      } catch (e) { /* 忽略：按默认走 */ }
+      setSizeBusy(true, si.value);
+      loadSignals(); loadOpps(); loadAssess();
+      // 兜底：万一 /api/signals 拿不到结果，也不能让"正在测算…"永远转下去
+      setTimeout(() => setSizeBusy(false), 15000);
+    }, 500);
+  });
+  // 回车立刻生效，不用等防抖
+  si.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); si.blur(); si.dispatchEvent(new Event('input')); }
+  });
+}
+
 /* ---------------- 视图路由 ----------------
    默认视图是 `signals`（小白三问）—— 新手打开页面先要的是"我现在该干嘛"，
    而不是"10 个标的的基差中位数是多少"。专业视图仍然都在，只是排到后面。 */
@@ -714,7 +793,7 @@ function initAssessTable() {
 
 async function loadAssess() {
   try {
-    DATA.assess = await api('/api/assess');
+    DATA.assess = await api(withSize('/api/assess'));
   } catch (e) {
     DATA.assess = { available: false, error: '风险引擎暂不可用', items: [] };
   }
@@ -1009,7 +1088,7 @@ function initOppsTable() {
 
 async function loadOpps() {
   try {
-    DATA.opps = await api('/api/opportunities');
+    DATA.opps = await api(withSize('/api/opportunities'));
   } catch (e) {
     DATA.opps = { available: false, error: '接口不可用', items: [] };
     console.error(e);
@@ -1197,22 +1276,56 @@ function renderSignals() {
   }
 
   const th = S.threshold || {};
-  setText('sig-criteria',
-    '门槛来自策略参数模块（' + (th.source || '—') + '）：开仓 ≥ ' + fmtBp(th.entry_thr_bp) +
-    ' bp ｜ 平仓 ≤ ' + fmtBp(th.exit_thr_bp) + ' bp ｜ 最长持有 ' + (th.max_hold_hours || '—') +
-    ' 小时。方向：' + (th.direction || '—') + '。' +
-    '「现在能买吗」的四道判据由后端按固定顺序判定（窗口 → 两条腿的盘口 → 基差门槛 → ' +
-    '扣掉执行成本后的净空间），页面只做渲染、不自己判断。' +
-    '「什么时候卖」的三条规则取自同一份参数。' +
-    '「风险」来自持仓期巡检（只有黄/红两档，没有绿）。');
+  // ⚠️ 这段里有 `**粗体**`（size_scope_full 带标记），必须走 mdInline；
+  //    用 setText(textContent) 会在折叠展开后显示字面星号 —— 自检的
+  //    "全部展开后仍无字面 `**`" 就是抓这个的（本轮被抓到一次：8 处）。
+  const critEl = $('sig-criteria');
+  if (critEl) {
+    critEl.innerHTML = mdInline(
+      '门槛来自策略参数模块（' + (th.source || '—') + '）：开仓 ≥ ' + fmtBp(th.entry_thr_bp) +
+      ' bp ｜ 平仓 ≤ ' + fmtBp(th.exit_thr_bp) + ' bp ｜ 最长持有 ' + (th.max_hold_hours || '—') +
+      ' 小时。方向：' + (th.direction || '—') + '。' +
+      '「现在能买吗」的四道判据由后端按固定顺序判定（窗口 → 两条腿的盘口 → 基差门槛 → ' +
+      '扣掉执行成本后的净空间），页面只做渲染、不自己判断。' +
+      '「什么时候卖」的三条规则取自同一份参数。' +
+      '「风险」来自持仓期巡检（只有黄/红两档，没有绿）。' +
+      '测算金额的完整口径：' + (S.size_scope_full || '（本次没取到）'));
+  }
   setText('sig-disclaimer', S.disclaimer || '');
+
+  // ---- 测算金额的提示 ----
+  // 有效时显示「按 $X 测算」；无效时显示后端给的原因（**照实显示，不吞掉**）。
+  // 刻意**不回写输入框** —— 用户正在输入时被改写会很困惑；
+  // 输入框的值在 boot 时从 localStorage 读一次。
+  const sn = $('sig-size-note');
+  const sbox = $('sig-size');
+  if (sbox) sbox.classList.remove('busy');        // 数据到了 -> 清掉"正在测算"
+  if (sn) {
+    if (S.size_note) {
+      sn.textContent = '⚠️ ' + S.size_note;
+      sn.className = 'sig-size-note warn';
+      sn.hidden = false;
+    } else if (S.size_usd !== undefined && S.size_usd !== null) {
+      sn.textContent = '按 $' + Number(S.size_usd).toLocaleString('en-US') + ' 测算';
+      sn.className = 'sig-size-note';
+      sn.hidden = false;
+    } else {
+      sn.hidden = true;
+    }
+  }
+  // 「这个金额影响什么、不影响什么」—— 由后端给（模型的边界写在一处，前端不自行编）
+  // ⚠️ 这段含 `**粗体**` 标记，必须走 mdInline 渲染；用 textContent 会把星号原样显示
+  //    （自检的"无字面 `**`"就是专门抓这个的，第一版正是被它拦下的）。
+  if (sbox && S.size_scope) sbox.title = S.size_scope.replace(/\*\*/g, '');
+  const scopeEl = $('sig-size-scope');
+  if (scopeEl && S.size_scope) scopeEl.innerHTML = mdInline(S.size_scope);
 }
 
 /* 小白三问随主循环刷新：它的判据依赖实时基差与巡检结果，必须跟着走。
    接口不可用时**静默**（可选功能不该拖死整页），骨架屏由 sweepSkeletons 兜底。 */
 async function loadSignals() {
   try {
-    const r = await api('/api/signals');
+    const r = await api(withSize('/api/signals'));
     if (r && r.available) { DATA.signals = r; renderSignals(); }
   } catch (e) { console.error(e); }
 }
@@ -1308,6 +1421,7 @@ async function boot() {
   initFolds();
   initAssessTable();
   initOppsTable();
+  initSize();
   applyView(currentView(), { animate: false, scroll: false });   // 先定视图，再取数
 
   const pill = $('alert-pill');

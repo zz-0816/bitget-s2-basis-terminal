@@ -71,8 +71,22 @@
       <div class="sig-headline" id="sig-headline"><span class="sk sk-txt"></span></div>
       <div class="sig-sub" id="sig-sub">—</div>
     </div>
-    <div class="sig-stamp" id="sig-stamp">—</div>
+    <div class="sig-head-side">
+      <!-- 测算金额：默认 $5,000，用户可改。它**只影响测算**（冲击成本/吃不吃得下/净空间），
+           **不改变任何阈值** —— 门槛 11.34 bp 是策略参数，与金额无关。 -->
+      <div class="sig-size" id="sig-size">
+        <label for="size-input">按 $</label>
+        <input id="size-input" type="number" inputmode="decimal"
+               min="10" max="1000000" step="500" value="5000"
+               aria-label="测算金额（美元）" />
+        <span class="sig-size-u">测算</span>
+      </div>
+      <div class="sig-size-note" id="sig-size-note" hidden></div>
+      <div class="sig-stamp" id="sig-stamp">—</div>
+    </div>
   </section>
+  <!-- 金额影响什么、不影响什么：文案由后端 /api/signals 的 size_scope 给（口径写在一处） -->
+  <p class="hint sig-scope" id="sig-size-scope">—</p>
 
   <div class="sig-grid">
 

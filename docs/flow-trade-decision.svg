@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 900" width="1180" height="900"
+     font-family="-apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b93a7"/>
+    </marker>
+    <marker id="ar-no" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#ef5350"/>
+    </marker>
+    <marker id="ar-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#26a69a"/>
+    </marker>
+  </defs>
+
+  <rect width="1180" height="900" fill="#0b0e14"/>
+
+  <text x="40" y="46" fill="#e6e9ef" font-size="23" font-weight="700">怎么用这套东西做一笔套利 · 操作流程</text>
+  <text x="40" y="72" fill="#8b93a7" font-size="13.5">
+    不是「买股票等它涨」。是同时下两条腿 —— 买现货 + 卖永续 —— 只赌两者的价差收窄。四道门全部通过才动手。
+  </text>
+
+  <!-- ============ 左列：四道判据 ============ -->
+
+  <!-- 步骤 0 -->
+  <rect x="40" y="98" width="470" height="62" rx="9" fill="#131722" stroke="#242b3d"/>
+  <circle cx="70" cy="129" r="14" fill="#1a1f2e" stroke="#242b3d"/>
+  <text x="70" y="134" fill="#8b93a7" font-size="14" font-weight="700" text-anchor="middle">0</text>
+  <text x="96" y="124" fill="#e6e9ef" font-size="14.5" font-weight="650">打开页面，先填「你打算做多少钱」</text>
+  <text x="96" y="145" fill="#8b93a7" font-size="12.5">这个金额决定「盘口吃不吃得下」，不改变任何门槛。</text>
+
+  <line x1="275" y1="160" x2="275" y2="186" stroke="#8b93a7" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- 判据 1 -->
+  <rect x="40" y="188" width="470" height="66" rx="9" fill="#131722" stroke="#4c8dff" stroke-width="1.6"/>
+  <circle cx="70" cy="221" r="14" fill="#101a2e" stroke="#4c8dff"/>
+  <text x="70" y="226" fill="#4c8dff" font-size="14" font-weight="700" text-anchor="middle">1</text>
+  <text x="96" y="215" fill="#e6e9ef" font-size="14.5" font-weight="650">现在是「所内撮合窗口」吗？</text>
+  <text x="96" y="237" fill="#8b93a7" font-size="12.5">北京 周六 08:00 → 周一 08:00。只有这时挂单按挂单方计费。</text>
+
+  <!-- 否分支 1 -->
+  <line x1="510" y1="221" x2="600" y2="221" stroke="#ef5350" stroke-width="1.6" marker-end="url(#ar-no)"/>
+  <text x="530" y="213" fill="#ef5350" font-size="12" font-weight="650">否</text>
+  <rect x="604" y="188" width="536" height="66" rx="9" fill="#181316" stroke="#4a2323"/>
+  <text x="622" y="215" fill="#ef5350" font-size="14" font-weight="650">等。什么都别做。</text>
+  <text x="622" y="237" fill="#8b93a7" font-size="12.5">页面会告诉你下一个窗口的北京时间与倒计时。这个时段挂单要按吃单方收费，赚不回手续费。</text>
+
+  <line x1="275" y1="254" x2="275" y2="280" stroke="#26a69a" stroke-width="1.6" marker-end="url(#ar-ok)"/>
+  <text x="286" y="272" fill="#26a69a" font-size="12" font-weight="650">是</text>
+
+  <!-- 判据 2 -->
+  <rect x="40" y="282" width="470" height="66" rx="9" fill="#131722" stroke="#4c8dff" stroke-width="1.6"/>
+  <circle cx="70" cy="315" r="14" fill="#101a2e" stroke="#4c8dff"/>
+  <text x="70" y="320" fill="#4c8dff" font-size="14" font-weight="700" text-anchor="middle">2</text>
+  <text x="96" y="309" fill="#e6e9ef" font-size="14.5" font-weight="650">有标的够门槛吗？（基差 ≥ 11.34 bp）</text>
+  <text x="96" y="331" fill="#8b93a7" font-size="12.5">基差 = 永续价比现货价贵多少。11.34 bp 是费用线，够不着就赚不回手续费。</text>
+
+  <line x1="510" y1="315" x2="600" y2="315" stroke="#ef5350" stroke-width="1.6" marker-end="url(#ar-no)"/>
+  <text x="530" y="307" fill="#ef5350" font-size="12" font-weight="650">否</text>
+  <rect x="604" y="282" width="536" height="66" rx="9" fill="#181316" stroke="#4a2323"/>
+  <text x="622" y="309" fill="#ef5350" font-size="14" font-weight="650">等。名单空着是常态。</text>
+  <text x="622" y="331" fill="#8b93a7" font-size="12.5">页面给出「最接近的那一个还差多少 bp」。回测 65 天里够门槛的开仓只有 190 笔，平均一天不到 3 笔。</text>
+
+  <line x1="275" y1="348" x2="275" y2="374" stroke="#26a69a" stroke-width="1.6" marker-end="url(#ar-ok)"/>
+  <text x="286" y="366" fill="#26a69a" font-size="12" font-weight="650">是</text>
+
+  <!-- 判据 3 -->
+  <rect x="40" y="376" width="470" height="66" rx="9" fill="#131722" stroke="#4c8dff" stroke-width="1.6"/>
+  <circle cx="70" cy="409" r="14" fill="#101a2e" stroke="#4c8dff"/>
+  <text x="70" y="414" fill="#4c8dff" font-size="14" font-weight="700" text-anchor="middle">3</text>
+  <text x="96" y="403" fill="#e6e9ef" font-size="14.5" font-weight="650">扣掉执行成本后还剩正的吗？</text>
+  <text x="96" y="425" fill="#8b93a7" font-size="12.5">净空间 = 基差 − 执行成本。这一条新手最容易漏 —— 基差大 ≠ 能赚钱。</text>
+
+  <line x1="510" y1="409" x2="600" y2="409" stroke="#ef5350" stroke-width="1.6" marker-end="url(#ar-no)"/>
+  <text x="530" y="401" fill="#ef5350" font-size="12" font-weight="650">否</text>
+  <rect x="604" y="376" width="536" height="66" rx="9" fill="#181316" stroke="#4a2323"/>
+  <text x="622" y="403" fill="#ef5350" font-size="14" font-weight="650">不做。</text>
+  <text x="622" y="425" fill="#8b93a7" font-size="12.5">成本吃掉全部空间时，做了就是替交易所打工。</text>
+
+  <line x1="275" y1="442" x2="275" y2="468" stroke="#26a69a" stroke-width="1.6" marker-end="url(#ar-ok)"/>
+  <text x="286" y="460" fill="#26a69a" font-size="12" font-weight="650">是</text>
+
+  <!-- 判据 4 -->
+  <rect x="40" y="470" width="470" height="66" rx="9" fill="#131722" stroke="#ffb74d" stroke-width="1.6"/>
+  <circle cx="70" cy="503" r="14" fill="#241d10" stroke="#ffb74d"/>
+  <text x="70" y="508" fill="#ffb74d" font-size="14" font-weight="700" text-anchor="middle">4</text>
+  <text x="96" y="497" fill="#e6e9ef" font-size="14.5" font-weight="650">盘口吃得下你填的金额吗？</text>
+  <text x="96" y="519" fill="#8b93a7" font-size="12.5">「≤5bp 可吃」小于你填的金额时，只能按吃得下的那个量做。</text>
+
+  <line x1="510" y1="503" x2="600" y2="503" stroke="#ffb74d" stroke-width="1.6" marker-end="url(#ar)"/>
+  <text x="516" y="495" fill="#ffb74d" font-size="12" font-weight="650">吃不下</text>
+  <rect x="604" y="470" width="536" height="66" rx="9" fill="#1d1810" stroke="#4a3c22"/>
+  <text x="622" y="497" fill="#ffb74d" font-size="14" font-weight="650">按吃得下的量做，不要按你想做的量。</text>
+  <text x="622" y="519" fill="#8b93a7" font-size="12.5">硬做大单会一路吃穿 5 档，滑点把净空间吃光。</text>
+
+  <line x1="275" y1="536" x2="275" y2="564" stroke="#8b93a7" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- 下单 -->
+  <rect x="40" y="566" width="470" height="86" rx="9" fill="#10241f" stroke="#1d4741" stroke-width="1.8"/>
+  <text x="60" y="594" fill="#26a69a" font-size="15" font-weight="700">下单：同时下两条腿</text>
+  <text x="60" y="618" fill="#e6e9ef" font-size="13">① 买现货（做多，挂单）　② 卖永续（做空，即时对冲）</text>
+  <text x="60" y="640" fill="#ffb74d" font-size="12.5">必须一起成交。只成交一条腿 = 裸露的方向敞口，立刻按告警处置。</text>
+
+  <line x1="275" y1="652" x2="275" y2="680" stroke="#8b93a7" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- 平仓 -->
+  <rect x="40" y="682" width="470" height="96" rx="9" fill="#131722" stroke="#242b3d"/>
+  <text x="60" y="708" fill="#e6e9ef" font-size="15" font-weight="700">平仓：反向同时平两条腿</text>
+  <text x="60" y="731" fill="#8b93a7" font-size="13">卖出你持有的现货　＋　买回永续</text>
+  <text x="60" y="754" fill="#8b93a7" font-size="12.5">赚到的就是「开仓基差 − 平仓基差」。平仓时机见右侧三条规则。</text>
+
+  <!-- ============ 右列：三条平仓规则 ============ -->
+  <rect x="604" y="566" width="536" height="212" rx="10" fill="#131722" stroke="#242b3d"/>
+  <text x="626" y="596" fill="#e6e9ef" font-size="15.5" font-weight="700">什么时候卖（满足任意一条就平）</text>
+
+  <circle cx="638" cy="626" r="12" fill="#1a1f2e" stroke="#242b3d"/>
+  <text x="638" y="631" fill="#8b93a7" font-size="12.5" font-weight="700" text-anchor="middle">1</text>
+  <text x="660" y="624" fill="#e6e9ef" font-size="13.5" font-weight="600">基差回落到 ≤ 0 bp</text>
+  <text x="660" y="643" fill="#8b93a7" font-size="12">空间收完了。再拿着不是在赚价差，是在承担方向风险。</text>
+
+  <circle cx="638" cy="676" r="12" fill="#1a1f2e" stroke="#242b3d"/>
+  <text x="638" y="681" fill="#8b93a7" font-size="12.5" font-weight="700" text-anchor="middle">2</text>
+  <text x="660" y="674" fill="#e6e9ef" font-size="13.5" font-weight="600">持有满 48 小时</text>
+  <text x="660" y="693" fill="#8b93a7" font-size="12">到点强制平仓，不再等。回测里定的 —— 避免「再等等看」拖成套牢。</text>
+
+  <circle cx="638" cy="726" r="12" fill="#241d10" stroke="#ffb74d"/>
+  <text x="638" y="731" fill="#ffb74d" font-size="12.5" font-weight="700" text-anchor="middle">3</text>
+  <text x="660" y="724" fill="#e6e9ef" font-size="13.5" font-weight="600">出现风控告警（黄 / 红）</text>
+  <text x="660" y="743" fill="#8b93a7" font-size="12">按告警给的处置做（补腿 / 撤单 / 缩规模），不自己判断。</text>
+
+  <line x1="660" y1="762" x2="1120" y2="762" stroke="#242b3d" stroke-width="1"/>
+  <text x="660" y="770" fill="#000" font-size="1"> </text>
+
+  <!-- 底部提醒 -->
+  <rect x="40" y="800" width="1100" height="72" rx="9" fill="#181316" stroke="#4a2323"/>
+  <text x="60" y="826" fill="#ef5350" font-size="14" font-weight="700">三条铁律（违反任何一条，前面四道门都白过）</text>
+  <text x="60" y="849" fill="#8b93a7" font-size="12.5">
+    ① 只做「≤5bp 可吃」吃得下的量，绝不按想做的量下；　② 两条腿必须一起成交，只成一条腿立刻处置，绝不隔夜裸露；
+  </text>
+  <text x="60" y="866" fill="#8b93a7" font-size="12.5">
+    ③ 提醒只有黄/红两档、没有绿 —— 页面上没有提醒只代表「巡检当下没发现问题」，不代表安全。
+  </text>
+</svg>

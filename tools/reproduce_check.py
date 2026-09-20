@@ -399,6 +399,8 @@ def check_features():
         ("server/app.py", "def build_alerts(", "持仓提醒接口（黄/红两档）"),
         # 小白三问（默认视图）：让"新手能不能看懂该干嘛"这件事也被自检守住
         ("server/app.py", "def build_signals(", "小白三问接口（买/卖/风险）"),
+        ("server/app.py", "def _merge_live(", "实时行情·部分刷新合并（不丢好数据）"),
+        ("server/app.py", "def parse_size_usd(", "测算金额·解析与回落（不静默夹取）"),
         ("server/app.py", "def next_in_house_start(", "下一个所内窗口（口径取自日历模块）"),
         ("server/app.py", "blocked_code", "不达标原因·稳定代号（供聚合）"),
         ("web/app.js", "function renderSignals(", "小白三问渲染（页面不自己判断）"),
@@ -455,6 +457,18 @@ def check_features():
                 "该功能被回退或误删；用 git log -p 查是哪次提交")
 
     # 行为层：能跑的先跑一遍（比源码特征更硬）
+    try:
+        r = subprocess.run([sys.executable, "server/app.py", "--selftest"],
+                           cwd=BASE, capture_output=True, text=True, timeout=90,
+                           encoding="utf-8", errors="replace")
+        if r.returncode == 0:
+            ok("后端纯函数自检通过（金额回落 / 行情合并 / 下一窗口）")
+        else:
+            bad("server/app.py --selftest 退出码 %d" % r.returncode,
+                (r.stdout or "").strip().splitlines()[-1] if r.stdout else "")
+    except Exception as exc:  # noqa: BLE001
+        bad("后端纯函数自检无法运行", repr(exc))
+
     try:
         r = subprocess.run([sys.executable, "tools/window_watch.py", "--selftest"],
                            cwd=BASE, capture_output=True, text=True, timeout=60)
@@ -538,6 +552,36 @@ def check_features():
                     else:
                         ok("小白三问接口契约通过（4 条判据 / 买入 %s / 风险 %s）"
                            % (_st, _risk.get("state")))
+                # ---- 测算金额：不同金额必须给出不同结论 ----
+                # 这条防的是**缓存串键**：三个接口的缓存原先都是单条目，
+                # 加上「用户可改金额」之后若不按 size 分键，改金额会拿到上一次的结果 ——
+                # 页面上数字看着很正常，其实全是另一个金额下的数。
+                try:
+                    import json as _j2
+
+                    def _sig(sz):
+                        return _j2.loads(_url.urlopen(
+                            _base + "/api/signals?size_usd=" + sz,
+                            timeout=40).read().decode("utf-8"))
+
+                    _a, _b, _c = _sig("200"), _sig("100000"), _sig("99999999")
+                    _e = []
+                    if float(_a.get("size_usd") or 0) != 200.0:
+                        _e.append("size_usd=200 未生效（得到 %s）" % _a.get("size_usd"))
+                    if float(_b.get("size_usd") or 0) != 100000.0:
+                        _e.append("size_usd=100000 未生效（得到 %s）" % _b.get("size_usd"))
+                    if float(_c.get("size_usd") or 0) != 5000.0:
+                        _e.append("超上限未回落默认（得到 %s）" % _c.get("size_usd"))
+                    if not _c.get("size_note"):
+                        _e.append("超上限没有给出原因")
+                    if not (_a.get("size_scope") or ""):
+                        _e.append("缺 size_scope（用户不知道金额影响什么、不影响什么）")
+                    if _e:
+                        bad("测算金额契约不符", "；".join(_e)[:150])
+                    else:
+                        ok("测算金额契约通过（200/100000 各自生效、超限回落默认并说明）")
+                except Exception as exc:                    # noqa: BLE001
+                    bad("测算金额契约检查失败", repr(exc)[:90])
                 _r = subprocess.run(
                     [sys.executable, "tools/ui_check.py", "--url", _base + "/",
                      "--wait", "2500",

@@ -69,6 +69,15 @@
     return el.dataset.state || "";
   });
 
+  /* ---- 测算金额输入（用户可填自己的金额）----
+     这里只报**静态事实**；"改金额 -> 结果跟着变"的交互由
+     `tools/reproduce_check.py` 的接口契约检查覆盖（那边能直接比两次响应）。 */
+  var sizeInput = document.getElementById("size-input");
+  var sizeNoteEl = document.getElementById("sig-size-note");
+  var sizeScopeEl = document.getElementById("sig-size-scope");
+  var sizeNote = sizeNoteEl && !sizeNoteEl.hidden
+    ? (sizeNoteEl.textContent || "").trim() : "";
+
   /* ---- 表格：默认行高 / 展开后的越界与宽度稳定性 ----
      ⚠️ 两张表用**同一套红线**：决策表（#assess-table）与机会名单（#opp-table）。
      机会名单也会展开（点行看「进场证据」），所以它同样要过行高与越界检查 ——
@@ -165,7 +174,11 @@
     }).length,
     sig_states: sigStateList,
     sig_headline: sigHeadTxt.slice(0, 120),
-    sig_headline_blank: !sigHeadTxt || !!(sigHead && sigHead.querySelector(".sk"))
+    sig_headline_blank: !sigHeadTxt || !!(sigHead && sigHead.querySelector(".sk")),
+    size_input_present: !!sizeInput,
+    size_input_value: sizeInput ? String(sizeInput.value) : null,
+    size_note: sizeNote,
+    size_scope_len: sizeScopeEl ? (sizeScopeEl.textContent || "").trim().length : 0
   };
   Object.keys(exp).forEach(function (k) { out[k] = exp[k]; });
   return out;

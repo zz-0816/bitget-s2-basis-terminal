@@ -540,6 +540,33 @@ tr.opp-row { box-shadow: inset 2px 0 0 var(--accent); }
 .sig-sub { margin-top: 5px; color: var(--muted); font-size: 13px; line-height: 1.65; }
 .sig-stamp { flex: 0 0 auto; color: var(--dim); font-size: 12px; white-space: nowrap; }
 
+/* 右侧：测算金额 + 数据时间（金额改一次，三张卡与其它视图一起变） */
+.sig-head-side {
+  flex: 0 0 auto; display: flex; flex-direction: column;
+  align-items: flex-end; gap: 4px;
+}
+.sig-size {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12.5px; color: var(--muted); white-space: nowrap;
+}
+.sig-size input {
+  font: inherit; font-variant-numeric: tabular-nums;
+  width: 96px; padding: 4px 7px; border-radius: 6px;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); text-align: right;
+}
+.sig-size input:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(76, 141, 255, .18);
+}
+.sig-size-u { color: var(--dim); }
+.sig-size-note { font-size: 11.5px; color: var(--dim); white-space: nowrap; }
+.sig-size-note.warn { color: var(--warn); white-space: normal; max-width: 260px; text-align: right; }
+.sig-size-note.busy { color: var(--accent); }
+.sig-size.busy input { border-color: var(--accent); }
+/* 「金额影响什么」：常驻一行小字，紧贴结论条下方（用户最容易误解的一处） */
+.sig-scope { margin: -8px 0 14px; font-size: 12px; line-height: 1.65; color: var(--dim); }
+
 .sig-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
   align-items: start;          /* 三张卡内容长短不一，别互相拉成等高留一片空白 */

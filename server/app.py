@@ -34,6 +34,7 @@ import threading
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import unquote
 
 try:
     from zoneinfo import ZoneInfo
@@ -76,6 +77,47 @@ POS_FILE = os.path.join(BASE, "data", "positions", "open.json")
 # 若不多这一层，小白会把两天前的告警当成"现在发生的事"。
 ALERT_STALE_MIN = 180.0
 
+# ---------------------------------------------------------------- 测算金额
+# 页面上要能填"我打算做多少钱"，而不是永远按 $5,000 算。
+# ⚠️ 这个金额**只影响测算**（冲击成本、能不能吃下、净空间），不改变任何阈值 ——
+#    门槛 11.34 bp 是策略参数，与本金额无关。
+DEFAULT_SIZE_USD = 5000.0
+SIZE_MIN_USD = 10.0
+SIZE_MAX_USD = 1_000_000.0
+
+
+def parse_size_usd(raw):
+    """把 `?size_usd=` 解析成合法金额，返回 (usd, note)。
+
+    刻意**不静默夹取**：填了非法值就回落默认并在 `note` 里说明，
+    让页面能如实告诉用户"你填的没生效、现在按多少算" ——
+    否则用户会以为屏幕上是他填的金额，而其实是另一个数。
+    """
+    if raw is None or str(raw).strip() == "":
+        return DEFAULT_SIZE_USD, None
+    try:
+        v = float(str(raw).strip().replace(",", "").replace("$", ""))
+    except (TypeError, ValueError):
+        return DEFAULT_SIZE_USD, "金额无法解析，已按默认 $%s 计算" % _usd(DEFAULT_SIZE_USD)
+    if not (v == v) or v in (float("inf"), float("-inf")):     # NaN / inf
+        return DEFAULT_SIZE_USD, "金额不是有效数字，已按默认 $%s 计算" % _usd(DEFAULT_SIZE_USD)
+    if v < SIZE_MIN_USD:
+        return DEFAULT_SIZE_USD, ("金额 $%s 低于可测算下限 $%s，"
+                                  "已按默认 $%s 计算"
+                                  % (_usd(v), _usd(SIZE_MIN_USD), _usd(DEFAULT_SIZE_USD)))
+    if v > SIZE_MAX_USD:
+        return DEFAULT_SIZE_USD, ("金额 $%s 超过可测算上限 $%s，"
+                                  "已按默认 $%s 计算"
+                                  % (_usd(v), _usd(SIZE_MAX_USD), _usd(DEFAULT_SIZE_USD)))
+    return round(v, 2), None
+
+
+def _usd(v):
+    try:
+        return "{:,.0f}".format(float(v))
+    except (TypeError, ValueError):
+        return str(v)
+
 PAIRS = [
     ("RTSLAUSDT",  "TSLAUSDT"),
     ("RNVDAUSDT",  "NVDAUSDT"),
@@ -101,6 +143,10 @@ CTX = ssl.create_default_context()
 _LIVE = {"ts": 0.0, "data": None}
 _LIVE_LOCK = threading.Lock()
 TICK_SECONDS = 15
+# 单个符号的行情最多允许沿用这么久。代理抖动时 `fetch_live()` 会**静默少抓几个符号**，
+# 合并时用这条线决定"旧值还能不能留" —— 太长会把几分钟前的价当现价（另一种谎），
+# 太短则挡不住抖动（实测单次最少只抓到 7/20）。3 分钟 ≈ 12 个刷新周期。
+LIVE_MAX_AGE_SEC = 180.0
 
 
 # ---------------------------------------------------------------- 时段
@@ -257,6 +303,8 @@ def fetch_live():
                 "bid_depth_usd": round(bid_sz * bid, 2),
                 "ask_depth_usd": round(ask_sz * ask, 2),
                 "last": last, "usdt_vol_24h": _f(data.get("usdtVolume")),
+                # 每个符号**各自**的打点时间：合并部分刷新时要按它判新鲜度
+                "ts": time.time(),
             }
             with lock:
                 results[sym] = rec
@@ -269,6 +317,30 @@ def fetch_live():
     for t in threads:
         t.join(20)
     return results
+
+
+def _merge_live(old, new, now=None):
+    """把新抓到的行情**合并**进旧缓存，而不是整块替换。
+
+    ⚠️ 为什么必须合并（2026-09-21 00:1x 实测踩到）：
+    `fetch_live()` 对失败的符号是**静默跳过**（`except: pass`），所以代理抖一下就会
+    返回一个"少几个符号"的部分结果。原来 `if new:` 直接整块替换 ——
+    连抓 8 次实测 OK 数 = [20, 20, 20, 18, 20, **7**, **11**, 10]，
+    也就是说一次抖动会让 **13 个符号**瞬间变成"没有实时行情"，
+    页面从"4 个候选"抽搐成"取不到盘口"，几十秒后又变回来。
+
+    规则：**新值优先；新值缺的符号保留旧值，但旧的超过 `LIVE_MAX_AGE_SEC` 就丢弃**
+    —— 不能让一次成功的数据被无限沿用（那是另一种谎：拿几分钟前的价当现价）。
+    """
+    now = now or time.time()
+    merged = dict(new or {})
+    for k, v in (old or {}).items():
+        if k in merged:
+            continue
+        ts = v.get("ts") or 0.0
+        if now - ts <= LIVE_MAX_AGE_SEC:
+            merged[k] = v
+    return merged
 
 
 def live_cached(force=False):
@@ -292,7 +364,8 @@ def live_cached(force=False):
                     new = fetch_live()
                     with _LIVE_LOCK:
                         if new:
-                            _LIVE["data"] = new
+                            # ⚠️ **合并**而不是替换：部分刷新不许丢掉好数据
+                            _LIVE["data"] = _merge_live(_LIVE["data"], new)
                             _LIVE["ts"] = time.time()
                 except Exception:                   # noqa: BLE001
                     pass
@@ -320,9 +393,10 @@ def live_now():
     new = fetch_live()
     if new:
         with _LIVE_LOCK:
-            _LIVE["data"] = new
+            # 同样用合并（首次预热时旧缓存通常是空的，合并等价于赋值）
+            _LIVE["data"] = _merge_live(_LIVE["data"], new)
             _LIVE["ts"] = time.time()
-        return new
+        return _LIVE["data"]
     return {}
 
 
@@ -454,6 +528,10 @@ def build_overview():
             entry["basis_bp"] = round(basis_bp(s_live["mid"], p_live["mid"]), 2)
             entry["basis_side"] = basis_side(entry["basis_bp"])
             entry["basis_convention"] = "(永续/现货 − 1)，正 = 永续升水"
+        # 行情年龄：部分刷新是**合并**的（见 `_merge_live`），所以某条腿可能用的是
+        # 几十秒前的值。必须把它露出来 —— 用户有权知道这个价是不是"现价"。
+        _ages = [time.time() - (r.get("ts") or 0.0) for r in (s_live, p_live) if r]
+        entry["quote_age_sec"] = (round(max(_ages), 1) if _ages else None)
         entry["session_now"] = session_of(dt.datetime.now(dt.UTC))[0]
         for sess in ("closed", "premarket", "intraday", "afterhours"):
             st = stats(per_session.get((spot_sym, sess)))
@@ -727,7 +805,7 @@ _STATUS_CACHE = {"ts": 0.0, "data": None}
 _STATUS_CACHE_SEC = 60
 # 风险与理由缓存：冷跑 5.6 秒（10 标的 × 双腿模型），风险判断是分钟级信息，
 # 30 秒缓存足够，避免页面像卡死。
-_ASSESS_CACHE = {"ts": 0.0, "data": None}
+_ASSESS_CACHE = {"key": None, "ts": 0.0, "data": None}
 _ASSESS_CACHE_SEC = 30
 # 后台刷新去重：过期瞬间可能同时来多个请求，若每个都起一个线程，
 # 就会有 N 个线程同时去数 80 MB 文件的行数（自我制造的雪崩）。
@@ -919,7 +997,7 @@ def _evidence(cost):
     return out
 
 
-def build_assess(base=None, size_usd=5000.0):
+def build_assess(base=None, size_usd=DEFAULT_SIZE_USD):
     """⭐ 风险与理由接口 —— 把项目二的能力接到统一页面上。
 
     返回每个标的的：风险等级 / 结论 / **可核验理由** / 警告 / **条件点位**。
@@ -930,9 +1008,14 @@ def build_assess(base=None, size_usd=5000.0):
 
     缓存 30 秒：实测冷跑 **5.6 秒**（10 个标的 × 双腿模型，每个都要读盘口文件）。
     风险判断本来就是分钟级的，30 秒缓存完全够用，而 5.6 秒的等待会让页面像卡死。
+
+    ⚠️ 缓存**必须按 (base, size_usd) 分键**：页面允许用户改测算金额，
+    只用单条目缓存的话，用户把 $5,000 改成 $50,000 会拿到**上一次 $5,000 的结果** ——
+    "能吃掉多少""净剩多少"全是错的，而页面上数字看起来很正常。
     """
     now = time.time()
-    if (base is None and _ASSESS_CACHE["data"] is not None
+    key = (base, round(float(size_usd), 2))
+    if (_ASSESS_CACHE["data"] is not None and _ASSESS_CACHE["key"] == key
             and (now - _ASSESS_CACHE["ts"]) < _ASSESS_CACHE_SEC):
         return _ASSESS_CACHE["data"]
 
@@ -996,6 +1079,7 @@ def build_assess(base=None, size_usd=5000.0):
                          "本功能不下单，也不构成投资建议。",
            "items": items}
     if base is None:
+        _ASSESS_CACHE["key"] = key
         _ASSESS_CACHE["data"] = out
         _ASSESS_CACHE["ts"] = time.time()
     return out
@@ -1003,7 +1087,7 @@ def build_assess(base=None, size_usd=5000.0):
 
 # 机会名单缓存：与 assess 同节奏（30 秒）。名单是分钟级判断，
 # 而 build_overview 要读盘口文件、build_assess 要跑双腿模型，都不该每 20 秒重算。
-_OPP_CACHE = {"data": None, "ts": 0.0}
+_OPP_CACHE = {"key": None, "data": None, "ts": 0.0}
 _OPP_CACHE_SEC = 30
 
 # 「不达标原因」的稳定代号 → 白话标签。顺序 = 代码里判据的先后（先卡哪一条排前面），
@@ -1017,7 +1101,7 @@ BLOCK_LABEL = {
 }
 
 
-def build_opportunities():
+def build_opportunities(size_usd=DEFAULT_SIZE_USD):
     """🎯 机会名单 —— 按**策略自己的开仓门槛**筛出当前可做标的。
 
     判据**全部读现有字段与现有参数，不在这里新造任何阈值**：
@@ -1035,9 +1119,15 @@ def build_opportunities():
 
     数据来源都是现成的：`build_overview()`（实时盘口 + 5 档容量）
     融 `build_assess()`（策略自己的风险结论）。都不重算，只做合并与筛选。
+
+    `size_usd` 是**测算规模**：它决定"盘口吃不吃得下这个金额"与净空间，
+    但**不改变任何阈值**（门槛 11.34 bp 是策略参数，与金额无关）。
+    ⚠️ 缓存按 size_usd 分键，否则改金额会拿到上一次的结果。
     """
     now = time.time()
-    if _OPP_CACHE["data"] is not None and (now - _OPP_CACHE["ts"]) < _OPP_CACHE_SEC:
+    key = round(float(size_usd), 2)
+    if (_OPP_CACHE["data"] is not None and _OPP_CACHE["key"] == key
+            and (now - _OPP_CACHE["ts"]) < _OPP_CACHE_SEC):
         return _OPP_CACHE["data"]
 
     # 冷启动同步预热行情：否则新进程里第一次调用会拿到空缓存，
@@ -1049,16 +1139,19 @@ def build_opportunities():
     rt = route_of(now_utc)
     in_house = (rt == "in_house")
 
-    # 进场证据用的测算规模：跟 assess 用同一个数（默认 $5,000），口径不另起一套
-    size_usd = 5000.0
+    # 进场证据用的测算规模：跟 assess 用**同一个数**（口径不另起一套）。
+    # ⚠️ 这里原先硬写 5000.0 —— 页面能改金额后必须跟着改，否则
+    #    "盘口吃不吃得下"永远按 $5,000 判，与用户填的数无关。
+    size_usd = round(float(size_usd), 2)
 
     # 策略自己的风险结论（可核验理由/结论）。它不可用时**不影响**名单本身，
     # 只是少一列结论 —— 可选功能不该拖死主功能。
     verdict_by_base = {}
     try:
-        _a = build_assess()
+        # ⚠️ 必须把 size_usd 传下去：否则名单里的"吃不吃得下"按默认 $5,000 判，
+        #    与用户填的金额脱节（这是加金额输入时最容易漏的一环）。
+        _a = build_assess(size_usd=size_usd)
         if _a.get("available"):
-            size_usd = _a.get("size_usd") or size_usd
             for _it in (_a.get("items") or []):
                 verdict_by_base[_it.get("base")] = _it
     except Exception:                                    # noqa: BLE001
@@ -1079,6 +1172,7 @@ def build_opportunities():
             "margin_bp": _sparams.margin_bp(bb),
             "basis_side": e.get("basis_side"),
             "tradable": tradable,
+            "quote_age_sec": e.get("quote_age_sec"),
             "missing_leg": cap.get("missing_leg"),
             "depth_within_5bp_usd": cap.get("depth_within_5bp_usd"),
             "d5_median": cap.get("d5_median"),
@@ -1207,6 +1301,7 @@ def build_opportunities():
         ),
         "disclaimer": "名单是策略门槛的筛选结果，不是收益承诺，也不构成投资建议；本页面不下单。",
     }
+    _OPP_CACHE["key"] = key
     _OPP_CACHE["data"] = out
     _OPP_CACHE["ts"] = time.time()
     return out
@@ -1308,7 +1403,7 @@ def build_alerts():
     }
 
 
-_SIGNAL_CACHE = {"data": None, "ts": 0.0}
+_SIGNAL_CACHE = {"key": None, "data": None, "ts": 0.0}
 _SIGNAL_CACHE_SEC = 30
 
 
@@ -1319,7 +1414,7 @@ def _bj_str(ts_utc):
     return ts_utc.astimezone(dt.timezone(dt.timedelta(hours=8))).strftime("%m-%d %H:%M")
 
 
-def build_signals():
+def build_signals(size_usd=DEFAULT_SIZE_USD):
     """🐣 「小白三问」：现在能买吗 / 什么时候卖 / 现在有没有风险。
 
     ⚠️ 这一层**不产生任何新判断、不定义任何新阈值**，只把三份已有结果翻译成白话：
@@ -1331,16 +1426,21 @@ def build_signals():
     所有数字都从上面三处**原样取**。模板是确定性的，**这条链路上没有 LLM**，
     所以不存在"编一个理由"的可能 —— 这正是本项目对抗幻觉的一贯做法。
 
+    `size_usd` = **用户打算做多少钱**。它只影响测算（冲击成本 / 吃不吃得下 / 净空间），
+    **不改变任何阈值** —— 门槛 11.34 bp 是策略参数，与金额无关。这一点必须在页面上说清，
+    否则用户会以为"填大一点就能过门槛"。
+
     失败时返回 `available: false` 并说明原因，**绝不退化成"看起来一切正常"**。
     """
     now = time.time()
-    if (_SIGNAL_CACHE["data"] is not None
+    size_usd = round(float(size_usd), 2)
+    if (_SIGNAL_CACHE["data"] is not None and _SIGNAL_CACHE["key"] == size_usd
             and (now - _SIGNAL_CACHE["ts"]) < _SIGNAL_CACHE_SEC):
         return _SIGNAL_CACHE["data"]
 
     now_utc = dt.datetime.now(dt.UTC)
     try:
-        opp = build_opportunities()
+        opp = build_opportunities(size_usd=size_usd)
     except Exception as exc:                                   # noqa: BLE001
         return {"available": False,
                 "error": "机会名单不可用：%s: %s" % (type(exc).__name__, exc)}
@@ -1362,8 +1462,9 @@ def build_signals():
 
     # 风险引擎的结论 —— 两个视图都要用（① 判"引擎说这一单能不能做"；③ 做横向汇总）。
     # 只取一次，后面复用；`build_assess` 自带 30 秒缓存，不会重复计算。
+    # ⚠️ 必须带上用户填的 size_usd（冲击成本与净空间都随金额变）。
     try:
-        assess_data = build_assess()
+        assess_data = build_assess(size_usd=size_usd)
     except Exception:                                          # noqa: BLE001
         assess_data = {"available": False}
     verdict_of = {}
@@ -1449,6 +1550,7 @@ def build_signals():
             "depth_within_5bp_usd": r.get("depth_within_5bp_usd"),
             "size_fits": r.get("size_fits"),
             "size_note": r.get("size_note"),
+            "quote_age_sec": r.get("quote_age_sec"),
         })
     profitable = [c for c in cands if (c.get("net_bp") or 0) > 0]
 
@@ -1669,6 +1771,29 @@ def build_signals():
         "available": True,
         "generated_utc": now_utc.isoformat(),
         "generated_bj": _bj_str(now_utc),
+        # 用户填的测算金额 + 允许范围（`size_note` 由路由层按查询串补，
+        # 因为它是"输入是否被接受"的属性，不是这个函数的属性）
+        "size_usd": size_usd,
+        "size_bounds": {"min": SIZE_MIN_USD, "max": SIZE_MAX_USD,
+                        "default": DEFAULT_SIZE_USD},
+        # ⚠️ 必须说清金额**影响什么、不影响什么**，否则用户会以为"填大一点就能过门槛"，
+        #    或者以为输入框坏了（净空间那一行确实不会随金额变）。
+        #    首屏只放**一句**（长文案放折叠里，见 size_scope_full）——
+        #    顶部堆 200 字会把结论淹掉。
+        "size_scope": (
+            "这个金额只决定「盘口吃不吃得下」；**不改变任何门槛**，"
+            "也**不改变「扣掉执行成本后还剩多少」那一行**。"
+        ),
+        "size_scope_full": (
+            "测算金额只决定两件事：① 「盘口吃不吃得下」——≤5bp 滑点内这个标的实际能被吃掉多少美元，"
+            "超出的部分只能做小得多的一单；② 测算规模本身。"
+            "它**不改变任何门槛**：11.34 bp 是策略参数（来自回测 main_cfg），与金额无关 —— "
+            "填大一点**不会**让不够门槛的标的变成达标。"
+            "它也**不改变「扣掉执行成本后还剩多少」**：策略是挂单做市，"
+            "每单位成本由费率、半幅点差、逆向漂移与成交概率决定，与单笔规模无关。"
+            "**已知边界**：两腿模型里的「双腿全吃单」那一行没有计入 5 档冲击"
+            "（同文件的单腿路径是计入的），所以金额变大时那一行会偏乐观。"
+        ),
         "headline": head,
         "buy": buy,
         "sell": sell,
@@ -1679,6 +1804,7 @@ def build_signals():
         "disclaimer": "以上是策略门槛的机械翻译，不是投资建议，也不构成收益承诺；"
                       "本页面不下单。低风险 ≠ 无风险。",
     }
+    _SIGNAL_CACHE["key"] = size_usd
     _SIGNAL_CACHE["data"] = out
     _SIGNAL_CACHE["ts"] = time.time()
     return out
@@ -1725,6 +1851,35 @@ def _health():
         "maker_benefit": (rt == "in_house"),
         "pairs": len(PAIRS), "tick_seconds": TICK_SECONDS,
     }
+
+
+# 接受 `?size_usd=` 的端点（测算金额）。其它端点忽略查询串，行为与以前完全一致。
+_SIZE_AWARE = ("/api/assess", "/api/opportunities", "/api/signals")
+
+
+def _dispatch(path, raw_query):
+    """路由分发：只有 `_SIZE_AWARE` 里的端点会读 `?size_usd=`。
+
+    ⚠️ 合并 `size_note` 时**必须浅拷贝**：`build_*` 返回的字典是**缓存里那一份**，
+    直接 `res["size_note"] = …` 会把它写进缓存，下一个不同金额的请求就会看到
+    上一个请求的提示语（缓存污染）。
+    """
+    fn = ROUTES[path]
+    if path not in _SIZE_AWARE:
+        return fn()
+
+    q = {}
+    for kv in (raw_query or "").split("&"):
+        if "=" in kv:
+            k, _, v = kv.partition("=")
+            q[k.strip()] = unquote(v.strip())
+
+    usd, note = parse_size_usd(q.get("size_usd"))
+    res = fn(size_usd=usd)
+    if note and isinstance(res, dict):
+        res = dict(res)                     # 浅拷贝：绝不动缓存里那份
+        res["size_note"] = note
+    return res
 
 
 ROUTES = {
@@ -1790,11 +1945,12 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj, ensure_ascii=False, default=str))
 
     def do_GET(self):                               # noqa: N802
-        path = self.path.split("?")[0].rstrip("/") or "/"
+        raw_path, _, raw_query = self.path.partition("?")
+        path = raw_path.rstrip("/") or "/"
 
         if path in ROUTES:
             try:
-                self._json(200, ROUTES[path]())
+                self._json(200, _dispatch(path, raw_query))
             except Exception as exc:                # noqa: BLE001
                 self._json(500, {"error": str(exc)[:300]})
             return
@@ -1869,11 +2025,71 @@ def serve(port, tick):
         httpd.server_close()
 
 
+def selftest():
+    """纯函数自检 —— 不联网、不起服务、不读盘口文件。
+
+    覆盖两处**都曾出过真问题**的地方：
+      · `_merge_live`：部分刷新曾整块覆盖缓存，导致页面从"4 个候选"抽搐成"取不到盘口"；
+      · `parse_size_usd`：金额输入是后加的，回落规则必须明确（不静默夹取）。
+    """
+    ok = True
+
+    def chk(cond, msg):
+        nonlocal ok
+        ok = ok and bool(cond)
+        print("  [%s] %s" % ("OK " if cond else "!! ", msg))
+
+    # ---- 金额解析 ----
+    chk(parse_size_usd(None)[0] == DEFAULT_SIZE_USD, "缺省 -> 默认金额")
+    chk(parse_size_usd("")[0] == DEFAULT_SIZE_USD, "空串 -> 默认金额")
+    chk(parse_size_usd("2500")[0] == 2500.0, "正常数字被采纳")
+    chk(parse_size_usd("2,500")[0] == 2500.0, "带千分位也能解析")
+    chk(parse_size_usd("abc")[0] == DEFAULT_SIZE_USD
+        and parse_size_usd("abc")[1], "非法值回落默认**并给出原因**（不静默）")
+    chk(parse_size_usd("-5")[0] == DEFAULT_SIZE_USD
+        and "下限" in (parse_size_usd("-5")[1] or ""), "低于下限回落默认并说明")
+    chk(parse_size_usd("99999999")[0] == DEFAULT_SIZE_USD
+        and "上限" in (parse_size_usd("99999999")[1] or ""), "超上限回落默认并说明")
+    chk(parse_size_usd(str(SIZE_MIN_USD))[0] == SIZE_MIN_USD, "恰好等于下限 -> 采纳")
+    chk(parse_size_usd(str(SIZE_MAX_USD))[0] == SIZE_MAX_USD, "恰好等于上限 -> 采纳")
+
+    # ---- 实时行情合并（部分刷新不许丢好数据）----
+    now = time.time()
+    old = {"A": {"mid": 1, "ts": now - 10},
+           "B": {"mid": 2, "ts": now - 10},
+           "GONE": {"mid": 3, "ts": now - LIVE_MAX_AGE_SEC - 5}}
+    new = {"A": {"mid": 9, "ts": now}, "D": {"mid": 4, "ts": now}}
+    r = _merge_live(old, new, now)
+    chk(r["A"]["mid"] == 9, "新值优先（A 用新值）")
+    chk(r["B"]["mid"] == 2, "新值缺的符号**保留旧值**（B 没丢）")
+    chk("GONE" not in r, "旧值超过 LIVE_MAX_AGE_SEC 就丢弃（不无限沿用）")
+    chk(r["D"]["mid"] == 4, "新符号被加入")
+    chk(_merge_live(None, new, now) == new, "空旧缓存 + 新值 -> 等价于赋值")
+    chk(_merge_live(old, {}, now)["A"]["mid"] == 1,
+        "新值为空时**不破坏**旧缓存（原来 `if new:` 也是这样，保留这个性质）")
+
+    # ---- 下一个所内窗口（口径来自 common.market_calendar，不重写）----
+    t = dt.datetime(2026, 9, 19, 0, 0, tzinfo=dt.UTC)      # 周六 00:00 UTC = 周六 08:00 北京
+    chk(route_of(t) == "in_house", "周六 08:00（北京）是 in_house 窗口起点")
+    t2 = dt.datetime(2026, 9, 18, 0, 0, tzinfo=dt.UTC)     # 周五
+    nxt = next_in_house_start(t2)
+    chk(nxt is not None and route_of(nxt) == "in_house",
+        "非窗口期能算出下一个窗口起点，且该时刻确实是 in_house")
+    chk(next_in_house_start(t) is None, "已在窗口内 -> 返回 None（不编一个时间）")
+
+    print("\nserver/app.py 纯函数自检%s" % ("通过" if ok else "**失败**"))
+    return 0 if ok else 1
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Basis Terminal 后端")
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--tick", type=int, default=15, help="实时行情缓存秒数")
+    ap.add_argument("--selftest", action="store_true",
+                    help="只跑纯函数自检（不联网、不起服务）")
     args = ap.parse_args(argv)
+    if args.selftest:
+        return selftest()
     serve(args.port, args.tick)
     return 0
 
