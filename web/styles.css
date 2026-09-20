@@ -628,7 +628,12 @@ tr.opp-row { box-shadow: inset 2px 0 0 var(--accent); }
 }
 .sig-cand-top { display: flex; align-items: baseline; gap: 10px; }
 .sig-cand-top strong { font-size: 14px; }
-.sig-cand-top span { margin-left: auto; font-weight: 650; font-variant-numeric: tabular-nums; }
+/* 建议规模：候选行里最重要的一眼信息（用户要的是"做多少"，不是"能吃多少"） */
+.sig-cand-rec {
+  margin-left: auto; font-weight: 700; font-size: 14.5px; color: var(--text);
+  background: var(--line); border-radius: 6px; padding: 2px 9px;
+  font-variant-numeric: tabular-nums;
+}
 .sig-cand-eq { margin-top: 4px; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .sig-cand-meta { margin-top: 3px; color: var(--dim); font-size: 12px; line-height: 1.6; }
 .sig-cand-warn { margin-top: 5px; color: var(--warn); font-size: 12px; line-height: 1.6; }

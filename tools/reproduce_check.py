@@ -198,8 +198,7 @@ def check_code(quick):
             bad("%s 不存在" % rel, "README/文档里引用了它，请补上或从清单移除")
             continue
         try:
-            r = subprocess.run([sys.executable, p, "--help"],
-                               cwd=BASE, capture_output=True, text=True, timeout=60)
+            r = _run([p, "--help"], 60)
         except subprocess.TimeoutExpired:
             bad("%s --help 超时 60 秒" % rel, "导入期有阻塞操作（联网/死循环）？")
             continue
@@ -414,7 +413,7 @@ def check_features():
         ("tools/position_watch.py", "intensity", "巡检告警带统一强度"),
         ("web/app.js", "function loadAlerts(", "右下角提醒弹窗"),
         # 改版（docs/48）：多视图 + 折叠 + 决策表重构 —— 被回退会立刻变红
-        ("web/index.html", 'id="viewtabs"', "视图切换（4 视图 + 全部兜底）"),
+        ("web/index.html", 'id="viewtabs"', "视图切换（3 个专业视图，默认「怎么做」）"),
         ("web/app.js", "function applyView(", "视图路由（URL hash 深链）"),
         ("web/app.js", "function renderAssess(", "决策表：结论行 + 展开理由卡"),
         ("web/styles.css", ".fold > summary", "折叠（原生 details，键盘可用）"),
@@ -428,6 +427,13 @@ def check_features():
         # 机会名单（首页置顶）：判据 = 策略**自己的**开仓门槛，不新增阈值
         ("common/strategy_params.py", "def verify_against_backtest(",
          "策略参数·门槛唯一来源 + 与回测核对"),
+        ("common/strategy_params.py", "def recommended_size(",
+         "建议规模·唯一实现（min(你填的, ≤5bp可吃 × 25%)）"),
+        ("common/strategy_params.py", "def verify_depth_ratio(",
+         "规模比例·与 agent_team 的 DEPTH_TAKE_RATIO 交叉核对"),
+        ("server/app.py", "recommended_usd", "建议规模·进接口（opportunities/signals）"),
+        ("web/app.js", "sig-cand-rec", "建议规模·候选行右侧突出显示"),
+        ("server/app.py", "PROXY_URL", "实时行情·代理优先直连兜底（防 SNI 阻断）"),
         ("server/app.py", "def build_opportunities(", "机会名单接口（按开仓门槛筛选）"),
         ("server/app.py", "def live_now(", "实时行情·同步预热（冷启动不误报『全无行情』）"),
         ("web/app.js", "function renderOpps(", "首页机会名单渲染"),
@@ -668,8 +674,7 @@ def check_features():
             dirnames[:] = [d for d in dirnames
                            if d not in (".git", "__pycache__", "data")]
             py += [os.path.join(dirpath, n) for n in names if n.endswith(".py")]
-        r = subprocess.run([sys.executable, "tools/check_console_encoding.py"] + py,
-                           cwd=BASE, capture_output=True, text=True, timeout=180)
+        r = _run(["tools/check_console_encoding.py"] + py, 180)
         if r.returncode == 0:
             ok("所有工具的控制台编码兜底齐全（0 个会崩的文件）")
         else:
@@ -681,8 +686,7 @@ def check_features():
 
     # ---- 确定性 gzip：同输入必须同字节 ----
     try:
-        r = subprocess.run([sys.executable, "common/gzio.py"],
-                           cwd=BASE, capture_output=True, text=True, timeout=60)
+        r = _run(["common/gzio.py"], 60)
         if r.returncode == 0:
             ok("gzip 为确定性压缩（同输入同字节，SHA256 可校验）")
         else:
@@ -692,8 +696,7 @@ def check_features():
 
     # ---- 统一提醒强度（黄/红）：映射必须真的生效，且**不得冒出绿档** ----
     try:
-        r = subprocess.run([sys.executable, "common/alert_level.py"],
-                           cwd=BASE, capture_output=True, text=True, timeout=60)
+        r = _run(["common/alert_level.py"], 60)
         if r.returncode == 0:
             ok("提醒强度·统一映射自检通过（6 项：黄/红两档、没有绿）")
         else:
@@ -703,10 +706,12 @@ def check_features():
 
     # ---- 策略参数：机会名单的门槛必须与**回测 main_cfg** 一致（口径不得漂） ----
     try:
-        r = subprocess.run([sys.executable, "common/strategy_params.py"],
-                           cwd=BASE, capture_output=True, text=True, timeout=60)
+        r = _run(["common/strategy_params.py"], 60)
         if r.returncode == 0:
-            ok("策略参数自检通过（9 项：门槛为正 / 余量符号 / 与回测 main_cfg 一致）")
+            # 项数从子进程的输出里数，**不硬写** —— 加一条自检就忘改这里，描述会一直骗人
+            _n = sum(1 for x in (r.stdout or "").splitlines() if x.strip().startswith("[OK "))
+            ok("策略参数自检通过（%d 项：门槛 / 余量 / 建议规模 / 与回测和 agent_team 交叉核对）"
+               % _n)
         else:
             bad("策略参数自检失败", (r.stdout or "").strip()[-160:])
     except Exception as exc:  # noqa: BLE001
@@ -714,8 +719,7 @@ def check_features():
 
     # ---- 基差口径：**页面文本**也必须与代码同口径（这层以前没有，实测漏过 bug） ----
     try:
-        r = subprocess.run([sys.executable, "tools/verify_basis_convention.py"],
-                           cwd=BASE, capture_output=True, text=True, timeout=120)
+        r = _run(["tools/verify_basis_convention.py"], 120)
         if r.returncode == 0:
             ok("基差口径回归通过（含 web/ 页面文字扫描 —— 防止「页面写反」再次发生）")
         else:
@@ -725,8 +729,7 @@ def check_features():
 
     # ---- 采样守护的外部看门狗：必须能跑，且**绝不 kill 任何进程**（源码级断言） ----
     try:
-        r = subprocess.run([sys.executable, "tools/sampler_watchdog.py", "--selftest"],
-                           cwd=BASE, capture_output=True, text=True, timeout=60)
+        r = _run(["tools/sampler_watchdog.py", "--selftest"], 60)
         if r.returncode == 0:
             ok("采样看门狗自检通过（5 项：进程存活判定 / 只读 / 绝不 kill）")
         else:
@@ -736,8 +739,7 @@ def check_features():
 
     # ---- 一键启动器：必须能跑，且**绝不 kill 任何进程**（源码级断言） ----
     try:
-        r = subprocess.run([sys.executable, "tools/start_all.py", "--selftest"],
-                           cwd=BASE, capture_output=True, text=True, timeout=60)
+        r = _run(["tools/start_all.py", "--selftest"], 60)
         if r.returncode == 0:
             ok("一键启动器自检通过（5 项：幂等判定 / 不 kill / 端口探测）")
         else:
@@ -748,8 +750,7 @@ def check_features():
     # ---- 项目二：事件闸门的**否决路径**必须真的生效 ----
     # 只验证"闸门允许时一切正常"等于没验证闸门起作用。
     try:
-        r = subprocess.run([sys.executable, "project2/execution_cost.py", "--selftest"],
-                           cwd=BASE, capture_output=True, text=True, timeout=120)
+        r = _run(["project2/execution_cost.py", "--selftest"], 120)
         if r.returncode == 0:
             ok("执行成本·闸门否决路径自检通过（6 项）")
         else:
@@ -761,9 +762,7 @@ def check_features():
     # ---- 风险与理由引擎：关键约束必须真的生效 ----
     # 特别是「无可回溯来源 -> 置信度被压低」这条 —— 它是"真实"要求的代码化。
     try:
-        r = subprocess.run([sys.executable, "project2/event_gate.py",
-                            "--risk-selftest"],
-                           cwd=BASE, capture_output=True, text=True, timeout=120)
+        r = _run(["project2/event_gate.py", "--risk-selftest"], 120)
         if r.returncode == 0:
             ok("风险与理由引擎自检通过（5 项约束）")
         else:
@@ -775,8 +774,7 @@ def check_features():
     # ---- 多 Agent 分析师层：统一 schema + 证据铁律必须真的生效 ----
     # 最关键的一条是「空证据的结论被判无效」—— 它是防「换三个说法」的结构保证。
     try:
-        r = subprocess.run([sys.executable, "project2/agent_team.py", "--selftest"],
-                           cwd=BASE, capture_output=True, text=True, timeout=180)
+        r = _run(["project2/agent_team.py", "--selftest"], 180)
         if r.returncode == 0:
             ok("多 Agent 分析师层自检通过（8 项：schema/证据铁律/独立性）")
         else:
@@ -790,9 +788,7 @@ def check_features():
     #   没有证伪条件的论点作废 / 同一证伪条件不得重复计分 /
     #   方向自相矛盾的论据要点名并扣分 / 闸门 block 时不得给出 proceed。
     try:
-        r = subprocess.run([sys.executable, "project2/agent_team.py",
-                            "--debate-selftest"],
-                           cwd=BASE, capture_output=True, text=True, timeout=180)
+        r = _run(["project2/agent_team.py", "--debate-selftest"], 180)
         if r.returncode == 0:
             tail = [ln for ln in (r.stdout or "").splitlines() if "自检" in ln]
             ok("多空辩论层自检通过（%s）"
@@ -805,6 +801,28 @@ def check_features():
 
 
 # ---------------------------------------------------------------- 主流程
+
+def _run(args, timeout=60, extra_env=None):
+    """跑一个子进程，并**保证拿得到它的输出**。
+
+    ⚠️ 为什么必须显式指定编码（2026-09-21 实测踩到）：
+    本文件里这些自检原本写的是 `text=True` 而**不指定 encoding** —— Windows 上于是按
+    GBK 解码；子进程只要打出一个 GBK 解不了的字节，读取线程就抛 UnicodeDecodeError，
+    `r.stdout` 变成**空字符串**。后果不是"报错"，而是**静默盲判**：
+    返回码还能用（通过/失败没判错），但**失败时一个字的原因都拿不到**。
+    实测 `common/strategy_params.py` 就命中过一次（stdout 为空、项数数成 0）。
+
+    做法：父进程按 UTF-8 解 + `errors="replace"`（永不抛），并给子进程设
+    `PYTHONIOENCODING=utf-8`，两边口径一致 —— 中文与符号都不会丢。
+    """
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.run([sys.executable] + list(args), cwd=BASE,
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", timeout=timeout, env=env)
+
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="一键复跑自测（只读，不改任何数据）")

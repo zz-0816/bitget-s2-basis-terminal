@@ -260,7 +260,8 @@ def main(argv=None):
     if args.click:
         print("  [ ~ ] 指定了 --click，跳过多视图轮询")
     elif not args.no_view_sweep:
-        for v in ("monitor", "decision", "evidence", "all"):
+        # 「全部」兜底页签已按用户要求去掉，轮询串相应缩为三视图
+        for v in ("monitor", "decision", "evidence"):
             rv = shot_once('#viewtabs button[data-view="%s"]' % v, v)
             if rv is None:
                 ok = False

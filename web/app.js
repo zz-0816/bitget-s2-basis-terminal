@@ -116,15 +116,15 @@ function initSize() {
    默认视图是 `signals`（小白三问）—— 新手打开页面先要的是"我现在该干嘛"，
    而不是"10 个标的的基差中位数是多少"。专业视图仍然都在，只是排到后面。 */
 
-const VIEWS = ['signals', 'monitor', 'decision', 'evidence', 'all'];
-const VIEW_TITLE = { signals: '怎么做', monitor: '现在看盘', decision: '该不该做', evidence: '凭什么信', all: '全部' };
+const VIEWS = ['signals', 'monitor', 'decision', 'evidence'];
+const VIEW_TITLE = { signals: '怎么做', monitor: '现在看盘', decision: '该不该做', evidence: '凭什么信' };
 
 function currentView() {
   let h = (location.hash || '').replace(/^#/, '');
   try { h = decodeURIComponent(h); } catch (e) { /* 保持原样 */ }
   return VIEWS.indexOf(h) >= 0 ? h : 'signals';
 }
-function isVisible(v) { const cur = currentView(); return cur === 'all' || cur === v; }
+function isVisible(v) { return currentView() === v; }
 
 /* 切视图：写 hash（可后退）-> hashchange -> applyView */
 function go(v) {
@@ -136,7 +136,8 @@ function applyView(v, opts) {
   opts = opts || {};
   const views = document.querySelectorAll('.view');
   views.forEach((el) => {
-    el.hidden = !(v === 'all' || el.dataset.view === v);
+    // 「全部」兜底页签已按用户要求去掉：一次只看一个视图，避免长滚动页
+    el.hidden = (el.dataset.view !== v);
     el.classList.remove('on');
   });
   if (opts.animate !== false) {
@@ -1145,6 +1146,13 @@ function sigNum(v) {
   return Number(v).toFixed(2);
 }
 
+/* 金额：千分位、无小数（建议规模是给人看的，不需要 $1,603.02 这种精度）。
+   拿不到数时返回 "—" —— 不编。 */
+function sigMoney(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
+  return Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
 function sigBadge(id, meta) {
   const el = $(id);
   if (el) el.textContent = meta.t;
@@ -1161,8 +1169,13 @@ function renderSignals() {
   const headEl = $('sig-head');
   if (headEl) headEl.dataset.tone = tn.s;
   setText('sig-mark', SIG_MARK[tn.s] || '?');
-  setText('sig-headline', hl.text || '—');
-  setText('sig-sub', hl.sub || '');
+  // ⚠️ 这两段用 mdInline（先 esc 再套 markdown）而**不是** setText：
+  //    后端会在里面带 `**粗体**`（如「**建议做 $192**」），
+  //    用 textContent 会把星号原样显示 —— 自检的"无字面 `**`"已经抓到三次。
+  const hlEl = $('sig-headline');
+  if (hlEl) hlEl.innerHTML = mdInline(hl.text || '—');
+  const subEl = $('sig-sub');
+  if (subEl) subEl.innerHTML = mdInline(hl.sub || '');
   setText('sig-stamp', S.generated_bj ? '数据时间 ' + S.generated_bj + '（北京）' : '');
 
   // ---- ① 现在能买吗 ----
@@ -1187,14 +1200,16 @@ function renderSignals() {
       h += cs.map((c) =>
         '<div class="sig-cand">' +
           '<div class="sig-cand-top"><strong>' + esc(c.base) + '</strong>' +
-            '<span class="' + cls(c.net_bp) + '">净 ' + fmtBp(c.net_bp) + ' bp</span></div>' +
-          '<div class="sig-cand-eq">基差 ' + sigNum(c.basis_bp) + ' bp − 成本 ' + sigNum(c.cost_bp) +
-            ' bp' + (c.cost_mode ? '（' + esc(c.cost_mode) + '）' : '') + '</div>' +
+            '<span class="sig-cand-rec">建议做 $' + sigMoney(c.recommended_usd) + '</span>' +
+          '</div>' +
+          '<div class="sig-cand-eq">净 ' + fmtBp(c.net_bp) + ' bp（基差 ' + sigNum(c.basis_bp) +
+            ' − 成本 ' + sigNum(c.cost_bp) + ' bp' +
+            (c.cost_mode ? ' · ' + esc(c.cost_mode) : '') + '）</div>' +
           '<div class="sig-cand-meta">' +
             (c.verdict ? '引擎：' + esc(c.verdict) : '引擎：—') +
             (c.p_part === null || c.p_part === undefined
               ? '' : ' ｜ 只成交一条腿的历史概率 ' + sigPct(c.p_part)) +
-            (c.size_fits === false ? ' ｜ 规模受限' : '') +
+            ' ｜ ≤5bp 可吃 $' + sigMoney(c.depth_within_5bp_usd) +
           '</div>' +
           (c.size_note ? '<div class="sig-cand-warn">' + mdInline(c.size_note) + '</div>' : '') +
         '</div>').join('');

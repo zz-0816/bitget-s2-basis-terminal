@@ -139,6 +139,23 @@ PERP_TICKER = ("https://api.bitget.com/api/v2/mix/market/ticker"
                "?symbol={}&productType=usdt-futures")
 CTX = ssl.create_default_context()
 
+# ---- 本机代理（口径与采样器 / 回填工具一致）----
+# 直连 api.bitget.com 会被 ISP 按 SNI 间歇性阻断，所以**代理优先、直连兜底**。
+PROXY_URL = (os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+             or "http://127.0.0.1:7890")
+_OPENERS = {}
+
+
+def _opener(use_proxy):
+    """缓存 opener（每次请求都 build 一遍是浪费；20 个符号并发时更明显）。"""
+    if use_proxy not in _OPENERS:
+        handlers = [urllib.request.HTTPSHandler(context=CTX)]
+        # ⚠️ 直连模式要显式传**空** ProxyHandler：否则 urllib 仍会读环境变量里的代理
+        handlers.insert(0, urllib.request.ProxyHandler(
+            {"http": PROXY_URL, "https": PROXY_URL} if use_proxy else {}))
+        _OPENERS[use_proxy] = urllib.request.build_opener(*handlers)
+    return _OPENERS[use_proxy]
+
 # 实时行情缓存（避免每次请求都打交易所）
 _LIVE = {"ts": 0.0, "data": None}
 _LIVE_LOCK = threading.Lock()
@@ -250,20 +267,39 @@ def next_in_house_start(now_utc, horizon_days=8):
 # ---------------------------------------------------------------- HTTP
 
 def http_json(url, timeout=12):
+    """抓一个 JSON。**先走本机代理，失败再直连**。
+
+    ⚠️ 为什么要代理（2026-09-21 实测）：
+    本机直连 `api.bitget.com` 会被 ISP 按 SNI **间歇性**阻断 —— 连抓 8 次
+    OK 数 = `[20, 20, 20, 18, 20, 7, 11, 10]`。这正是页面上行情"抽搐"
+    （一会儿 4 个候选、一会儿"取不到盘口"）的根因。
+    项目其它地方（采样器、回填、情绪采样）都显式走 `127.0.0.1:7890`，
+    **只有这个服务器一直在走直连** —— 这里补上，口径与它们一致。
+
+    兜底顺序：代理 -> 直连。代理没开时只是每次多一次快速失败，不影响可用性。
+    """
     box = {}
 
     def work():
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            box["d"] = urllib.request.urlopen(req, timeout=timeout, context=CTX).read()
-        except Exception as exc:                        # noqa: BLE001
-            box["e"] = repr(exc)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        last = None
+        for use_proxy in (True, False):
+            try:
+                box["d"] = _opener(use_proxy).open(req, timeout=timeout).read()
+                box.pop("e", None)
+                box["via"] = "proxy" if use_proxy else "direct"
+                return
+            except Exception as exc:                    # noqa: BLE001
+                last = exc
+        box["e"] = repr(last)
 
     t = threading.Thread(target=work)
     t.start()
-    t.join(timeout + 4)
+    t.join(timeout * 2 + 6)          # 两次尝试 -> 给足时间，但不无限等
     if "e" in box:
         raise RuntimeError(box["e"])
+    if "d" not in box:
+        raise RuntimeError("http_json 超时（代理与直连都没回来）")
     return json.loads(box["d"].decode())
 
 
@@ -1193,16 +1229,24 @@ def build_opportunities(size_usd=DEFAULT_SIZE_USD):
                          if (ev and ev.get("best_cost") is not None and bb is not None)
                          else None)
         d5 = row.get("depth_within_5bp_usd")
+        # ⭐ 建议规模：页面要**直接给一个数**，而不是让用户自己从"可吃多少"倒推。
+        #    规则 = min(你填的金额, ≤5bp 可吃 × DEPTH_TAKE_RATIO)，
+        #    出处是 `common/strategy_params.recommended_size`（本页不新造阈值）。
+        row["recommended_usd"] = _sparams.recommended_size(size_usd, d5)
         if d5 is None or size_usd is None:
             row["size_fits"] = None
-            row["size_note"] = None
         else:
             row["size_fits"] = bool(d5 >= size_usd)
-            # 名义额超过"≤5bp 能被吃掉"的量时如实说一声 —— 否则"净 +18 bp"
-            # 会让人以为能做 $5,000，而盘口其实只吃得下 $1,445。
-            row["size_note"] = (None if row["size_fits"]
-                                else "测算按 $%s 计；盘口只吃得下 $%s，实际只能做小得多的一单"
-                                     % ("{:,.0f}".format(size_usd), "{:,.0f}".format(d5)))
+        rec = row["recommended_usd"]
+        if rec is None:
+            row["size_note"] = "缺盘口深度数据，**算不出建议规模** —— 不要凭感觉定大小。"
+        elif rec < size_usd - 0.5:
+            row["size_note"] = (
+                "建议做 $%s（你填的是 $%s）。≤5bp 可吃 $%s，策略口径只吃其中 %.0f%% —— "
+                "再大就会把自己的滑点吃上去。"
+                % (_usd(rec), _usd(size_usd), _usd(d5), _sparams.DEPTH_TAKE_RATIO * 100))
+        else:
+            row["size_note"] = None
 
         # ---- 判据（顺序即"先卡哪一条"）----
         # `blocked_code` 是同一判据的**稳定代号**，供「小白三问」视图做聚合与白话翻译。
@@ -1548,6 +1592,7 @@ def build_signals(size_usd=DEFAULT_SIZE_USD):
             "verdict": (verdict_of.get(r.get("base")) or {}).get("verdict"),
             "risk_level": (verdict_of.get(r.get("base")) or {}).get("risk_level"),
             "depth_within_5bp_usd": r.get("depth_within_5bp_usd"),
+            "recommended_usd": r.get("recommended_usd"),
             "size_fits": r.get("size_fits"),
             "size_note": r.get("size_note"),
             "quote_age_sec": r.get("quote_age_sec"),
@@ -1721,8 +1766,10 @@ def build_signals(size_usd=DEFAULT_SIZE_USD):
 
     # ---------------- 一句话结论（确定性优先级）----------------
     def _cand_line(c):
-        return "%s：基差 %.2f bp − 成本 %.2f bp = 净 %+.2f bp（引擎：%s）" % (
-            c.get("base"), c.get("basis_bp") or 0.0, c.get("cost_bp") or 0.0,
+        rec = c.get("recommended_usd")
+        return "%s：**建议做 $%s** ｜ 基差 %.2f − 成本 %.2f = 净 %+.2f bp（引擎：%s）" % (
+            c.get("base"), (_usd(rec) if rec is not None else "算不出"),
+            c.get("basis_bp") or 0.0, c.get("cost_bp") or 0.0,
             c.get("net_bp") or 0.0, c.get("verdict") or "—")
 
     if risk_state == "red":
@@ -1732,12 +1779,12 @@ def build_signals(size_usd=DEFAULT_SIZE_USD):
     elif buy_state == "ready" and risk_state in ("none", "yellow"):
         head = {"tone": "act",
                 "text": "现在可以开仓：%s。" % "、".join(
-                    "%s（净 %+.2f bp）" % (c["base"], c["net_bp"] or 0.0)
+                    "%s 建议做 $%s" % (c["base"], _usd(c.get("recommended_usd") or 0))
                     for c in go_cands[:3]),
                 "sub": "记住是同时下两条腿：买现货 + 卖永续。平仓规则见「什么时候卖」。"}
     elif buy_state == "caution":
         head = {"tone": "caution",
-                "text": "有 %d 个标的够门槛，扣掉成本也还有空间 —— 但风险引擎的结论是「谨慎」。"
+                "text": "有 %d 个标的够门槛 —— 但风险引擎的结论是「谨慎」。"
                         % len(profitable),
                 "sub": " ｜ ".join(_cand_line(c) for c in profitable[:2]) +
                        "。引擎拿不到基差，所以只要成本为正它就一律给「谨慎」；"

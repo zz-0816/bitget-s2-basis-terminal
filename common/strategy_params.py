@@ -41,6 +41,15 @@ MAX_HOLD_HOURS = 48
 #: 交易方向（basis_bp > 0 时）。
 DIRECTION = "多现货 / 空永续"
 
+#: 单笔规模占「≤5bp 可吃深度」的比例。
+#: ⚠️ 这个 0.25 **不是本模块发明的** —— 它就是 `project2/agent_team.py` 的
+#:    `DEPTH_TAKE_RATIO`（"单笔不超过首档可用深度的 1/4"），
+#:    规模上限规则在该文件约 L1581：
+#:        `≤5bp 累计深度（两侧取薄）× depth_take_ratio`
+#:    —— 与本页 `depth_within_5bp_usd` 是同一口径（四方向取最薄）。
+#:    `verify_depth_ratio()` 会去正则读那份源码，**漂了就红**。
+DEPTH_TAKE_RATIO = 0.25
+
 #: 口径出处，随接口一起返回给前端，让"这个数字哪来的"写在页面上。
 SOURCE = "tools/b_side_backtest_basis_timing.py · main_cfg"
 
@@ -50,6 +59,58 @@ def margin_bp(basis_bp):
     if basis_bp is None:
         return None
     return round(float(basis_bp) - ENTRY_THR_BP, 4)
+
+
+def recommended_size(size_requested, depth_within_5bp_usd):
+    """**建议规模**（USD）—— 页面要直接给一个数，而不是让用户自己看容量。
+
+        recommended = min(用户填的金额, ≤5bp 可吃 × DEPTH_TAKE_RATIO)
+
+    为什么取 min：两边都是硬约束，谁小听谁的。
+
+      · 右边是**盘口约束**：只吃 ≤5bp 累计深度的一小部分，避免自己把滑点吃上去。
+        这条规则来自 `project2/agent_team.py` 的规模上限，不是本页新造的。
+      · 左边是**你的意图**：你只打算做 $200 时，没必要建议你做 $2,300。
+
+    返回 `None` 表示**算不出建议**（缺深度数据）—— 这种情况必须如实说"不知道"，
+    **不能**退化成"建议做你填的那个数"（那等于假装盘口接得住）。
+    """
+    if depth_within_5bp_usd is None:
+        return None
+    try:
+        d5 = float(depth_within_5bp_usd)
+        req = float(size_requested) if size_requested is not None else None
+    except (TypeError, ValueError):
+        return None
+    if d5 <= 0:
+        return 0.0                      # 盘口吃不下任何量 -> 建议 0（不是"未知"）
+    cap = d5 * DEPTH_TAKE_RATIO
+    if req is None:
+        return round(cap, 2)
+    return round(min(req, cap), 2)
+
+
+def verify_depth_ratio(repo_root):
+    """核对本模块的 `DEPTH_TAKE_RATIO` 与 `project2/agent_team.py` 的字面量是否一致。
+
+    同 `verify_against_backtest` 的做法：**正则读源码而不是 import** ——
+    `agent_team.py` 是个大模块，import 它只为取一个常数不划算，还带副作用。
+    """
+    path = os.path.join(repo_root, "project2", "agent_team.py")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+    except OSError as exc:
+        return False, "读不到 %s：%r" % (path, exc)
+
+    m = re.search(r"^DEPTH_TAKE_RATIO\s*=\s*([0-9]+(?:\.[0-9]+)?)", src, re.M)
+    if not m:
+        return False, "agent_team.py 里找不到 DEPTH_TAKE_RATIO 字面量（口径可能已被重写）"
+    at = float(m.group(1))
+    if abs(at - DEPTH_TAKE_RATIO) > 1e-9:
+        return False, ("规模比例漂了！agent_team.py = %s，本模块 = %s"
+                       % (at, DEPTH_TAKE_RATIO))
+    return True, "agent_team.py 的 DEPTH_TAKE_RATIO = %s 与本模块一致" % at
 
 
 def verify_against_backtest(repo_root):
@@ -101,11 +162,27 @@ def selftest(repo_root=None):
     chk(margin_bp(ENTRY_THR_BP - 3.24) < 0, "低于门槛 -> 负余量（还差多少）")
     chk(margin_bp(ENTRY_THR_BP + 5.0) > 0, "高于门槛 -> 正余量")
 
+    # ---- 建议规模 ----
+    chk(recommended_size(5000, 2000) == 500.0,
+        "建议规模 = min(5000, 2000×0.25) = 500（盘口更紧，听盘口的）")
+    chk(recommended_size(200, 20000) == 200.0,
+        "建议规模 = min(200, 20000×0.25) = 200（你自己的金额更小，听你的）")
+    chk(recommended_size(5000, None) is None,
+        "缺深度数据 -> None（**不假装**建议你填的那个数）")
+    chk(recommended_size(5000, 0) == 0.0, "深度为 0 -> 建议 0（不是 None：这是确定的'做不了'）")
+    chk(recommended_size(5000, "abc") is None, "深度字段脏 -> None（不猜）")
+    chk(recommended_size(None, 1000) == 250.0, "没填金额 -> 只按盘口给上界")
+
     good, detail = verify_against_backtest(repo_root)
     chk(good, "门槛与回测 main_cfg 一致（%s）" % detail)
 
+    good2, detail2 = verify_depth_ratio(repo_root)
+    chk(good2, "规模比例与 agent_team 一致（%s）" % detail2)
+
     bad, _ = verify_against_backtest(os.path.join(repo_root, "__no_such_repo__"))
     chk(bad is False, "回测脚本缺失时**如实返回 False**（不假装通过）")
+    bad2, _ = verify_depth_ratio(os.path.join(repo_root, "__no_such_repo__"))
+    chk(bad2 is False, "agent_team 缺失时**如实返回 False**")
 
     print("\n策略参数自检%s" % ("通过" if ok else "**失败**"))
     return 0 if ok else 1
