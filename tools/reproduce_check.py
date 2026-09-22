@@ -455,6 +455,14 @@ def check_features():
         # 前端取数鲁棒性（自检偶发变红后修的）：单接口失败不许拖死整组、骨架屏不许永久转圈
         ("web/app.js", "function fetchOne(", "前端取数·单接口失败不拖死整组"),
         ("web/app.js", "function sweepSkeletons(", "前端·残留骨架屏兜底（不留永久转圈）"),
+        # 2026-09-21：全量自检偶发变红的**真根因**——api() 没有超时，
+        # 一个接口慢到不返回就把 boot() 卡在 await 上，连"兜底扫描"都注册不到。
+        ("web/app.js", "new AbortController()", "前端取数·硬超时（防一个接口拖死 boot）"),
+        ("tools/ui_check.py", "except subprocess.TimeoutExpired",
+         "验收·浏览器超时如实报告（不再把验收脚本自己崩掉）"),
+        # 2026-09-21：ui_shot 在收尾阶段（Chrome 无响应）会**永不退出**，把调用它的
+        # 东西一起拖死。硬看门狗保证"这个脚本一定会退出"。
+        ("tools/ui_shot.js", "硬看门狗", "无头浏览器·硬看门狗（保证脚本一定退出）"),
         ("tools/ui_probe.js", "opp_max_row_h", "探针·机会名单也要过行高红线"),
         ("tools/ui_check.py", "opp_detail_overflow", "验收·机会名单展开后不越界"),
         ("project2/execution_cost.py", "def selftest(", "执行成本·闸门否决自检"),
@@ -615,11 +623,21 @@ def check_features():
                      # ⚠️ 用**条件等待**而不是固定等待：冷启动时 /api/data-status 实测要
                      #    6.2 秒、/api/assess 4.5 秒，固定 9 秒在这种机器负载下会偶发超时
                      #    （实测踩到：报"卡住的占位符"，其实只是还没加载完）。
-                     #    条件 = 页面上**不再有任何骨架屏**（改版后占位符是 .sk，
-                     #    三条数据线全部渲染完才会消失）。
-                     "--until", "!document.querySelector('.sk')",
-                     "--timeout", "150000"],
-                    cwd=BASE, capture_output=True, text=True, timeout=420,
+                     # ⚠️ 条件必须限定"**可见的**骨架屏"（2026-09-21 实测踩到）：
+                     #    原来写的是 `!document.querySelector('.sk')` —— 这是**全 DOM 扫描**，
+                     #    连"隐藏容器里的、按设计就该在那儿的"骨架屏也算。
+                     #    实例：`#acc-table-wrap` 从一开始就是 `hidden`（表格只在接入账户后
+                     #    才显示），它里面那个骨架屏永远不可见，却足以让条件永远不成立 →
+                     #    浏览器白等到超时（实测 40 秒，等的是兜底扫描）。
+                     #    getClientRects() 为空 = 没有真正被渲染 = 用户看不到加载态。
+                    "--until", "!Array.from(document.querySelectorAll('.sk'))"
+                               ".some(function(e){return e.getClientRects().length>0})",
+                     # ⚠️ 60 秒够用了（实测典型 22 秒就满足）—— 这个数**同时**决定
+                     #    ui_shot.js 硬看门狗的上限（+90 秒）。设太大反而会让
+                     #    5 张截图的总耗时超过下面 subprocess 的总预算（实测踩到：
+                     #    机器负载高时整轮超 420 秒，前端验收被降级为警告）。
+                     "--timeout", "60000"],
+                    cwd=BASE, capture_output=True, text=True, timeout=900,
                     encoding="utf-8", errors="replace")
                 _lines = [x for x in (_r.stdout or "").splitlines() if x.strip()]
                 if _r.returncode == 0 and any("skip" in x for x in _lines):
@@ -634,7 +652,16 @@ def check_features():
                     _why = " ｜ ".join(
                         x.strip() for x in _lines
                         if "[!! ]" in x or "[FAIL]" in x)[:170]
-                    bad("前端布局验收失败", _why or "见 tools/ui_check.py 输出")
+                    if not _why:
+                        # ⚠️ stdout 里没有任何诊断行 → 说明 ui_check 是**抛异常退出**的，
+                        #    原因落在 stderr（实测 2026-09-21：subprocess.TimeoutExpired）。
+                        #    原来这里回退成"见 tools/ui_check.py 输出"，等于把原因丢了 ——
+                        #    连查两轮都没查出根因，就是被这一行挡住的。
+                        _err = [x.strip() for x in (_r.stderr or "").splitlines()
+                                if x.strip()]
+                        if _err:
+                            _why = "stderr 末行：" + _err[-1][:150]
+                    bad("前端布局验收失败", _why or "stdout 与 stderr 都没有诊断信息")
         finally:
             _srv.terminate()
             try:
@@ -746,6 +773,32 @@ def check_features():
             bad("基差口径回归失败", (r.stdout or "").strip()[-200:])
     except Exception as exc:  # noqa: BLE001
         bad("基差口径回归无法运行", repr(exc))
+
+    # ---- 下单能力：**即使把开关强行打开，也必须发不出去** ----
+    # 这是"不会乱交易"的**结构保证**，也是最该被钉住的不变量：
+    #   用户问过"给了交易权限会不会胡乱下单"。答案是仓库里压根没有"发送"那一行 ——
+    #   place_order() 两个分支都返回 sent=False。哪天有人把"真正发送"接上去，
+    #   这项立刻变红，而不是等出了事故才发现。
+    # 刻意用**行为断言**而不是源码特征：源码里有 "def place_order(" 不代表它真的拒发。
+    try:
+        _env = dict(os.environ)
+        _env["BITGET_TRADE_ENABLED"] = "on"
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, '.');"
+             "import common.bitget_private as bp;"
+             "a = bool(bp.trade_enabled());"
+             "x = bp.place_order('XUSDT', side='buy', size=1);"
+             "print('trade_enabled=%s sent=%s' % (a, x.get('sent')));"
+             "sys.exit(0 if (a and x.get('sent') is False) else 1)"],
+            cwd=BASE, capture_output=True, text=True, timeout=90, env=_env)
+        if r.returncode == 0:
+            ok("下单：开关打开也**发不出**（sent=False）—— 「不会乱交易」的结构保证")
+        else:
+            bad("下单能力被意外打通（开关打开后 place_order 可能真发单）",
+                (r.stdout or "").strip()[-140:])
+    except Exception as exc:  # noqa: BLE001
+        bad("下单拒发检查无法运行", repr(exc))
 
     # ---- 采样守护的外部看门狗：必须能跑，且**绝不 kill 任何进程**（源码级断言） ----
     try:
