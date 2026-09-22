@@ -1331,6 +1331,10 @@ def build_opportunities(size_usd=DEFAULT_SIZE_USD):
         # 口径原文由后端给出（前端只渲染）—— 保证页面上写的判据就是代码用的判据。
         # ⚠️ 这段是**给用户读的**，所以：不写文件路径、不写代码符号（main_cfg / route=…
         #    这类），改用白话。口径的出处留在 docs 与本模块注释里，不往页面上搬。
+        # ⚠️「回测多少笔」**必须从回测结果读**（`backtest_headline()`），不许写死：
+        #    实测踩到 —— 这里原本写死"190 笔"，而回测扩到 09-19 窗口后实际是 210 笔，
+        #    页面于是在说一个过期的数字，而自检只核对门槛、查不到这句话。
+        #    `common/strategy_params.py` 的自检现在还额外核对"回测笔数"与"面板跨度"。
         "criteria": (
             "这份名单只回答一件事：现在有没有「值得做、而且做得到」的单。"
             "入选要同时满足三条："
@@ -1340,8 +1344,10 @@ def build_opportunities(size_usd=DEFAULT_SIZE_USD):
             "③ 平台此刻在所内撮合窗口 —— 只有这时挂单能省点差，别的时段挂了也白挂。"
             "排序：基差大的排前面，因为它代表的空间更大。做法是%s。"
             "不在名单里的，就是这三条里至少缺一条。"
-            "名单空着属正常：策略回测 65 天里够门槛的开仓只有 190 笔，平均一天不到 3 笔。"
-            % (_sparams.ENTRY_THR_BP, _sparams.ENTRY_THR_BP, _sparams.DIRECTION)
+            "%s。"
+            % (_sparams.ENTRY_THR_BP, _sparams.ENTRY_THR_BP, _sparams.DIRECTION,
+               (_sparams.backtest_headline() or "名单空着属正常")
+               + " —— 所以大多数时刻它是空的")
         ),
         "disclaimer": "名单是策略门槛的筛选结果，不是收益承诺，也不构成投资建议；本页面不下单。",
     }
@@ -1807,7 +1813,10 @@ def build_signals(size_usd=DEFAULT_SIZE_USD):
                 "sub": "门槛 %.2f bp 是策略的费用线：够不着就赚不回手续费。" % (entry_bp or 0)}
     else:
         head = {"tone": "wait", "text": "现在没有值得做的标的。",
-                "sub": "名单空着属正常 —— 回测 65 天里够门槛的开仓只有 190 笔，平均一天不到 3 笔。"}
+                # 同样**从回测结果读**，不写死（见上方 criteria 的注释）
+                "sub": "名单空着属正常 —— %s，所以大多数时刻它就是空的。"
+                       % (_sparams.backtest_headline()
+                          or "回测里够门槛的开仓本来就很少")}
 
     if fresh_min is not None and fresh_min >= ALERT_STALE_MIN and risk_state == "stale":
         head["sub"] = (head.get("sub") or "") + (

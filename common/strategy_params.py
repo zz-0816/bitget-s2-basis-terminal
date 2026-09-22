@@ -53,6 +53,80 @@ DEPTH_TAKE_RATIO = 0.25
 #: 口径出处，随接口一起返回给前端，让"这个数字哪来的"写在页面上。
 SOURCE = "tools/b_side_backtest_basis_timing.py · main_cfg"
 
+#: 回测所用面板的实测跨度（天）。页面文案会说"回测 N 天里只有多少笔开仓"。
+#: ⚠️ 这个数字**不许手写第二遍**：`verify_panel_days()` 会去读
+#: `data/panel/1h_10pairs.csv` 的首末 `ts_ms` 现算一遍，漂了自检就红。
+PANEL_DAYS = 65.4
+
+#: 回测结果（项目自己的产物）。页面文案里的"回测多少笔"必须**从这里读**。
+BACKTEST_RESULT = os.path.join("data", "b-side", "backtest", "backtest_result.json")
+
+
+def backtest_stats(repo_root=None):
+    """从**回测结果**里读出页面要引用的统计量。读不到返回 `None`（不猜、不编）。
+
+    为什么要有这个函数 —— 实测踩到：页面文案里写死了"回测 190 笔"，
+    而回测**扩到 09-19 窗口后实际是 210 笔**，页面于是在说一个过期的数字，
+    自检也查不出来（它只核对门槛，不核对这句话）。
+    现在文案从数据来，数据变了页面就跟着变。
+    """
+    import json
+    root = repo_root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        with open(os.path.join(root, BACKTEST_RESULT), encoding="utf-8") as fh:
+            d = json.load(fh)
+    except Exception:                                     # noqa: BLE001
+        return None
+    main = d.get("main") or {}
+    n = main.get("n_trades")
+    if not isinstance(n, int) or n <= 0:
+        return None
+    return {
+        "n_trades": n,
+        "win_rate_pct": main.get("win_rate_pct"),
+        "avg_trade_bp": main.get("avg_trade_bp"),
+        "entry": (d.get("main_cfg") or {}).get("entry"),
+    }
+
+
+def backtest_headline(repo_root=None):
+    """页面用的一句话。**读不到就返回 None，由调用方决定省略这句** —— 不许写死。"""
+    s = backtest_stats(repo_root)
+    if not s:
+        return None
+    return ("策略回测（%s 天面板）里够门槛的开仓只有 %d 笔"
+            % (("%g" % PANEL_DAYS), s["n_trades"]))
+
+
+def verify_panel_days(repo_root):
+    """核对 `PANEL_DAYS` 与面板文件首末 `ts_ms` 的真实跨度是否一致。"""
+    path = os.path.join(repo_root, "data", "panel", "1h_10pairs.csv")
+    first = last = None
+    try:
+        import csv
+        with open(path, encoding="utf-8", newline="") as fh:
+            rd = csv.reader(fh)
+            next(rd, None)                                # 表头
+            for row in rd:
+                if not row:
+                    continue
+                try:
+                    v = int(row[0])
+                except (ValueError, IndexError):
+                    continue
+                if first is None:
+                    first = v
+                last = v
+    except OSError as exc:
+        return False, "读不到面板 %s：%r" % (path, exc)
+    if first is None or last is None or last <= first:
+        return False, "面板里没有可用的 ts_ms"
+    days = (last - first) / 86400000.0
+    if abs(days - PANEL_DAYS) > 0.2:
+        return False, ("面板跨度漂了！实测 %.2f 天，本模块 PANEL_DAYS = %s"
+                       % (days, PANEL_DAYS))
+    return True, "面板实测 %.2f 天，与 PANEL_DAYS = %s 一致" % (days, PANEL_DAYS)
+
 
 def margin_bp(basis_bp):
     """超出开仓门槛多少 bp（负 = 还差多少）。"""
@@ -179,10 +253,24 @@ def selftest(repo_root=None):
     good2, detail2 = verify_depth_ratio(repo_root)
     chk(good2, "规模比例与 agent_team 一致（%s）" % detail2)
 
+    # ---- 页面文案引用的两个统计量必须来自数据，不许写死 ----
+    st = backtest_stats(repo_root)
+    chk(st is not None and st["n_trades"] > 0,
+        "回测统计可读（够门槛开仓 %s 笔）" % (st and st["n_trades"]))
+    chk(bool(st) and st.get("entry") == ENTRY_THR_BP,
+        "回测结果里的 main_cfg.entry 与本模块门槛一致（%s）" % (st and st.get("entry")))
+    hl = backtest_headline(repo_root)
+    chk(bool(hl) and str(st["n_trades"]) in (hl or ""),
+        "页面文案由数据生成：%s" % hl)
+    good3, detail3 = verify_panel_days(repo_root)
+    chk(good3, "面板跨度与 PANEL_DAYS 一致（%s）" % detail3)
+
     bad, _ = verify_against_backtest(os.path.join(repo_root, "__no_such_repo__"))
     chk(bad is False, "回测脚本缺失时**如实返回 False**（不假装通过）")
     bad2, _ = verify_depth_ratio(os.path.join(repo_root, "__no_such_repo__"))
     chk(bad2 is False, "agent_team 缺失时**如实返回 False**")
+    chk(backtest_stats(os.path.join(repo_root, "__no_such_repo__")) is None,
+        "回测结果缺失时**如实返回 None**（页面就不说这句话，而不是编一个数）")
 
     print("\n策略参数自检%s" % ("通过" if ok else "**失败**"))
     return 0 if ok else 1
