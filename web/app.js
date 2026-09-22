@@ -20,10 +20,24 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-async function api(path) {
-  const r = await fetch(path, { cache: 'no-store' });
-  if (!r.ok) throw new Error(path + ' -> HTTP ' + r.status);
-  return r.json();
+async function api(path, timeoutMs = 30000) {
+  /* 硬超时：任何请求最多等 30 秒。
+     ⚠️ 为什么必须有（2026-09-21 实测踩到，全量自检偶发变红的真根因）：
+     `api()` 原本**没有超时**，而 boot() 里是 `await` 串行 ——
+     只要有一个接口慢到不返回，**boot() 就永远走不到后面那句
+     `setTimeout(sweepSkeletons, 25000)`**，于是没人扫骨架屏，
+     而真浏览器验收的等待条件正是"页面没有 .sk" → 一路等到超时 →
+     `ui_check` 以 `subprocess.TimeoutExpired` 崩掉（且原因被吞，很难查）。
+     超时后按"这个接口失败"处理：如实点亮错误灯、下一轮 20 秒再试。 */
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const r = await fetch(path, { cache: 'no-store', signal: ctl.signal });
+    if (!r.ok) throw new Error(path + ' -> HTTP ' + r.status);
+    return await r.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 function reduced() {
   return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -1361,6 +1375,12 @@ const ACC_STATE = {
 function renderAccount() {
   const A = DATA.account;
   if (!A) return;
+  // 数据到了（无论"可不可用"）就把表格里的骨架屏清掉。
+  // ⚠️ 为什么必须清：`#acc-table-wrap` 在未接入时是 `hidden` 的，那片骨架屏
+  //    用户永远看不到 —— 但它**留在 DOM 里**，会让任何"页面里还有没有 .sk"
+  //    的验收/巡检条件永远不成立（实测：真浏览器验收白等 20 秒，等的是兜底扫描）。
+  //    骨架屏只在"还不知道结果"时有意义；有结果了就该消失。
+  document.querySelectorAll('#acc-table .sk').forEach((el) => el.remove());
   setText('acc-hint', A.available ? '真实仓位与资金 · 只读' : '未接入');
 
   // ---- 待处理：只成交一条腿（最危险的一类）----
@@ -1542,6 +1562,14 @@ async function refresh() {
 /* 兜底扫描：万一某个接口长期不可用，骨架屏不能永远转下去 ——
    25 秒后把残留的 .sk 换成一句能看懂的话。
    这条同时消灭"卡住的占位符"这一类问题（探针的 stuck_loading 语义）。 */
+/* 兜底扫描：把**卡住的**骨架屏换成一句能看懂的话。
+   ⚠️ 必须是**周期性**的，不能只扫一次（2026-09-21 实测踩到）：
+   `refresh()` 每 20 秒会调 `renderAll()`，而 `renderAssess()` / `renderOpps()`
+   在数据缺失时会**重新插入** `.sk` —— 只扫一次的话，25 秒扫干净、
+   40 秒又被插回来，从此再没人管；真浏览器验收的等待条件
+   （"页面没有 .sk"）于是永远在 true/false 之间抖，最后等到超时。
+   15 秒一次足够便宜（没有 .sk 时就是个空循环），而且能保证：
+   **任何骨架屏最多在屏幕上停 15 秒。** */
 function sweepSkeletons() {
   const left = document.querySelectorAll('.sk');
   left.forEach((el) => {
@@ -1570,6 +1598,12 @@ async function boot() {
   initSize();
   applyView(currentView(), { animate: false, scroll: false });   // 先定视图，再取数
 
+  // ⚠️ 兜底必须**在任何 await 之前**注册，而且必须**周期性**跑。
+  //    ① 放在 boot() 最后一行时：只要有接口慢到不返回就永远注册不到；
+  //    ② 只扫一次时：refresh() 每 20 秒会重新插入骨架屏，扫过又被插回来。
+  //    兜底是"保命"的东西 —— 它的存在和执行都不能依赖"数据能正常到达"。
+  setTimeout(() => { sweepSkeletons(); setInterval(sweepSkeletons, 15000); }, 20000);
+
   const pill = $('alert-pill');
   if (pill) pill.addEventListener('click', () => go('signals'));
 
@@ -1578,6 +1612,15 @@ async function boot() {
     const b = e.target.closest ? e.target.closest('.sig-link') : null;
     if (b && b.dataset.goto) go(b.dataset.goto);
   });
+
+  // ⚠️「我的账户」与上面三条链路**完全无关**，必须**立刻并发发起**，不能排在 await 后面。
+  //    实测踩到（2026-09-21）：它原本排在主链路所有 await 之后，冷启动时
+  //    几十秒才开始请求 —— 于是 `acc-table` 的骨架屏一直挂着，被 `sweepSkeletons`
+  //    兜底换成"暂时取不到数据 —— 请确认本地服务在运行"。
+  //    **那句话是错的**：服务明明在跑，真实原因是"没配密钥"，
+  //    而 `renderAccount()` 里本来就有正确的「未接入 + 三步指引」。
+  //    结论：兜底文案永远只是兜底，别让正常路径依赖它。
+  loadAccount();
 
   // ⚠️ 加载顺序是有讲究的（冷启动实测踩到）：
   //    改版后默认视图是「怎么做」，但 `loadSignals()` 原本排在
@@ -1597,7 +1640,7 @@ async function boot() {
   // 右下角提醒同理：没有持仓单/告警文件时静默不显示
   loadAlerts();
   // 账户信息变化慢（后端 60 秒缓存），单独一个慢节拍，不跟着主循环每 20 秒打
-  loadAccount();
+  // （首次请求已在 boot() 开头并发发起 —— 见那里的注释，别挪回来）
   setInterval(loadAccount, REFRESH_MS * 3);
 
   tickClock();
@@ -1609,8 +1652,7 @@ async function boot() {
   setInterval(loadAlerts, REFRESH_MS);
   setInterval(loadSignals, REFRESH_MS);
   setInterval(loadHealth, 30000);
-  // 兜底：25 秒后清掉任何残留骨架屏（不让页面永远转圈）
-  setTimeout(sweepSkeletons, 25000);
+  // （兜底扫描已在 boot() 开头注册 —— 见那里的注释，别挪回这里）
 }
 
 window.addEventListener('hashchange', () => applyView(currentView()));

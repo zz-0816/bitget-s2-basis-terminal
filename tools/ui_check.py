@@ -114,8 +114,24 @@ def main(argv=None):
             cmd += ["--click", click, "--settle", "1500"]
         if args.until:
             cmd += ["--until", args.until]
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
-                           encoding="utf-8", errors="replace")
+        # ⚠️ 必须接住 TimeoutExpired（2026-09-21 实测踩到，全量自检偶发变红的真根因）：
+        #    原来这里没有 try，浏览器一旦卡住（例如 `--until` 的条件永远不满足），
+        #    `subprocess.run` 抛的异常会**直接把整个验收脚本崩掉** ——
+        #    而 traceback 只落在 stderr，上层只看到"前端布局验收失败"、查不到原因。
+        #    验收脚本被它要检查的东西搞崩，本身就是缺陷；这里改成**如实报告**。
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                               encoding="utf-8", errors="replace")
+        except subprocess.TimeoutExpired:
+            print("  [!! ] 浏览器超过 300 秒没返回（%s）" % tag)
+            print("        多半是等待条件（--until）一直不满足，条件 = %s"
+                  % (args.until or "（未设置）"))
+            print("        排查顺序：① 页面是否还有残留骨架屏 .sk（可能有接口没返回）；"
+                  "② 服务端是否卡住；③ 适当增大 --timeout。")
+            return None
+        except Exception as exc:                        # noqa: BLE001
+            print("  [!! ] 浏览器启动失败（%s）：%r" % (tag, exc))
+            return None
         if not os.path.exists(out_json):
             print("  [!! ] 浏览器没跑出结果（%s，退出码 %d）" % (tag, p.returncode))
             print("        " + ((p.stdout or "")[-400:] or (p.stderr or "")[-400:])
@@ -263,6 +279,12 @@ def main(argv=None):
         # 「全部」兜底页签已按用户要求去掉；另加「⑤ 我的账户」（只读）
         for v in ("monitor", "decision", "evidence", "account"):
             rv = shot_once('#viewtabs button[data-view="%s"]' % v, v)
+            if rv is None:
+                # ⚠️ 重试一次（2026-09-21 实测踩到）：机器负载高时单个视图的
+                #    无头浏览器可能整个卡住。重试能把"偶发"和"真回归"分开 ——
+                #    真回归重试还是失败。
+                print("  [ ~ ] 视图「%s」截图失败，重试一次…" % v)
+                rv = shot_once('#viewtabs button[data-view="%s"]' % v, v + "-retry")
             if rv is None:
                 ok = False
                 continue

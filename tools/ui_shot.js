@@ -128,6 +128,23 @@ async function main() {
   const bin = findBrowser(args.browser);
   if (!bin) { console.error("[FAIL] 找不到 Chrome/Edge；可用 --browser 显式指定"); process.exit(1); }
 
+  // ---- 硬看门狗：**保证这个脚本一定会退出** ----
+  // 为什么必须有（2026-09-21 实测踩到）：
+  //   全量自检里的前端验收报"浏览器超过 300 秒没返回（decision）"。
+  //   `--until` 的轮询本身是有上限的（args.timeout），所以 300 秒不是等条件等出来的 ——
+  //   是**收尾阶段挂住了**（最可能：Chrome 无响应，`browser.close()` 不返回），
+  //   于是这个脚本永不退出，把所有调用它的东西一起拖死。
+  //   同一个道理和前端那句一样：**工具不能依赖"外部一定会响应"**。
+  //   上限取 args.timeout + 90 秒（留足启动与截图），到点就退出并说明原因。
+  const hardLimit = args.timeout + 90000;
+  const watchdog = setTimeout(() => {
+    console.log("  [!! ] 硬看门狗触发：整个流程超过 " + Math.round(hardLimit / 1000)
+      + " 秒仍未结束 —— 大概率是 Chrome 无响应。"
+      + "（退出码 2；截图/JSON 可能没生成）");
+    process.exit(2);
+  }, hardLimit);
+  if (watchdog.unref) watchdog.unref();
+
   const port = 9200 + Math.floor(Math.random() * 500);
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "ui-shot-"));
   const child = spawn(bin, [
