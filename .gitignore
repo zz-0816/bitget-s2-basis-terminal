@@ -79,3 +79,4 @@ PERFMSG.txt
 *.env
 !.env.example
 .workbuddy/
+b-side-kit/data/
