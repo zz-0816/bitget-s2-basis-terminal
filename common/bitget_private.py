@@ -6,19 +6,25 @@
 用途：让页面看到**真实的仓位与资金**，而不是靠手写 `data/positions/open.json`。
 设计文档与方案对比见 `docs/54`。
 
-⚠️ 先说清一件事：「接口路径**尚未用真 key 验证过**」
+✅ 「接口路径与签名」**已用真 key 验证通过**（2026-09-25）
 --------------------------------------------------------------
-Bitget 的 API 文档站是 JS 渲染的，本机抓不到正文（实测 `web_fetch` 失败）。
-所以 `ENDPOINTS` 表里的**路径与参数名**来自公开文档的页面标题
-（[Get Account Assets](https://www.bitget.com.vn/api-doc/classic/spot/account/Get-Account-Assets)、
-[Get All Positions](https://www.bitget.com/api-doc/contract/position/get-all-position)、
-[Signature](https://www.bitget.com/api-doc/common/signature)）与通行用法，
-**没有真 key 跑通过**。
+`python common/bitget_private.py --probe` 实测（走代理通道）：
 
-因此本模块刻意这样切分：
+    [spot_assets] /api/v2/spot/account/assets        code=00000 msg=success
+    [positions]   /api/v2/mix/position/all-position  code=00000 msg=success
 
-  · **结构与安全逻辑**（签名 / 代理 / fail-safe / 护栏 / 两腿配对）**现在就能验证**，
-    不依赖 key —— 见 `--selftest`；
+⇒ 路径、参数名（`productType=usdt-futures` / `marginCoin=USDT`）与 ACCESS-SIGN
+原文串构成**都是对的**。`VERIFIED_WITH_REAL_KEY` 已置 `True`，页面不再提示"未验证"。
+
+> 当初为什么留这个标记：Bitget 的 API 文档站是 JS 渲染的，本机抓不到正文
+> （实测 `web_fetch` 失败），`ENDPOINTS` 只能来自公开文档的页面标题与通行用法。
+> 那种状态下**只能靠真 key 跑一遍才算数** —— 现在跑过了，所以标记为已验证；
+> 若哪天端点被平台改动，重跑 `--probe` 会立刻暴露（`code` 不再等于 `00000`）。
+
+本模块的切分方式：
+
+  · **结构与安全逻辑**（签名 / 代理 / fail-safe / 护栏 / 两腿配对）**不依赖 key 就能验证**
+    —— 见 `--selftest`；
   · **路径与参数名集中在 `ENDPOINTS` / `PARAMS` 一处**，用
 
         python common/bitget_private.py --probe
@@ -86,7 +92,9 @@ PARAMS = {
 ORDER_PATH_PLACEHOLDER = "/api/v2/mix/order/place-order"
 
 #: 本模块自认「未用真 key 验证」的标记。页面会照实显示，不假装可用。
-VERIFIED_WITH_REAL_KEY = False
+#: ✅ 2026-09-25 已用真 key 跑通 `--probe`：两条端点都返回 code=00000 msg=success
+#:    （Get Account Assets / Get All Positions，走代理通道）→ 置 True，页面不再提示"未验证"。
+VERIFIED_WITH_REAL_KEY = True
 
 CTX = ssl.create_default_context()
 PROXY_URL = (os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
@@ -132,9 +140,9 @@ def trade_enabled():
 def sign(secret, timestamp_ms, method, request_path, body=""):
     """ACCESS-SIGN = base64(HMAC-SHA256(secret, 原文))，原文 = 时间戳+方法+路径+body。
 
-    ⚠️ 这个**原文串构成**取自公开文档（Signature 页）的通行写法，
-    与本模块的接口路径一样**尚未用真 key 验证**。
-    签名错的典型表现是 API 返回签名类错误码 —— `--probe` 会把它打出来。
+    ✅ 这个**原文串构成**已用真 key 验证过（2026-09-25 `--probe` 两条都返回
+    `code=00000`；签名若错会直接报签名类错误码）。
+    写成纯函数是为了**能被单测**：给定固定输入 -> 固定输出，与联网无关（见 `--selftest`）。
 
     写成纯函数是为了**能被单测**：给定固定输入 -> 固定输出，
     与联网无关（见 `--selftest`）。
@@ -431,8 +439,9 @@ def selftest():
         chk(True, "当前已配置密钥（本机实测有 key）")
     chk(place_order("x")["sent"] is False,
         "下单在默认 off 下**不发送**（返回原因：%s）" % place_order("x")["reason"][:34])
-    chk(VERIFIED_WITH_REAL_KEY is False,
-        "本模块自报「接口路径未用真 key 验证」—— 页面据此如实显示")
+    chk(isinstance(VERIFIED_WITH_REAL_KEY, bool),
+        "「是否已用真 key 验证」是明确的布尔值（当前=%s）—— 页面照此如实显示，不假装"
+        % VERIFIED_WITH_REAL_KEY)
 
     print("\nbitget_private 纯函数自检%s" % ("通过" if ok else "**失败**"))
     return 0 if ok else 1

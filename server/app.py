@@ -1963,13 +1963,38 @@ def build_account():
                       and r["action"].get("action") != "hold"]
     out["spot_usd_total"] = round(
         sum(r["spot_usd"] for r in rows if r.get("spot_usd")), 2) or None
-    out["available"] = True
+
+    # ---- 诚实性：**「账户可读」不等于「账户能做」** ----
+    # 实测踩到（2026-09-25 首次接真 key）：账户里只有 0.152 USDT、10 个标的一条腿都没有，
+    # 而页面只会安静地显示 10 行"空仓"。用户（尤其小白）会读成"账户没问题"，
+    # 其实根本没资金可做 —— 所以这里主动把两件事说清：**有没有腿、还有多少钱**。
+    usdt = None
+    for _a in (spot or []):
+        if str(_a.get("coin", "")).upper() == "USDT":
+            try:
+                usdt = float(_a.get("available") or 0) + float(_a.get("frozen") or 0)
+            except (TypeError, ValueError):
+                usdt = None
+            break
+    out["usdt_available"] = round(usdt, 6) if usdt is not None else None
+
+    notes = []
+    has_leg = any((r.get("spot_qty") or 0) or (r.get("perp_size") or 0) for r in rows)
+    if not has_leg:
+        _m = "账户已接入、可读，但**这 %d 个标的上一条腿都没有**（现货与永续都是空的）。" % len(rows)
+        if usdt is not None and usdt < 10:
+            _m += (" 可用 USDT 只有 **%s** —— 不足以开出任何一仓；"
+                   "要实测「补腿 / 两腿配对」这套流程，得先入金。" % ("%g" % usdt))
+        notes.append(_m)
     if not out["verified"]:
-        out["note"] = ("⚠️ 这些接口路径**还没用真 key 验证过**（Bitget 文档站是 JS 渲染的，"
-                       "本机抓不到正文）。跑 `python common/bitget_private.py --probe` "
-                       "会逐条验证；若报 404/参数错，按提示改 "
-                       "`common/bitget_private.py` 的 ENDPOINTS 一处即可。"
-                       "在上面那个数字变成 verified 之前，请以交易所 App 为准。")
+        notes.append("⚠️ 这些接口路径**还没用真 key 验证过**（Bitget 文档站是 JS 渲染的，"
+                     "本机抓不到正文）。跑 `python common/bitget_private.py --probe` "
+                     "会逐条验证；若报 404/参数错，按提示改 "
+                     "`common/bitget_private.py` 的 ENDPOINTS 一处即可。"
+                     "在上面那个数字变成 verified 之前，请以交易所 App 为准。")
+    if notes:
+        out["note"] = " ".join(notes)
+    out["available"] = True
     _ACCOUNT_CACHE.update({"data": out, "ts": time.time()})
     return out
 
