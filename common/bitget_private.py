@@ -453,6 +453,7 @@ def probe():
         return 0
 
     print("  代理：%s" % PROXY_URL)
+    good = 0
     for name in ("spot_assets", "positions"):
         print()
         print("  [%s] %s" % (name, ENDPOINTS[name]))
@@ -469,6 +470,25 @@ def probe():
                                   else "  首条字段：%s" % sorted(data[0].keys())[:12]))
         if not _ok(p):
             print("     -> code 非 00000：签名或参数不对，按上面 msg 调")
+        else:
+            good += 1
+    print()
+    # ---- 两条都通 → 明确告诉用户怎么把页面上的"未验证"变成"已验证" ----
+    # 这个标记（VERIFIED_WITH_REAL_KEY）是给页面用的：没验证过就如实显示"未验证"。
+    # 探针是唯一能把它变真的证据来源，所以这里给出**唯一一条**后续动作 ——
+    # 否则用户会以为"接口通了，页面自然就会变"。
+    if good == len(ENDPOINTS):
+        if VERIFIED_WITH_REAL_KEY:
+            print("  ✅ 两条接口都通过，且本模块已标记为「已用真 key 验证」。")
+        else:
+            print("  ✅ 两条接口都通过！还剩最后一步（可选）：")
+            print("     把 common/bitget_private.py 里的")
+            print("         VERIFIED_WITH_REAL_KEY = False")
+            print("     改成 True —— 页面上「未验证」的提示就会消失")
+            print("     （不改也行：它会一直如实提示\"以交易所 App 为准\"，这是有意的。）")
+    else:
+        print("  ⚠️ 有接口未通过（%d/%d 通过）：先按上面提示校准 ENDPOINTS / 参数，"
+              "再重跑本探针。" % (good, len(ENDPOINTS)))
     print()
     print("  说明：本探针**只读**。下单需 BITGET_TRADE_ENABLED=on，且当前实现有意未发送。")
     return 0
