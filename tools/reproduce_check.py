@@ -623,15 +623,15 @@ def check_features():
                      # ⚠️ 用**条件等待**而不是固定等待：冷启动时 /api/data-status 实测要
                      #    6.2 秒、/api/assess 4.5 秒，固定 9 秒在这种机器负载下会偶发超时
                      #    （实测踩到：报"卡住的占位符"，其实只是还没加载完）。
-                     # ⚠️ 条件必须限定"**可见的**骨架屏"（2026-09-21 实测踩到）：
-                     #    原来写的是 `!document.querySelector('.sk')` —— 这是**全 DOM 扫描**，
-                     #    连"隐藏容器里的、按设计就该在那儿的"骨架屏也算。
-                     #    实例：`#acc-table-wrap` 从一开始就是 `hidden`（表格只在接入账户后
-                     #    才显示），它里面那个骨架屏永远不可见，却足以让条件永远不成立 →
-                     #    浏览器白等到超时（实测 40 秒，等的是兜底扫描）。
-                     #    getClientRects() 为空 = 没有真正被渲染 = 用户看不到加载态。
-                    "--until", "!Array.from(document.querySelectorAll('.sk'))"
-                               ".some(function(e){return e.getClientRects().length>0})",
+                     # ⚠️ 条件必须同时满足**两件事**（2026-09-25 实测踩到）：
+                     #    ① 没有**可见的**骨架屏（隐藏容器里的按设计存在，不算）；
+                     #    ② 首批数据已经**落定**（页面在 `boot()` 里设 `window.__settled=1`）。
+                     #    原来只写了①，而 `sweepSkeletons` 兜底会在真实数据到达**之前**
+                     #    就把骨架屏换成文字 —— 条件提前满足，截图拍到三张空卡，
+                     #    验收报"判据实测 0"，看起来像接口坏了，其实是**拍早了**。
+                     "--until", "!Array.from(document.querySelectorAll('.sk'))"
+                                ".some(function(e){return e.getClientRects().length>0})"
+                                " && (window.__settled||0) >= 1",
                      # ⚠️ 60 秒够用了（实测典型 22 秒就满足）—— 这个数**同时**决定
                      #    ui_shot.js 硬看门狗的上限（+90 秒）。设太大反而会让
                      #    5 张截图的总耗时超过下面 subprocess 的总预算（实测踩到：
