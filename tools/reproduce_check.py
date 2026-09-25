@@ -774,31 +774,84 @@ def check_features():
     except Exception as exc:  # noqa: BLE001
         bad("基差口径回归无法运行", repr(exc))
 
-    # ---- 下单能力：**即使把开关强行打开，也必须发不出去** ----
+    # ---- 下单闸门：**真实环境永远发不出；模拟盘默认也只是 dry-run** ----
     # 这是"不会乱交易"的**结构保证**，也是最该被钉住的不变量：
-    #   用户问过"给了交易权限会不会胡乱下单"。答案是仓库里压根没有"发送"那一行 ——
-    #   place_order() 两个分支都返回 sent=False。哪天有人把"真正发送"接上去，
-    #   这项立刻变红，而不是等出了事故才发现。
-    # 刻意用**行为断言**而不是源码特征：源码里有 "def place_order(" 不代表它真的拒发。
+    #   用户问过"给了交易权限会不会胡乱下单"。现在的答案是**两重**：
+    #     ① 真实环境（BITGET_PAPTRADING=off）即使把下单开关打开、显式 dry_run=False，
+    #        也发不出去 —— 因为 ALLOW_LIVE_TRADING=False 是具名常量，改它是个刻意动作；
+    #     ② 模拟盘里默认 dry-run（只列出将发的请求），要真发得再显式一次。
+    # 刻意用**行为断言**而不是源码特征：源码里有"发送"几个字，不代表闸门真的挡得住。
     try:
         _env = dict(os.environ)
+        _env["BITGET_PAPTRADING"] = "off"
         _env["BITGET_TRADE_ENABLED"] = "on"
         r = subprocess.run(
             [sys.executable, "-c",
              "import sys; sys.path.insert(0, '.');"
              "import common.bitget_private as bp;"
              "a = bool(bp.trade_enabled());"
-             "x = bp.place_order('XUSDT', side='buy', size=1);"
-             "print('trade_enabled=%s sent=%s' % (a, x.get('sent')));"
+             "x = bp.place_order('XUSDT', 'sell', 1, price='1',"
+             "                   client_oid='rc#1', dry_run=False);"
+             "print('trade_enabled=%s sent=%s reason=%s'"
+             "      % (a, x.get('sent'), str(x.get('reason'))[:24]));"
              "sys.exit(0 if (a and x.get('sent') is False) else 1)"],
             cwd=BASE, capture_output=True, text=True, timeout=90, env=_env)
         if r.returncode == 0:
-            ok("下单：开关打开也**发不出**（sent=False）—— 「不会乱交易」的结构保证")
+            ok("下单闸门①：真实环境即使开关打开 + 显式真发，也**发不出去**（sent=False）")
         else:
-            bad("下单能力被意外打通（开关打开后 place_order 可能真发单）",
+            bad("真实环境能发出单了（闸门①被绕过）—— 这是最严重的一类回退",
                 (r.stdout or "").strip()[-140:])
     except Exception as exc:  # noqa: BLE001
         bad("下单拒发检查无法运行", repr(exc))
+
+    try:
+        _env = dict(os.environ)
+        _env["BITGET_PAPTRADING"] = "on"
+        _env["BITGET_TRADE_ENABLED"] = "on"
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, '.');"
+             "import common.bitget_private as bp;"
+             "x = bp.place_order('XUSDT', 'sell', 1, price='1', client_oid='rc#2');"
+             "ok = (x.get('sent') is False and x.get('dry_run') is True"
+             "      and (x.get('request') or {}).get('env') == 'paptrading');"
+             "print('sent=%s dry_run=%s env=%s'"
+             "      % (x.get('sent'), x.get('dry_run'),"
+             "         (x.get('request') or {}).get('env')));"
+             "sys.exit(0 if ok else 1)"],
+            cwd=BASE, capture_output=True, text=True, timeout=90, env=_env)
+        if r.returncode == 0:
+            ok("下单闸门②：模拟盘里**默认 dry-run**（只列将发请求，不发送）且标明环境")
+        else:
+            bad("模拟盘的 dry-run 默认行为被破坏（可能一调就真发）",
+                (r.stdout or "").strip()[-140:])
+    except Exception as exc:  # noqa: BLE001
+        bad("dry-run 默认行为检查无法运行", repr(exc))
+
+    # ---- 模拟盘横幅：后端必须给出环境标记（页面据此标注，不然会拿虚拟资金冒充真钱） ----
+    for rel, needle, desc in [
+            ("common/bitget_private.py", "paptrading_enabled()",
+             "环境开关·模拟盘（唯一判定入口）"),
+            ("common/bitget_private.py", 'h["paptrading"] = "1"',
+             "请求头注入·paptrading:1（只有这一处）"),
+            ("common/bitget_private.py", "ALLOW_LIVE_TRADING = False",
+             "真实下单总闸门·默认关（改它是刻意动作）"),
+            ("server/app.py", '"trade_env"',
+             "后端暴露当前环境（页面横幅的依据）"),
+            ("web/index.html", 'id="envbar"',
+             "前端模拟盘横幅容器"),
+            ("tools/demo_trade_test.py", "def main(",
+             "模拟盘端到端测试脚本"),
+    ]:
+        p = os.path.join(BASE, rel)
+        if not os.path.exists(p):
+            bad("%s 不存在（%s）" % (rel, desc))
+            continue
+        if needle in open(p, encoding="utf-8").read():
+            ok("%-26s %s" % (os.path.basename(rel), desc))
+        else:
+            bad("%s 缺少 %s（%s）" % (rel, needle, desc),
+                "该能力被回退或误删；用 git log -p 查是哪次提交")
 
     # ---- 采样守护的外部看门狗：必须能跑，且**绝不 kill 任何进程**（源码级断言） ----
     try:

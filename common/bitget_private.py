@@ -80,16 +80,32 @@ ENDPOINTS = {
     "spot_assets": "/api/v2/spot/account/assets",
     # 页面标题：Get All Positions（合约全部持仓）
     "positions": "/api/v2/mix/position/all-position",
+    # 页面标题：Get Account（**合约账户资产** —— 保证金够不够就看它）
+    "mix_account": "/api/v2/mix/account/account",
+    # 挂单查询（下单后确认"到底有没有挂上"）
+    "orders_pending": "/api/v2/mix/order/orders-pending",
+    "orders_spot_pending": "/api/v2/spot/trade/unfilled-orders",
+    # 订单详情 / 撤单
+    "order_detail": "/api/v2/mix/order/detail",
+    "cancel_mix_order": "/api/v2/mix/order/cancel-order",
+    "cancel_spot_order": "/api/v2/spot/trade/cancel-order",
+    # 下单（POST + JSON body）。⚠️ **只允许在模拟盘发送** —— 见 place_order()
+    "place_mix_order": "/api/v2/mix/order/place-order",
+    "place_spot_order": "/api/v2/spot/trade/place-order",
 }
 
 PARAMS = {
-    # productType 用美股永续所在的 usdt-futures；marginCoin 限定 USDT 本位
     "positions": {"productType": "usdt-futures", "marginCoin": "USDT"},
     "spot_assets": {},
+    "mix_account": {"productType": "usdt-futures", "marginCoin": "USDT"},
+    "orders_pending": {"productType": "usdt-futures"},
+    "orders_spot_pending": {},
 }
 
-#: 下单类端点**不放在这里** —— 见 `place_order()` 的说明（本轮未实现发送）。
-ORDER_PATH_PLACEHOLDER = "/api/v2/mix/order/place-order"
+#: 真实交易的总闸门。**刻意做成一个具名常量**，而不是散落的 if：
+#: 要允许真实环境下单，必须显式把它改成 True（一次可审计、可 grep 的改动），
+#: 而不是某天不小心把模拟盘开关指向了真 key。
+ALLOW_LIVE_TRADING = False
 
 #: 本模块自认「未用真 key 验证」的标记。页面会照实显示，不假装可用。
 #: ✅ 2026-09-25 已用真 key 跑通 `--probe`：两条端点都返回 code=00000 msg=success
@@ -113,8 +129,34 @@ def _opener(use_proxy):
 
 # ---------------------------------------------------------------- 凭据
 
+def paptrading_enabled():
+    """模拟盘（Demo Trading）开关。**默认 off**。
+
+    为 on 时：① 所有私有请求都会带上 `paptrading: 1` 请求头（注入点只有
+    `build_headers()` 一处）；② `credentials()` 只认模拟盘密钥，缺了就报不可用。
+    """
+    return str(_cfg.get("BITGET_PAPTRADING", "off")).strip().lower() in (
+        "on", "1", "true", "yes")
+
+
+def env_name():
+    """当前连的是哪个环境：`paptrading`（模拟盘）或 `live`（真实）。"""
+    return "paptrading" if paptrading_enabled() else "live"
+
+
 def credentials():
-    """从统一配置层取三个密钥。**返回的字典绝不能被打印。**"""
+    """从统一配置层取三个密钥。**返回的字典绝不能被打印。**
+
+    ⚠️ 模拟盘开启时**只**返回模拟盘那三把，**绝不回落**到真实密钥 ——
+    否则一次配置失误就可能把"模拟盘开关"指向真钱。缺了就是缺了，
+    让 `available()` 如实报不可用，而不是悄悄换一把钥匙。
+    """
+    if paptrading_enabled():
+        return {
+            "key": (_cfg.get("BITGET_PAPTRADING_API_KEY") or "").strip(),
+            "secret": (_cfg.get("BITGET_PAPTRADING_API_SECRET") or "").strip(),
+            "passphrase": (_cfg.get("BITGET_PAPTRADING_API_PASSPHRASE") or "").strip(),
+        }
     return {
         "key": (_cfg.get("BITGET_API_KEY") or "").strip(),
         "secret": (_cfg.get("BITGET_API_SECRET") or "").strip(),
@@ -126,6 +168,9 @@ def available():
     """三个密钥齐了才算可用。缺哪个就如实说缺哪个（**不说"没配"了事**）。"""
     c = credentials()
     missing = [k for k in ("key", "secret", "passphrase") if not c[k]]
+    if missing and paptrading_enabled():
+        # 说清是"模拟盘密钥"缺，而不是笼统的"没配密钥" —— 这两件事的处置完全不同
+        missing = ["模拟盘 " + m for m in missing]
     return (not missing), missing
 
 
@@ -143,9 +188,6 @@ def sign(secret, timestamp_ms, method, request_path, body=""):
     ✅ 这个**原文串构成**已用真 key 验证过（2026-09-25 `--probe` 两条都返回
     `code=00000`；签名若错会直接报签名类错误码）。
     写成纯函数是为了**能被单测**：给定固定输入 -> 固定输出，与联网无关（见 `--selftest`）。
-
-    写成纯函数是为了**能被单测**：给定固定输入 -> 固定输出，
-    与联网无关（见 `--selftest`）。
     """
     pre = "%s%s%s%s" % (str(timestamp_ms), str(method).upper(),
                         str(request_path), body or "")
@@ -156,7 +198,7 @@ def sign(secret, timestamp_ms, method, request_path, body=""):
 
 def build_headers(cred, method, request_path, body=""):
     ts = str(int(time.time() * 1000))
-    return {
+    h = {
         "ACCESS-KEY": cred["key"],
         "ACCESS-SIGN": sign(cred["secret"], ts, method, request_path, body),
         "ACCESS-TIMESTAMP": ts,
@@ -164,6 +206,11 @@ def build_headers(cred, method, request_path, body=""):
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0",
     }
+    # 模拟盘：官方要求带 `paptrading: 1`。**注入点只有这一处** ——
+    # 散到别处去就一定会漂（本项目已经因为"两处各算一份"漂过好几次）。
+    if paptrading_enabled():
+        h["paptrading"] = "1"
+    return h
 
 
 def _http(method, path, params=None, body="", timeout=15):
@@ -355,23 +402,168 @@ def recommend_action(row):
     return None
 
 
-# ---------------------------------------------------------------- 下单（本轮**不发送**）
+# ---------------------------------------------------------------- 只读：合约账户 / 挂单
 
-def place_order(*_a, **_kw):
-    """**有意未实现「真正发送」那一步。**
+def read_mix_account():
+    """**合约账户资产**（保证金够不够就看它）。返回 (dict, err)。
 
-    本轮交付的是只读连接器 + 安全骨架。下单的最后一行留到：
-      ① `--probe` 把接口路径用真 key 验证过；
-      ② `docs/54` 的 7 道护栏逐条落地并有自检；
-      ③ 用户明确开启 `BITGET_TRADE_ENABLED=on`。
-
-    在此之前，这个函数**永远返回"未启用"** —— 即使 key 带交易权限。
+    为什么单独一个函数：此前只知道"有没有持仓"，不知道"还有多少保证金可用" ——
+    于是"超余额"这道护栏连数据都不具备。现在补上。
     """
+    p, err = _http("GET", ENDPOINTS["mix_account"], PARAMS["mix_account"])
+    if err:
+        return None, err
+    if not _ok(p):
+        return None, err_msg(p)
+    d = p.get("data")
+    if isinstance(d, list):
+        d = d[0] if d else {}
+    return (d or {}), None
+
+
+def read_pending_orders():
+    """USDT 本位合约的**当前挂单**。返回 (list, err)。"""
+    p, err = _http("GET", ENDPOINTS["orders_pending"], PARAMS["orders_pending"])
+    if err:
+        return None, err
+    if not _ok(p):
+        return None, err_msg(p)
+    return (p.get("data") or []), None
+
+
+def cancel_order(symbol, order_id=None, client_oid=None):
+    """撤掉一笔合约挂单。**模拟盘之外会被 place_order 的同款闸门挡住**。"""
+    gate = _send_gate()
+    if gate:
+        return {"ok": False, "reason": gate, "response": None}
+    body = {"symbol": symbol, "productType": "usdt-futures",
+            "marginCoin": "USDT"}
+    if order_id:
+        body["orderId"] = str(order_id)
+    elif client_oid:
+        body["clientOid"] = str(client_oid)
+    else:
+        return {"ok": False, "reason": "撤单必须给 orderId 或 clientOid", "response": None}
+    resp, err = _http("POST", ENDPOINTS["cancel_mix_order"], None, _json(body))
+    if err:
+        return {"ok": False, "reason": err, "response": None}
+    return {"ok": _ok(resp), "reason": resp.get("msg"),
+            "response": resp}
+
+
+# ---------------------------------------------------------------- 下单
+
+#: 真实交易的总闸门。刻意做成具名常量（见文件头 ENDPOINTS 附近的说明）。
+def _send_gate():
+    """返回 None = 允许发送；返回字符串 = 拒绝并说明原因。
+
+    **三重闸门按顺序查**，任何一条不过都不发：
+      ① 环境闸门：只有模拟盘可以发（除非有人显式放开 ALLOW_LIVE_TRADING）；
+      ② 开关闸门：BITGET_TRADE_ENABLED 必须为 on；
+      ③ 密钥闸门：当前环境的密钥必须齐。
+    把"模拟盘"作为**第一道**闸门是有意的：这样真实环境**结构上发不出**，
+    而完整链路仍可在模拟盘里端到端测通。
+    """
+    if not paptrading_enabled() and not ALLOW_LIVE_TRADING:
+        return ("拒绝发送：当前是**真实环境**，而本项目只允许在模拟盘里发送订单。"
+                "（要完整测试下单链路，请设 BITGET_PAPTRADING=on 并配置模拟盘密钥；"
+                "要真的允许真实下单，必须显式把 common/bitget_private.py 里的 "
+                "ALLOW_LIVE_TRADING 改成 True —— 这是个刻意动作，不是配置项。）")
     if not trade_enabled():
-        return {"sent": False,
-                "reason": "下单能力未启用（BITGET_TRADE_ENABLED=off，这是默认值）"}
-    return {"sent": False,
-            "reason": "下单尚未实现：接口路径与 7 道护栏待验证（见 docs/54）"}
+        return "下单能力未启用（BITGET_TRADE_ENABLED=off，这是默认值）"
+    ok, missing = available()
+    if not ok:
+        return "密钥不可用（缺 %s）" % "、".join(missing)
+    return None
+
+
+def place_order(symbol, side, size, price=None, *, kind="mix",
+                order_type="limit", client_oid=None, margin_mode="crossed",
+                trade_side=None, dry_run=None, **_kw):
+    """下一笔单。**三重闸门 + 默认 dry-run**。
+
+    参数：
+      · `symbol`    如 `RTSLAUSDT`（现货腿）或 `TSLAUSDT`（永续腿）
+      · `side`      `buy` / `sell`（单向持仓模式下 sell 即开空）
+      · `size`      数量（币本位）。**必须由调用方算好** —— 本函数不猜数量
+      · `price`     限价单必填。**本项目只允许限价单**（市价单在薄盘口会吃穿 5 档）
+      · `client_oid` **幂等键，必填**。不自动生成 —— 自动生成会掩盖"重复提交"
+        （护栏 #1：双击/重试导致下出第二条腿，是这套系统最贵的事故）
+      · `dry_run`   默认 True：**只返回要发的请求，不发送**。要真发得显式 False
+
+    返回 dict：
+        {"sent": bool, "dry_run": bool, "reason": str,
+         "request": {...}, "response": {...}|None}
+
+    ⚠️ 即使在模拟盘，**默认也不发送**（dry_run 默认 True）。两步确认是刻意的：
+    第一次只看到"将要发生什么"，第二次才真的发生。
+    """
+    if order_type != "limit":
+        return {"sent": False, "dry_run": True,
+                "reason": "只允许限价单（orderType=limit）：市价单会在薄盘口吃穿 5 档，"
+                          "把 3 bp 的问题变成 30 bp",
+                "request": None, "response": None}
+    if price in (None, ""):
+        return {"sent": False, "dry_run": True, "reason": "限价单必须给 price",
+                "request": None, "response": None}
+    if not client_oid:
+        return {"sent": False, "dry_run": True,
+                "reason": "必须给 client_oid（幂等键）—— 不自动生成，"
+                          "否则会掩盖重复提交（护栏 #1）",
+                "request": None, "response": None}
+
+    if kind == "spot":
+        path = ENDPOINTS["place_spot_order"]
+        body = {
+            "symbol": symbol, "side": side, "orderType": "limit",
+            "price": str(price), "size": str(size), "force": "gtc",
+            "clientOid": str(client_oid),
+        }
+    else:
+        path = ENDPOINTS["place_mix_order"]
+        body = {
+            "symbol": symbol, "productType": "usdt-futures",
+            "marginMode": margin_mode, "marginCoin": "USDT",
+            "side": side, "orderType": "limit",
+            "price": str(price), "size": str(size),
+            "clientOid": str(client_oid),
+        }
+        if trade_side:                      # 双向持仓模式才需要
+            body["tradeSide"] = trade_side
+
+    if dry_run is None:
+        dry_run = True
+    if dry_run:
+        return {"sent": False, "dry_run": True,
+                "reason": "dry-run（默认）：只列出发送内容，未发送",
+                "request": {"method": "POST", "path": path, "body": body,
+                            "env": env_name()},
+                "response": None}
+
+    gate = _send_gate()
+    if gate:
+        return {"sent": False, "dry_run": False, "reason": gate,
+                "request": {"method": "POST", "path": path, "body": body,
+                            "env": env_name()},
+                "response": None}
+
+    resp, err = _http("POST", path, None, _json(body))
+    if err:
+        return {"sent": False, "dry_run": False, "reason": err,
+                "request": {"method": "POST", "path": path, "body": body,
+                            "env": env_name()},
+                "response": None}
+    good = _ok(resp)
+    return {"sent": bool(good), "dry_run": False,
+            "reason": resp.get("msg"),
+            "request": {"method": "POST", "path": path, "body": body,
+                        "env": env_name()},
+            "response": resp}
+
+
+def _json(obj):
+    """**签名与请求体必须用同一个字符串** —— 所以只在这里序列化一次。"""
+    return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
 
 
 # ---------------------------------------------------------------- 自检
@@ -437,11 +629,58 @@ def selftest():
         chk(True, "当前无密钥 -> available() 如实返回 False（不装可用）")
     else:
         chk(True, "当前已配置密钥（本机实测有 key）")
-    chk(place_order("x")["sent"] is False,
-        "下单在默认 off 下**不发送**（返回原因：%s）" % place_order("x")["reason"][:34])
     chk(isinstance(VERIFIED_WITH_REAL_KEY, bool),
         "「是否已用真 key 验证」是明确的布尔值（当前=%s）—— 页面照此如实显示，不假装"
         % VERIFIED_WITH_REAL_KEY)
+
+    # ---- 下单三重闸门：**这是"不会乱交易"的结构保证，必须逐条钉住** ----
+    # 刻意用**行为断言**（真的调一次、看返回），而不是看源码里有没有某句话。
+    _env_backup = {k: os.environ.get(k) for k in
+                   ("BITGET_PAPTRADING", "BITGET_TRADE_ENABLED",
+                    "ALLOW_LIVE_TRADING")}
+    try:
+        # ① 环境闸门：非模拟盘 + 真实环境 → 真实下单被结构性挡住
+        os.environ["BITGET_PAPTRADING"] = "off"
+        os.environ["BITGET_TRADE_ENABLED"] = "on"
+        _cfg.load(force=True)
+        g = _send_gate()
+        chk(isinstance(g, str) and "模拟盘" in g,
+            "闸门①：真实环境即使开了下单开关也**拒绝发送**（ALLOW_LIVE_TRADING=False）")
+
+        r = place_order("XUSDT", "sell", 1, price="1", client_oid="selftest#1",
+                        dry_run=False)
+        chk(r["sent"] is False and r["dry_run"] is False,
+            "闸门①：真实环境真发也发不出去（返回：%s）" % str(r["reason"])[:30])
+
+        # ② dry-run 默认：模拟盘 + 开关 on，仍然只列不发
+        os.environ["BITGET_PAPTRADING"] = "on"
+        os.environ["BITGET_TRADE_ENABLED"] = "on"
+        _cfg.load(force=True)
+        r = place_order("XUSDT", "sell", 1, price="1", client_oid="selftest#2")
+        chk(r["sent"] is False and r["dry_run"] is True and r["request"],
+            "闸门②：dry-run 是默认行为 —— 只返回将发的请求，不发送")
+        chk(r["request"]["body"].get("clientOid") == "selftest#2",
+            "dry-run 返回的请求体里带上了幂等键 clientOid")
+        chk(r["request"]["env"] == "paptrading",
+            "dry-run 明确标注环境 = paptrading（不会让人误以为是真实环境）")
+
+        # ③ 参数级拒绝：缺幂等键 / 市价单 / 无价格
+        chk(place_order("XUSDT", "sell", 1, price="1", dry_run=False,
+                        client_oid=None)["sent"] is False,
+            "缺 clientOid（幂等键）-> 拒绝，不自动生成")
+        chk(place_order("XUSDT", "sell", 1, price="1", client_oid="a",
+                        order_type="market")["sent"] is False,
+            "市价单 -> 拒绝（薄盘口会吃穿 5 档）")
+        chk(place_order("XUSDT", "sell", 1, price=None,
+                        client_oid="a")["sent"] is False,
+            "限价单缺 price -> 拒绝")
+    finally:
+        for k, v in _env_backup.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        _cfg.load(force=True)
 
     print("\nbitget_private 纯函数自检%s" % ("通过" if ok else "**失败**"))
     return 0 if ok else 1

@@ -69,6 +69,17 @@ SPEC = (
     ("BITGET_TRADE_ENABLED", "off",
      "**下单能力总开关，默认 off**。即使上面三个 key 带交易权限，"
      "开关为 off 时下单函数直接返回'未启用'，代码走不到发送那一步"),
+
+    # ---- Bitget 模拟盘（Demo Trading；用来完整测试下单链路，零真钱）----
+    # ⚠️ 这三把是**模拟盘的独立密钥**，与上面三把真实密钥是**两套**，不能混用。
+    #    硬规则：本开关为 on 时，`credentials()` **只**返回这三把；
+    #    它们缺了就直接报"不可用"，**绝不回落到真实密钥** ——
+    #    否则一次配置失误就可能把"模拟盘开关"指向真钱。
+    ("BITGET_PAPTRADING", "off",
+     "on=切到 Bitget 模拟盘（请求头会带 paptrading: 1，且只认下面三把模拟盘密钥）"),
+    ("BITGET_PAPTRADING_API_KEY", "", "模拟盘 API Key（在 Bitget 切换到模拟盘后单独创建）"),
+    ("BITGET_PAPTRADING_API_SECRET", "", "模拟盘 API Secret"),
+    ("BITGET_PAPTRADING_API_PASSPHRASE", "", "模拟盘 API Passphrase"),
 )
 
 _loaded = None
@@ -240,6 +251,18 @@ def write_example(path=None):
         "# ⚠️ 即使上面的 key 带交易权限，off 时下单函数也直接返回「未启用」——",
         "#    这是有意的：**让「不能下单」成为默认状态，而不是默认能力**。",
         "BITGET_TRADE_ENABLED=off",
+        "",
+        "# ---- Bitget 模拟盘（Demo Trading）----",
+        "# 用途：**完整测试下单链路（下单 → 查单 → 撤单 → 回读）而不碰真钱**。",
+        "# 怎么拿：登录 Bitget → 切换到「模拟盘」→ 个人中心 → API Key 管理 →",
+        "#         创建「模拟盘 API Key」（与真实 key 是**两套**，不能混用；需 KYC）。",
+        "# ⚠️ 硬规则：本开关为 on 时，代码**只认**下面三把模拟盘密钥；",
+        "#    它们缺了就直接报不可用，**绝不回落到真实密钥** ——",
+        "#    否则一次配置失误就可能把「模拟盘开关」指向真钱。",
+        "BITGET_PAPTRADING=off",
+        "BITGET_PAPTRADING_API_KEY=",
+        "BITGET_PAPTRADING_API_SECRET=",
+        "BITGET_PAPTRADING_API_PASSPHRASE=",
         "",
     ]
     with open(path, "w", encoding="utf-8", newline="\n") as fh:

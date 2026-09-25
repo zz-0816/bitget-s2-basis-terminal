@@ -33,6 +33,19 @@ body {
   position: sticky; top: 0; z-index: 20;
   background: var(--panel); border-bottom: 1px solid var(--line);
 }
+/* 模拟盘横幅：常驻且不可关闭 —— 虚拟资金与真实账户必须有一直存在的视觉差异。
+   用 --warn 色系（同"黄档提醒"），不抢主信息但足够显眼。 */
+.envbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 7px 22px;
+  background: rgba(255, 183, 77, 0.12);
+  border-bottom: 1px solid var(--warn);
+  color: var(--warn); font-size: 13px;
+}
+.envbar strong { font-weight: 600; }
+.envbar span { color: var(--muted); }
+.envbar b { color: var(--warn); font-weight: 600; }
+.envbar[hidden] { display: none; }
 .top {
   display: flex; align-items: center; justify-content: space-between;
   gap: 16px; padding: 10px 22px;

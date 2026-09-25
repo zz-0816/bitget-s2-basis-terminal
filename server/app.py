@@ -1911,7 +1911,8 @@ def build_account():
         return _ACCOUNT_CACHE["data"]
 
     out = {"available": False, "reason": None, "verified": False,
-           "trade_enabled": False, "rows": [], "naked": [], "actions": [],
+           "trade_enabled": False, "trade_env": "live",
+           "rows": [], "naked": [], "actions": [],
            "spot_usd_total": None, "note": None}
     try:
         import common.bitget_private as bp
@@ -1923,6 +1924,8 @@ def build_account():
     out["verified"] = bool(getattr(bp, "VERIFIED_WITH_REAL_KEY", False))
     out["trade_enabled"] = bool(bp.trade_enabled())
     out["proxy"] = getattr(bp, "PROXY_URL", None)
+    # 环境标记：页面据此在账户区写明"这是模拟盘"，避免把虚拟资金当成真钱
+    out["trade_env"] = bp.env_name()
 
     ok, missing = bp.available()
     if not ok:
@@ -2006,9 +2009,19 @@ def _health():
     now = dt.datetime.now(dt.UTC)
     sess, closed = session_of(now)
     rt = route_of(now)
+    # 当前连的是哪个环境。**这个字段是给页面挂横幅用的**：
+    # 一旦是模拟盘，页面上必须显眼标注，否则会拿虚拟资金冒充真实持仓
+    # （那条"页面不说谎"的红线）。
+    trade_env = "live"
+    try:
+        import common.bitget_private as _bp
+        trade_env = _bp.env_name()
+    except Exception:                                      # noqa: BLE001
+        pass
     return {
         "ok": True,
         "server_time_utc": now.isoformat(),
+        "trade_env": trade_env,
         # ① 美股时段（点差宽窄）
         "session": sess,
         "session_label": SESSION_LABEL[sess],

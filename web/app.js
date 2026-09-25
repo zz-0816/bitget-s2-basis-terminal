@@ -280,6 +280,21 @@ async function loadHealth() {
     rl.title = h.route_label || '';
   }
 
+  // ⚠️ 环境横幅：一旦连的是模拟盘，**必须显眼标出来**。
+  //    否则页面上的余额/持仓会被当成真实账户 —— 直接踩"页面不说谎"那条红线。
+  //    这个横幅不可关闭：模拟盘与真实盘的视觉差异必须一直在。
+  const eb = $('envbar');
+  if (eb) {
+    const demo = h.trade_env === 'paptrading';
+    eb.hidden = !demo;
+    if (demo) {
+      eb.innerHTML =
+        '<strong>当前：模拟盘（虚拟资金）</strong>' +
+        '<span>本页的余额、持仓与一切数字都来自 <b>Bitget 模拟盘</b>，' +
+        '<b>不是你的真实账户</b>；下单也只会发生在模拟盘，不会动真钱。</span>';
+    }
+  }
+
   // 时间显示交给独立时钟（tickClock，每秒一次），不依赖健康检查的 30 秒节奏
   CLOCK_OFFSET_MS = new Date(h.server_time_utc).getTime() - Date.now();
   $('live-dot').className = 'dot on';
