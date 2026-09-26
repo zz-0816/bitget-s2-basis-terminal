@@ -34,7 +34,7 @@ import argparse
 import json
 import os
 import sys
-import urllib.request
+import time
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
@@ -47,34 +47,6 @@ except Exception:                                          # noqa: BLE001
     pass
 
 import common.bitget_private as bp                          # noqa: E402
-
-PUBLIC_TICKER = "https://api.bitget.com/api/v2/mix/market/ticker?symbol=%s"
-
-
-def mid_price(symbol):
-    """公开行情中间价（**不需要任何 key**）。返回 float 或 None。"""
-    url = PUBLIC_TICKER % symbol
-    handlers = [urllib.request.HTTPSHandler()]
-    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
-    if proxy:
-        handlers.insert(0, urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
-    try:
-        raw = urllib.request.build_opener(*handlers).open(url, timeout=20).read()
-        d = json.loads(raw.decode("utf-8", "replace"))
-        if str(d.get("code")) != "00000":
-            return None
-        row = d.get("data")
-        if isinstance(row, list):
-            row = row[0] if row else {}
-        bid = float((row or {}).get("bidPr") or 0)
-        ask = float((row or {}).get("askPr") or 0)
-        if bid and ask:
-            return (bid + ask) / 2
-        last = float((row or {}).get("lastPr") or 0)
-        return last or None
-    except Exception:                                      # noqa: BLE001
-        return None
-
 
 class Report(object):
     def __init__(self):
@@ -127,11 +99,20 @@ def main(argv=None):
     if not ok_keys:
         print("\n  [STOP] 模拟盘密钥不齐（缺 %s）—— 无法测试。" % "、".join(missing))
         return 2
-    R.chk(True, "处于模拟盘且密钥齐备 -> 允许继续")
+    if not bp.trade_enabled():
+        # 这是**第二道闸门**（默认 off）。测试要真发单，必须显式打开。
+        # 这里给出可照抄的一行，而不是笼统说"开关没开"。
+        print("\n  [STOP] 下单开关未打开（BITGET_TRADE_ENABLED=off，这是默认值）—— 无法真发单。")
+        print("         要跑完整测试，请在 .env 里把它改成 on：")
+        print("             BITGET_TRADE_ENABLED=on")
+        print("         （改完重跑本脚本；测试完可以再改回 off。")
+        print("          真实环境即使打开这个开关也发不出单 —— 见 ALLOW_LIVE_TRADING。）")
+        return 2
+    R.chk(True, "处于模拟盘、密钥齐备、下单开关已打开 -> 允许继续")
 
     # ---------------- 1 读：合约账户 + 持仓 ----------------
     R.step(1, "读合约账户资产与持仓（此前缺失的就是这块）")
-    acc, e1 = bp.read_mix_account()
+    acc, e1 = bp.read_mix_account(args.symbol)
     if e1:
         R.chk(False, "读合约账户资产失败", e1)
         acc = {}
@@ -147,24 +128,63 @@ def main(argv=None):
 
     # ---------------- 2 取价 ----------------
     R.step(2, "取公开行情中间价（不需要 key）")
-    mid = mid_price(args.symbol)
-    R.chk(mid is not None, "拿到 %s 中间价 = %s" % (args.symbol, mid))
+    mid = bp.public_mid(args.symbol, "mix")
+    R.chk(mid is not None,
+          "拿到 %s 中间价 = %s（公开行情，与采样器同一口径）"
+          % (args.symbol, mid))
     if mid is None:
         print("\n  取不到价，无法构造一个「不会成交」的限价单 —— 停止。")
         return 1
 
     # 空头腿的挂卖价：挂在市价 **上浮** 50% —— 远高于市价，不可能成交
-    price = round(mid * (1 + args.away), 6)
+    raw_price = mid * (1 + args.away)
+
+    # ⚠️ 价格与数量**必须按交易所给的合约规格取整**，不许自己猜小数位。
+    #    实测踩到：价写成 4 位小数，被回 `code=45115 The price you enter should be
+    #    a multiple of 0.01`。规格取不到就**不下单** —— 猜出来的价一定被打回。
+    R.step("2b", "按交易所合约规格取整（价 / 量）")
+    spec = bp.contract_spec(args.symbol)
+    if not R.chk(bool(spec), "取到 %s 的合约规格" % args.symbol):
+        print("\n  取不到合约规格 -> 不下单（规格不知道就只能猜，猜了一定被交易所打回）。")
+        return 1
+    print("  最小变动：pricePlace=%s priceEndStep=%s | 最小下单量 minTradeNum=%s"
+          " | 最小名义额 minTradeUSDT=%s"
+          % (spec.get("pricePlace"), spec.get("priceEndStep"),
+             spec.get("minTradeNum"), spec.get("minTradeUSDT")))
+    price = bp.round_price(args.symbol, raw_price)
+    if not R.chk(price is not None,
+                 "价格按规格取整：%s -> %s" % (round(raw_price, 6), price)):
+        return 1
+    try:
+        _min_num = float(spec.get("minTradeNum") or 0)
+    except (TypeError, ValueError):
+        _min_num = 0.0
+    R.chk(float(args.size) >= _min_num,
+          "数量 %s >= 最小下单量 %s" % (args.size, _min_num),
+          "数量太小会被交易所拒绝")
+
+    # ⚠️ **持仓模式**决定要不要 `tradeSide` —— 必须问账户，不能写死。
+    #    2026-09-26 实测踩到 code=40774：模拟盘默认是 hedge_mode（双向），
+    #    而我们没带 tradeSide；单向模式下带了又会被打回。
+    pmode = bp.pos_mode(args.symbol)
+    trade_side = "open" if str(pmode) == "hedge_mode" else None
+    print("  账户持仓模式 = %s -> %s"
+          % (pmode, ("下单带 tradeSide=open（开仓）" if trade_side
+                     else "下单不带 tradeSide（单向模式规范）")))
 
     # ---------------- 3 下单 ----------------
     R.step(3, "下单（限价单，挂在离市价很远的地方 -> 不会成交）")
-    cid = "demo-test-%d" % (int(os.path.getmtime(__file__)) % 100000)
+    # 幂等键：**每次运行唯一**（UTC 时间到秒 + pid 尾数）。
+    # 不用文件 mtime —— 那样"连续跑两次"会撞同一个 clientOid，
+    # 而 clientOid 的唯一性检查适用于所有**挂单**，会造成假失败。
+    cid = "demo-%s-%d" % (time.strftime("%m%d%H%M%S", time.gmtime()),
+                          os.getpid() % 1000)
     print("  标的 %s  方向 sell（开空）  数量 %s  限价 %s（市价 %s）"
           % (args.symbol, args.size, price, mid))
     print("  幂等键 clientOid = %s" % cid)
 
     r = bp.place_order(args.symbol, "sell", args.size, price=str(price),
-                       client_oid=cid, dry_run=True)
+                       client_oid=cid, trade_side=trade_side, dry_run=True)
     R.chk(r["sent"] is False and r["dry_run"] is True,
           "默认 dry-run：只返回将发的请求，未发送")
     print("  将发送：POST %s" % (r["request"] or {}).get("path"))
@@ -175,7 +195,7 @@ def main(argv=None):
         return 1 if R.bad else 0
 
     r = bp.place_order(args.symbol, "sell", args.size, price=str(price),
-                       client_oid=cid, dry_run=False)
+                       client_oid=cid, trade_side=trade_side, dry_run=False)
     if not R.chk(r["sent"] is True, "真发：交易所受理（code=%s msg=%s）"
                  % ((r.get("response") or {}).get("code"), r.get("reason"))):
         print("  完整返回：%s" % json.dumps(r.get("response"), ensure_ascii=False)[:400])
@@ -186,40 +206,52 @@ def main(argv=None):
     oid = ((r.get("response") or {}).get("data") or {}).get("orderId")
     R.chk(bool(oid), "拿到 orderId = %s" % oid)
 
-    # ---------------- 4 查单（回报解析） ----------------
-    R.step(4, "查挂单：确认它真的在那儿（验证回报解析）")
-    pend, e4 = bp.read_pending_orders()
-    R.chk(e4 is None, "挂单接口可读", e4 or "")
-    mine = [x for x in (pend or []) if str(x.get("clientOid")) == cid
-            or str(x.get("orderId")) == str(oid)]
-    R.chk(bool(mine), "在挂单里找到了这一笔（%d 条挂单中）" % len(pend or []))
-    if mine:
-        print("  交易所回的这一笔：%s"
-              % json.dumps({k: mine[0].get(k) for k in
-                            ("symbol", "side", "orderType", "price", "size", "status")
-                            if k in mine[0]}, ensure_ascii=False))
+    # ⚠️ 从这里开始：**只要单已发出，无论后面哪一步抛异常，都必须把单撤掉**。
+    #    2026-09-26 实测踩到：查单那一步因为响应结构判断错而抛 AttributeError，
+    #    脚本崩了，**而那笔单还挂在交易所上**，只能手工撤。
+    #    一个碰真单的脚本，"收尾撤单"必须是 finally 级别的保证，不能靠走到底。
+    cancelled = False
+    try:
+        # ---------------- 4 查单（回报解析） ----------------
+        R.step(4, "查挂单：确认它真的在那儿（验证回报解析）")
+        pend, e4 = bp.read_pending_orders()
+        R.chk(e4 is None, "挂单接口可读", e4 or "")
+        mine = [x for x in (pend or []) if str(x.get("clientOid")) == cid
+                or str(x.get("orderId")) == str(oid)]
+        R.chk(bool(mine), "在挂单里找到了这一笔（%d 条挂单中）" % len(pend or []))
+        if mine:
+            print("  交易所回的这一笔：%s"
+                  % json.dumps({k: mine[0].get(k) for k in
+                                ("symbol", "side", "posSide", "price", "size",
+                                 "status", "clientOid") if k in mine[0]},
+                               ensure_ascii=False))
 
-    # ---------------- 5 撤单 ----------------
-    R.step(5, "撤单")
-    c = bp.cancel_order(args.symbol, order_id=oid, client_oid=cid)
-    R.chk(c["ok"] is True, "撤单成功（msg=%s）" % c.get("reason"), c.get("reason"))
-    if not c["ok"]:
-        print("  撤单返回：%s" % json.dumps(c.get("response"), ensure_ascii=False)[:300])
-        print("  ⚠️ 撤单失败时请手动去模拟盘界面撤掉这一笔，别留着。")
+        # ---------------- 5 撤单 ----------------
+        R.step(5, "撤单")
+        c = bp.cancel_order(args.symbol, order_id=oid, client_oid=cid)
+        cancelled = bool(c.get("ok"))
+        R.chk(cancelled, "撤单成功（msg=%s）" % c.get("reason"), c.get("reason"))
+        if not cancelled:
+            print("  撤单返回：%s" % json.dumps(c.get("response"), ensure_ascii=False)[:300])
 
-    # ---------------- 6 复查挂单 ----------------
-    R.step(6, "复查：挂单里应该已经没有它")
-    pend2, _ = bp.read_pending_orders()
-    still = [x for x in (pend2 or []) if str(x.get("clientOid")) == cid
-             or str(x.get("orderId")) == str(oid)]
-    R.chk(not still, "该笔已从挂单中消失")
+        # ---------------- 6 复查挂单 ----------------
+        R.step(6, "复查：挂单里应该已经没有它")
+        pend2, _ = bp.read_pending_orders()
+        still = [x for x in (pend2 or []) if str(x.get("clientOid")) == cid
+                 or str(x.get("orderId")) == str(oid)]
+        R.chk(not still, "该笔已从挂单中消失")
 
-    # ---------------- 7 回读持仓 ----------------
-    R.step(7, "回读持仓：应与开始时一致（因为没成交）")
-    pos1, _ = bp.read_positions()
-    pos_after = {p.get("symbol"): p.get("total") for p in (pos1 or [])}
-    R.chk(pos_before == pos_after, "持仓未变化（确认没成交）",
-          "前=%s 后=%s" % (pos_before, pos_after))
+        # ---------------- 7 回读持仓 ----------------
+        R.step(7, "回读持仓：应与开始时一致（因为没成交）")
+        pos1, _ = bp.read_positions()
+        pos_after = {p.get("symbol"): p.get("total") for p in (pos1 or [])}
+        R.chk(pos_before == pos_after, "持仓未变化（确认没成交）",
+              "前=%s 后=%s" % (pos_before, pos_after))
+    finally:
+        if oid and not cancelled:
+            print("\n  [收尾] 上面有步骤异常 -> 强制撤掉 orderId=%s，避免留单" % oid)
+            cx = bp.cancel_order(args.symbol, order_id=oid, client_oid=cid)
+            print("  [收尾] 撤单 -> ok=%s msg=%s" % (cx.get("ok"), cx.get("reason")))
 
     # ---------------- 8 负向断言（护栏） ----------------
     R.step(8, "负向断言：这些必须被拒")

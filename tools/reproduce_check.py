@@ -842,6 +842,15 @@ def check_features():
              "前端模拟盘横幅容器"),
             ("tools/demo_trade_test.py", "def main(",
              "模拟盘端到端测试脚本"),
+            # ---- 2026-09-26 首次真下单踩出的三个坑（根因都是"猜参数"） ----
+            ("common/bitget_private.py", "def contract_spec(",
+             "合约规格查询（价/量按交易所规格取整，不许猜小数位）"),
+            ("common/bitget_private.py", "def pos_mode(",
+             "持仓模式适配（hedge 要 tradeSide / one-way 不能带 —— 问账户不写死）"),
+            ("common/bitget_private.py", 'd.get("entrustedList")',
+             "挂单响应结构（data 不是列表，而是 {entrustedList,endId}）"),
+            ("tools/demo_trade_test.py", "finally:",
+             "端到端测试的收尾撤单（中途异常也必须把单撤掉）"),
     ]:
         p = os.path.join(BASE, rel)
         if not os.path.exists(p):

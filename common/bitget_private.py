@@ -97,7 +97,10 @@ ENDPOINTS = {
 PARAMS = {
     "positions": {"productType": "usdt-futures", "marginCoin": "USDT"},
     "spot_assets": {},
-    "mix_account": {"productType": "usdt-futures", "marginCoin": "USDT"},
+    # ⚠️ 合约账户资产接口**必须带 symbol** —— 它回答的是"这个合约的保证金情况"，
+    #    不带就返回 code=400172 Parameter verification failed（2026-09-26 实测踩到）。
+    "mix_account": {"productType": "usdt-futures", "marginCoin": "USDT",
+                    "symbol": "TSLAUSDT"},
     "orders_pending": {"productType": "usdt-futures"},
     "orders_spot_pending": {},
 }
@@ -111,6 +114,19 @@ ALLOW_LIVE_TRADING = False
 #: ✅ 2026-09-25 已用真 key 跑通 `--probe`：两条端点都返回 code=00000 msg=success
 #:    （Get Account Assets / Get All Positions，走代理通道）→ 置 True，页面不再提示"未验证"。
 VERIFIED_WITH_REAL_KEY = True
+
+#: 公开行情（**不需要任何 key**）。⚠️ 这两个 URL 与 `spread_sampler.py` 必须**逐字一致** ——
+#: 两处各写一份一定会漂（本项目因为这种事踩过好几次）。`verify_public_urls()`
+#: 会去 `spread_sampler.py` 里核对这两个字面量，漂了自检就红。
+PUBLIC_MIX_TICKER = ("https://api.bitget.com/api/v2/mix/market/ticker"
+                     "?symbol={}&productType=usdt-futures")
+PUBLIC_SPOT_TICKER = "https://api.bitget.com/api/v2/spot/market/tickers?symbol={}"
+#: 合约规格（最小变动单位 / 最小下单量 / 最小名义额）。**公开接口，不需要 key**。
+#: ⚠️ 价格与数量必须按**交易所给的规格**取整，不许自己猜小数位 ——
+#: 实测踩到：价格写成 4 位小数，被回 `code=45115 The price you enter should be a
+#: multiple of 0.01`。规格是变量（各合约不同），猜出来的数字一定会过期。
+PUBLIC_MIX_CONTRACT = ("https://api.bitget.com/api/v2/mix/market/contracts"
+                       "?symbol={}&productType=usdt-futures")
 
 CTX = ssl.create_default_context()
 PROXY_URL = (os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
@@ -404,13 +420,19 @@ def recommend_action(row):
 
 # ---------------------------------------------------------------- 只读：合约账户 / 挂单
 
-def read_mix_account():
+def read_mix_account(symbol=None):
     """**合约账户资产**（保证金够不够就看它）。返回 (dict, err)。
 
     为什么单独一个函数：此前只知道"有没有持仓"，不知道"还有多少保证金可用" ——
     于是"超余额"这道护栏连数据都不具备。现在补上。
+
+    ⚠️ 这个接口**必须带 symbol**（它问的是"某个合约的保证金情况"）——
+    不带会返回 `code=400172 Parameter verification failed`（2026-09-26 实测踩到）。
     """
-    p, err = _http("GET", ENDPOINTS["mix_account"], PARAMS["mix_account"])
+    params = dict(PARAMS["mix_account"])
+    if symbol:
+        params["symbol"] = symbol
+    p, err = _http("GET", ENDPOINTS["mix_account"], params)
     if err:
         return None, err
     if not _ok(p):
@@ -421,14 +443,123 @@ def read_mix_account():
     return (d or {}), None
 
 
+def public_mid(symbol, kind="mix"):
+    """公开行情中间价（**不需要任何 key**，与采样器同一口径）。
+
+    返回 float 或 None。**取不到就返回 None**，不猜、不用旧数据凑。
+    """
+    url = (PUBLIC_MIX_TICKER if kind == "mix" else PUBLIC_SPOT_TICKER).format(symbol)
+    try:
+        raw = _opener(True).open(url, timeout=20).read()
+        d = json.loads(raw.decode("utf-8", "replace"))
+        if str(d.get("code")) != "00000":
+            return None
+        row = d.get("data")
+        if isinstance(row, list):
+            row = row[0] if row else {}
+        row = row or {}
+        bid = float(row.get("bidPr") or 0)
+        ask = float(row.get("askPr") or 0)
+        if bid and ask:
+            return (bid + ask) / 2
+        return float(row.get("lastPr") or 0) or None
+    except Exception:                                      # noqa: BLE001
+        return None
+
+
+def pos_mode(symbol=None):
+    """账户的**持仓模式**：`hedge_mode`（双向）或 `one_way_mode`（单向）。取不到返回 None。
+
+    ⚠️ 下单参数**必须按它构造**（2026-09-26 实测踩到 `code=40774`：
+    "The order type for unilateral position must also be the unilateral position type"）：
+      · 双向持仓模式（hedge_mode）→ 必须带 `tradeSide`（`open` / `close`）；
+      · 单向持仓模式 → **不能**带 `tradeSide`。
+    不同账户的默认模式不一样（实测：模拟盘默认就是 `hedge_mode`），
+    所以这里**问账户**，不写死 —— 写死任何一边都会在另一边失败。
+    """
+    acc, err = read_mix_account(symbol)
+    if err or not acc:
+        return None
+    return acc.get("posMode")
+
+
+def contract_spec(symbol):
+    """合约规格：`{pricePlace, priceEndStep, volumePlace, minTradeNum, minTradeUSDT}`。
+
+    **公开接口，不需要 key。** 返回 None 表示取不到（取不到就别下单 —— 规格不知道，
+    价格与数量就只能猜，而猜出来的会以 `code=45115` 这种形式被交易所打回）。
+    """
+    url = PUBLIC_MIX_CONTRACT.format(symbol)
+    try:
+        raw = _opener(True).open(url, timeout=20).read()
+        d = json.loads(raw.decode("utf-8", "replace"))
+        if str(d.get("code")) != "00000":
+            return None
+        row = d.get("data")
+        if isinstance(row, list):
+            row = row[0] if row else {}
+        return row or None
+    except Exception:                                      # noqa: BLE001
+        return None
+
+
+def round_price(symbol, price):
+    """把价格按**交易所规格**取整成合法值。规格取不到就返回 None（不猜）。"""
+    spec = contract_spec(symbol)
+    if not spec:
+        return None
+    try:
+        place = int(spec.get("pricePlace") or 0)
+        tick = float(spec.get("priceEndStep") or 1) * (10.0 ** -place)
+    except (TypeError, ValueError):
+        return None
+    if tick <= 0:
+        return None
+    return round(round(float(price) / tick) * tick, place)
+
+
+def verify_public_urls(repo_root):
+    """核对本模块的行情 URL 与 `spread_sampler.py` 是否仍逐字一致。
+
+    同 `verify_against_backtest` 的做法：**正则读源码而不是 import** ——
+    采样器是可执行的常驻进程，import 它会有副作用。
+    """
+    path = os.path.join(repo_root, "spread_sampler.py")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+    except OSError as exc:
+        return False, "读不到 %s：%r" % (path, exc)
+    for label, needle in (
+            ("合约 ticker", "?symbol={}&productType=usdt-futures"),
+            ("现货 ticker", "/api/v2/spot/market/tickers?symbol={}")):
+        if needle not in src:
+            return False, ("%s 的口径与 spread_sampler.py 不一致（找不到 %r）"
+                           % (label, needle))
+    return True, "行情 URL 与 spread_sampler.py 逐字一致"
+
+
 def read_pending_orders():
-    """USDT 本位合约的**当前挂单**。返回 (list, err)。"""
+    """USDT 本位合约的**当前挂单**。返回 (list[dict], err)。
+
+    ⚠️ 这个接口的 `data` **不是列表**，而是
+    `{"entrustedList": [ {...}, ... ], "endId": "..."}`。
+    2026-09-26 实测踩到：按列表处理会逐个拿到 **keys（字符串）**，
+    然后 `x.get(...)` 抛 AttributeError，把测试链路崩在"查单"这一步 ——
+    而**那时那笔单已经挂在交易所上了**，只能手工撤。所以两种形状都兼容，
+    并且**宁可返回空列表也不要抛异常**（调用方据此判断"没挂上"）。
+    """
     p, err = _http("GET", ENDPOINTS["orders_pending"], PARAMS["orders_pending"])
     if err:
         return None, err
     if not _ok(p):
         return None, err_msg(p)
-    return (p.get("data") or []), None
+    d = p.get("data")
+    if isinstance(d, dict):
+        d = d.get("entrustedList") or d.get("list") or []
+    if not isinstance(d, list):
+        d = []
+    return [x for x in d if isinstance(x, dict)], None
 
 
 def cancel_order(symbol, order_id=None, client_oid=None):
@@ -512,6 +643,18 @@ def place_order(symbol, side, size, price=None, *, kind="mix",
                           "否则会掩盖重复提交（护栏 #1）",
                 "request": None, "response": None}
 
+    # ---- 先把 dry_run 归一化，再决定"要不要真发" ----
+    if dry_run is None:
+        dry_run = True
+
+    # ---- 闸门放在**最前面**（在任何联网读账户之前）----
+    # 顺序是有意的：如果本来就不允许发送，就没必要再去读账户、读行情 ——
+    # 既省一次往返，也让"纯函数自检"不依赖网络。
+    gate = None
+    if not dry_run:
+        gate = _send_gate()
+
+    mode_note = ""
     if kind == "spot":
         path = ENDPOINTS["place_spot_order"]
         body = {
@@ -528,19 +671,36 @@ def place_order(symbol, side, size, price=None, *, kind="mix",
             "price": str(price), "size": str(size),
             "clientOid": str(client_oid),
         }
-        if trade_side:                      # 双向持仓模式才需要
+        # ⚠️ 持仓模式决定要不要 `tradeSide`。**问账户，不写死** ——
+        #    2026-09-26 实测踩到 code=40774：模拟盘默认是 hedge_mode（双向），
+        #    而我们没带 tradeSide，于是被交易所打回。
+        #    只有真要发（或 dry-run 也要给出准确预览）时才去读，避免无谓往返。
+        mode = pos_mode(symbol) if (not gate) else None
+        if str(mode) == "hedge_mode":
+            if not trade_side:
+                # 不猜 open 还是 close：猜错就是"想开仓结果平了仓"（反手）。
+                return {"sent": False, "dry_run": dry_run,
+                        "reason": "账户是**双向持仓模式**（hedge_mode），下单必须显式给 "
+                                  "trade_side='open'（开仓）或 'close'（平仓）—— "
+                                  "这个不猜：猜错就是把开仓做成平仓。",
+                        "request": None, "response": None}
             body["tradeSide"] = trade_side
+            mode_note = "（双向持仓模式，已带 tradeSide=%s）" % trade_side
+        elif mode is None:
+            mode_note = "（⚠️ 读不到账户持仓模式，未确定是否要 tradeSide）"
+            if trade_side:
+                body["tradeSide"] = trade_side
+        else:
+            # 单向持仓模式：**不能**带 tradeSide（带了会被交易所打回）
+            mode_note = "（单向持仓模式，按规范不带 tradeSide）"
 
-    if dry_run is None:
-        dry_run = True
     if dry_run:
         return {"sent": False, "dry_run": True,
-                "reason": "dry-run（默认）：只列出发送内容，未发送",
+                "reason": "dry-run（默认）：只列出发送内容，未发送" + mode_note,
                 "request": {"method": "POST", "path": path, "body": body,
                             "env": env_name()},
                 "response": None}
 
-    gate = _send_gate()
     if gate:
         return {"sent": False, "dry_run": False, "reason": gate,
                 "request": {"method": "POST", "path": path, "body": body,
