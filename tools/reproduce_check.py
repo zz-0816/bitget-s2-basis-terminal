@@ -851,6 +851,19 @@ def check_features():
              "挂单响应结构（data 不是列表，而是 {entrustedList,endId}）"),
             ("tools/demo_trade_test.py", "finally:",
              "端到端测试的收尾撤单（中途异常也必须把单撤掉）"),
+            # ---- 补腿：docs/54 §2 那 7 道护栏的落地 ----
+            ("common/repair.py", "NAKED_STATES",
+             "补腿·护栏#4 复用真实状态常量（不自己写一份漂掉）"),
+            ("common/repair.py", "MAX_SLIP_BP",
+             "补腿·滑点上限护栏（超限拒绝，宁可裸露）"),
+            ("common/repair.py", "PLAN_TTL_SEC",
+             "补腿·计划有效期（不拿旧状态下单）"),
+            ("common/bitget_private.py", 'ENDPOINTS["cancel_spot_order"]',
+             "撤单区分现货/合约端点（实测：用合约端点撤现货单会失败）"),
+            ("tools/repair_leg.py", "def main(",
+             "补腿 CLI（默认 dry-run，--confirm 才发）"),
+            ("tools/repair_lifecycle_test.py", "SKIPPED",
+             "补腿完整测试·受环境限制的项必须如实标注（不冒充通过）"),
     ]:
         p = os.path.join(BASE, rel)
         if not os.path.exists(p):

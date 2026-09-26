@@ -127,6 +127,10 @@ PUBLIC_SPOT_TICKER = "https://api.bitget.com/api/v2/spot/market/tickers?symbol={
 #: multiple of 0.01`。规格是变量（各合约不同），猜出来的数字一定会过期。
 PUBLIC_MIX_CONTRACT = ("https://api.bitget.com/api/v2/mix/market/contracts"
                        "?symbol={}&productType=usdt-futures")
+#: 现货符号规格（小数位 / 最小名义额）。同样**公开、不需要 key**。
+#: 现货腿（买 rToken）要靠它取整数量与价格 —— 现货的精度与合约**不一样**
+#: （实测：RTSLAUSDT quantityPrecision=4 / minTradeUSDT=10；TSLAUSDT volumePlace=2 / minTradeUSDT=5）。
+PUBLIC_SPOT_SYMBOL = "https://api.bitget.com/api/v2/spot/public/symbols?symbol={}"
 
 CTX = ssl.create_default_context()
 PROXY_URL = (os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
@@ -503,14 +507,91 @@ def contract_spec(symbol):
         return None
 
 
-def round_price(symbol, price):
-    """把价格按**交易所规格**取整成合法值。规格取不到就返回 None（不猜）。"""
-    spec = contract_spec(symbol)
+def public_quote(symbol, kind="mix"):
+    """公开行情的买一/卖一/中间价（**不需要 key**，与采样器同一口径）。
+
+    返回 `{"bid":…, "ask":…, "mid":…, "last":…}`，取不到返回 None。
+    ⚠️ 补腿要用**对手价**（买用 ask、卖用 bid）来算限价与滑点，
+    所以这里必须同时给 bid 和 ask —— 只给中间价是算不出滑点的。
+    """
+    url = (PUBLIC_MIX_TICKER if kind == "mix" else PUBLIC_SPOT_TICKER).format(symbol)
+    try:
+        raw = _opener(True).open(url, timeout=20).read()
+        d = json.loads(raw.decode("utf-8", "replace"))
+        if str(d.get("code")) != "00000":
+            return None
+        row = d.get("data")
+        if isinstance(row, list):
+            row = row[0] if row else {}
+        row = row or {}
+
+        def _f(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return 0.0
+
+        bid, ask, last = _f(row.get("bidPr")), _f(row.get("askPr")), _f(row.get("lastPr"))
+        mid = (bid + ask) / 2 if (bid and ask) else (last or 0.0)
+        if not mid:
+            return None
+        return {"bid": bid, "ask": ask, "mid": mid, "last": last}
+    except Exception:                                      # noqa: BLE001
+        return None
+
+
+def spot_spec(symbol):
+    """**现货**符号规格：`{quantityPrecision, pricePrecision, minTradeUSDT, ...}`。
+
+    ⚠️ 现货的精度与合约**不是一套**（实测 RTSLAUSDT quantityPrecision=4，
+    而 TSLAUSDT volumePlace=2），所以两条腿必须各自问各自的规格，不能共用一份。
+    """
+    url = PUBLIC_SPOT_SYMBOL.format(symbol)
+    try:
+        raw = _opener(True).open(url, timeout=20).read()
+        d = json.loads(raw.decode("utf-8", "replace"))
+        if str(d.get("code")) != "00000":
+            return None
+        row = d.get("data")
+        if isinstance(row, list):
+            row = row[0] if row else {}
+        return row or None
+    except Exception:                                      # noqa: BLE001
+        return None
+
+
+def round_size(symbol, size, kind="mix"):
+    """按规格取整**数量**，并返回 (取整后的量, 规格)。规格取不到返回 (None, None)。"""
+    spec = contract_spec(symbol) if kind == "mix" else spot_spec(symbol)
+    if not spec:
+        return None, None
+    place = spec.get("volumePlace") if kind == "mix" else spec.get("quantityPrecision")
+    try:
+        place = int(place or 0)
+        step = float(spec.get("sizeMultiplier") or 1) * (10.0 ** -place) \
+            if kind == "mix" else 10.0 ** -place
+    except (TypeError, ValueError):
+        return None, spec
+    if step <= 0:
+        return None, spec
+    return round(round(float(size) / step) * step, place), spec
+
+
+def round_price(symbol, price, kind="mix"):
+    """把价格按**交易所规格**取整成合法值。规格取不到就返回 None（不猜）。
+
+    现货与合约的精度不同，所以 `kind` 必须给对。
+    """
+    spec = contract_spec(symbol) if kind == "mix" else spot_spec(symbol)
     if not spec:
         return None
     try:
-        place = int(spec.get("pricePlace") or 0)
-        tick = float(spec.get("priceEndStep") or 1) * (10.0 ** -place)
+        if kind == "mix":
+            place = int(spec.get("pricePlace") or 0)
+            tick = float(spec.get("priceEndStep") or 1) * (10.0 ** -place)
+        else:
+            place = int(spec.get("pricePrecision") or 0)
+            tick = 10.0 ** -place
     except (TypeError, ValueError):
         return None
     if tick <= 0:
@@ -562,24 +643,46 @@ def read_pending_orders():
     return [x for x in d if isinstance(x, dict)], None
 
 
-def cancel_order(symbol, order_id=None, client_oid=None):
-    """撤掉一笔合约挂单。**模拟盘之外会被 place_order 的同款闸门挡住**。"""
+def cancel_order(symbol, order_id=None, client_oid=None, kind="auto"):
+    """撤掉一笔挂单。**模拟盘之外会被 place_order 的同款闸门挡住**。
+
+    ⚠️ 必须区分**现货 / 合约**（2026-09-26 实测踩到）：两者端点与请求体都不同，
+    用合约端点撤现货单会失败：
+      · 合约：`/api/v2/mix/order/cancel-order`，body 要 `productType` + `marginCoin`
+      · 现货：`/api/v2/spot/trade/cancel-order`，body 只要 `symbol` + `orderId`
+
+    `kind="auto"`（默认）会**先试合约、失败再试现货**，并在返回里写明用了哪个 ——
+    撤单是"把风险收掉"的动作，宁可多试一次，也不要因为调用方忘了传 kind 而撤不掉。
+    """
     gate = _send_gate()
     if gate:
         return {"ok": False, "reason": gate, "response": None}
-    body = {"symbol": symbol, "productType": "usdt-futures",
-            "marginCoin": "USDT"}
     if order_id:
-        body["orderId"] = str(order_id)
+        key = {"orderId": str(order_id)}
     elif client_oid:
-        body["clientOid"] = str(client_oid)
+        key = {"clientOid": str(client_oid)}
     else:
         return {"ok": False, "reason": "撤单必须给 orderId 或 clientOid", "response": None}
-    resp, err = _http("POST", ENDPOINTS["cancel_mix_order"], None, _json(body))
-    if err:
-        return {"ok": False, "reason": err, "response": None}
-    return {"ok": _ok(resp), "reason": resp.get("msg"),
-            "response": resp}
+
+    kinds = ["mix", "spot"] if kind == "auto" else [kind]
+    last = None
+    for k in kinds:
+        if k == "spot":
+            path = ENDPOINTS["cancel_spot_order"]
+            body = {"symbol": symbol, **key}
+        else:
+            path = ENDPOINTS["cancel_mix_order"]
+            body = {"symbol": symbol, "productType": "usdt-futures",
+                    "marginCoin": "USDT", **key}
+        resp, err = _http("POST", path, None, _json(body))
+        if err:
+            last = {"ok": False, "reason": err, "response": None, "via_kind": k}
+            continue
+        if _ok(resp):
+            return {"ok": True, "reason": resp.get("msg"), "response": resp,
+                    "via_kind": k}
+        last = {"ok": False, "reason": resp.get("msg"), "response": resp, "via_kind": k}
+    return last or {"ok": False, "reason": "撤单失败", "response": None}
 
 
 # ---------------------------------------------------------------- 下单
