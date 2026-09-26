@@ -864,6 +864,23 @@ def check_features():
              "补腿 CLI（默认 dry-run，--confirm 才发）"),
             ("tools/repair_lifecycle_test.py", "SKIPPED",
              "补腿完整测试·受环境限制的项必须如实标注（不冒充通过）"),
+            # ---- 写接口：本项目第一个会改变交易所状态的接口 ----
+            ("server/app.py", "def do_POST(",
+             "写接口入口（只有 POST /api/repair）"),
+            ("server/app.py", "X-Repair-Token",
+             "写接口防线·令牌（防 CSRF：跨域读不到响应就拿不到令牌）"),
+            ("server/app.py", "跨源请求被拒绝",
+             "写接口防线·同源判定"),
+            ("server/app.py", "Content-Type 必须是 application/json",
+             "写接口防线·内容类型（跨域发 JSON 会触发预检，本服务不响应预检）"),
+            ("common/repair.py", "def build_close_plan(",
+             "平仓计划（先平永续再卖现货，避免留下裸空）"),
+            ("common/repair.py", "def execute_close(",
+             "平仓执行（每步等状态，前一步没成交就不发第二笔）"),
+            ("common/bitget_private.py", "def wait_order(",
+             "下单后等状态（受理 ≠ 成交，必须再确认）"),
+            ("web/index.html", 'id="acc-op"',
+             "前端操作计划面板容器"),
     ]:
         p = os.path.join(BASE, rel)
         if not os.path.exists(p):

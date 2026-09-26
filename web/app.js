@@ -1387,6 +1387,104 @@ const ACC_STATE = {
   flat: { t: '空仓', cls: '' },
 };
 
+/* ---------------- 操作：补腿 / 平仓（默认只出计划，二次确认才真发） ----------------
+
+   三道约束（与后端一致，缺一不可）：
+     ① 必须在模拟盘（真实环境下后端会拒绝发送，按钮也给灰）；
+     ② 必须开启下单开关；
+     ③ 点「补腿」只拿**计划**（dry-run），要再点「确认发送」才真发 ——
+        这样"手滑"最多是看到一段文字。
+   令牌从 /api/repair/token 拿（跨域读不到响应 → 外部网页拿不到它，防 CSRF）。 */
+const OP = { token: null, base: null, mode: null, env: 'live', on: false };
+
+async function loadOpToken() {
+  try {
+    const st = await api('/api/repair/token');
+    OP.token = st.token;
+    OP.env = st.env;
+    OP.on = !!(st.paptrading && st.trade_enabled && st.keys_ready);
+  } catch (e) { OP.on = false; }
+  const tag = $('op-env');
+  if (tag) {
+    tag.textContent = OP.on ? '操作可用（模拟盘）' : '操作不可用';
+    tag.className = 'sess-label ' + (OP.on ? 'open' : 'closed');
+  }
+}
+
+function accOpCell(r) {
+  if (!OP.on) {
+    return '<button class="op-btn" disabled title="需要：模拟盘 + 下单开关开启 + 密钥齐备">' +
+           (r.state === 'both' ? '平仓' : '补腿') + '</button>';
+  }
+  if (r.state === 'spot_only' || r.state === 'perp_only') {
+    return '<button class="op-btn op-go" data-base="' + esc(r.base) +
+           '" data-mode="repair">补腿</button>';
+  }
+  if (r.state === 'both') {
+    return '<button class="op-btn op-go" data-base="' + esc(r.base) +
+           '" data-mode="close">平仓</button>';
+  }
+  return '<span class="hint">—</span>';
+}
+
+function accOpRender(html) {
+  const el = $('acc-op');
+  if (!el) return;
+  el.hidden = false;
+  el.innerHTML = html;
+}
+
+async function openRepairPlan(base, mode) {
+  OP.base = base; OP.mode = mode;
+  accOpRender('<div class="op-hint">正在取计划…</div>');
+  try {
+    const r = await api('/api/repair?base=' + encodeURIComponent(base) +
+                        '&mode=' + encodeURIComponent(mode));
+    if (!r.ok) {
+      accOpRender('<div class="op-hint">取不到计划：' + esc(r.error || '未知原因') +
+                  ' —— 不会发送。</div>');
+      return;
+    }
+    const p = r.plan || {};
+    accOpRender(
+      '<pre class="op-plan">' + esc(r.text || '') + '</pre>' +
+      (p.ok
+        ? '<div class="op-acts">' +
+            '<button class="op-btn op-send" id="op-send">确认发送（模拟盘）</button>' +
+            '<button class="op-btn" id="op-cancel">取消</button>' +
+            '<span class="op-hint">点「确认发送」才会真的发出去。计划只在 60 秒内有效。</span>' +
+          '</div>'
+        : '<div class="op-hint">计划被护栏拦下：' +
+          esc((p.blocked_by || []).join('；')) + ' —— 不会发送。</div>'));
+  } catch (e) {
+    accOpRender('<div class="op-hint">请求失败：' + esc(String(e)) + '</div>');
+  }
+}
+
+async function confirmRepairSend() {
+  const btn = $('op-send');
+  if (btn) { btn.disabled = true; btn.textContent = '发送中…'; }
+  try {
+    const res = await fetch('/api/repair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Repair-Token': OP.token },
+      body: JSON.stringify({ base: OP.base, mode: OP.mode, confirm: true }),
+    });
+    if (res.status === 403) {
+      // 令牌是**每进程**生成的：服务重启后旧令牌失效。刷新一次并让用户再点。
+      await loadOpToken();
+      accOpRender('<div class="op-hint">服务已重启，令牌已刷新 —— 请重新点一次「补腿/平仓」。</div>');
+      return;
+    }
+    const r = await res.json();
+    accOpRender('<pre class="op-plan">' + esc(JSON.stringify(r, null, 2)) + '</pre>' +
+                '<div class="op-acts"><button class="op-btn" id="op-cancel">关闭</button></div>');
+    loadAccount();
+  } catch (e) {
+    accOpRender('<div class="op-hint">发送失败：' + esc(String(e)) + '</div>');
+  }
+}
+
 function renderAccount() {
   const A = DATA.account;
   if (!A) return;
@@ -1471,8 +1569,9 @@ function renderAccount() {
         '<td class="sep">' + (r.spot_usd === null ? '—' : '$' + sigMoney(r.spot_usd)) + '</td>' +
         '<td class="sep">' + (r.perp_usd === null ? '—' : '$' + sigMoney(r.perp_usd)) + '</td>' +
         '<td class="sep">' + esc(((r.action || {}).action) || '—') + '</td>' +
+        '<td class="sep">' + accOpCell(r) + '</td>' +
         '</tr>';
-    }).join('') : '<tr><td colspan="7" class="hint">账户里没有任何配对标的的持仓。</td></tr>';
+    }).join('') : '<tr><td colspan="8" class="hint">账户里没有任何配对标的的持仓。</td></tr>';
   }
 
   const why = $('acc-why');
@@ -1485,12 +1584,13 @@ function renderAccount() {
       '页面就会拿旧数据当现状；' +
       '② 现在由**交易所的状态**判定，页面上永远不会出现"你以为有、其实没有"的持仓；' +
       '③ 只成交一条腿这件事，从"你要自己想起来"变成"页面直接标红"。' +
-      '\n\n安全边界（三条，都可以自己去代码里核）：' +
-      '① 这个页签**只读**，没有任何下单路径；' +
-      '② 下单能力由 BITGET_TRADE_ENABLED 单独控制，**默认 off** —— ' +
-      '密钥给了也不会变成"系统会下单"；' +
-      '③ 密钥只从本机 .env 读，config 的打码逻辑覆盖 KEY/SECRET/PASSPHRASE 三类字段，' +
-      '--check 与 --json 都不会明文打印。');
+      '\n\n安全边界（四条，都可以自己去代码里核）：' +
+      '① **下单只可能落在模拟盘**：真实环境下发送会被结构性地拒绝' +
+      '（`ALLOW_LIVE_TRADING = False`，改它是个刻意的代码动作）；' +
+      '② 下单能力由 BITGET_TRADE_ENABLED 单独控制，**默认 off**；' +
+      '③ 写接口（补腿/平仓）**默认只出计划**，要再点一次「确认发送」才真发，' +
+      '并且要求同源 + 令牌（防跨站请求伪造）；' +
+      '④ 密钥只从本机 .env 读，打码逻辑覆盖 KEY/SECRET/PASSPHRASE，不会明文打印。');
   }
 }
 
@@ -1501,6 +1601,21 @@ function sigQty(v) {
   if (n === 0) return '0';
   return Math.abs(n) >= 1000 ? sigMoney(n) : Number(n.toFixed(6)).toString();
 }
+
+/* 操作按钮的事件委托（表格行是动态重建的，所以绑在 document 上） */
+document.addEventListener('click', (ev) => {
+  const t = ev.target;
+  if (!t || !t.classList) return;
+  if (t.classList.contains('op-go') && t.dataset.base) {
+    openRepairPlan(t.dataset.base, t.dataset.mode);
+    return;
+  }
+  if (t.id === 'op-send') { confirmRepairSend(); return; }
+  if (t.id === 'op-cancel') {
+    const el = $('acc-op');
+    if (el) { el.hidden = true; el.innerHTML = ''; }
+  }
+});
 
 /* 账户信息变化慢（60 秒缓存），单独一个慢节拍，不跟着主循环每 20 秒打一次 */
 async function loadAccount() {
@@ -1635,6 +1750,8 @@ async function boot() {
   //    **那句话是错的**：服务明明在跑，真实原因是"没配密钥"，
   //    而 `renderAccount()` 里本来就有正确的「未接入 + 三步指引」。
   //    结论：兜底文案永远只是兜底，别让正常路径依赖它。
+  // 先拿写接口令牌（操作按钮的可用状态依赖它），再拉账户
+  await loadOpToken();
   loadAccount();
 
   // ⚠️ 加载顺序是有讲究的（冷启动实测踩到）：

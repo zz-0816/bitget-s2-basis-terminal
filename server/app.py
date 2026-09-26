@@ -28,6 +28,7 @@ import glob
 import json
 import mimetypes
 import os
+import secrets
 import ssl
 import sys
 import threading
@@ -2063,6 +2064,112 @@ def _dispatch(path, raw_query):
     return res
 
 
+# ---------------------------------------------------------------- 操作接口（**写**）
+#
+# 这是本项目**第一个会改变交易所状态的接口**（下单 / 撤单 / 补腿 / 平仓）。
+# 因此它比读接口多三道约束，**缺一不可**：
+#
+#   ① 令牌：POST 必须带 `X-Repair-Token`。为什么需要 ——
+#      服务只监听 127.0.0.1，但**浏览器里的任意网页都能向 127.0.0.1 发请求**
+#      （CSRF）。令牌只能被同源页面读走（跨域读响应会被 CORS 挡），外部网页拿不到。
+#   ② 同源：带 `Origin` 头时必须与本机同源；带 `Sec-Fetch-Site` 时必须同源。
+#   ③ 内容类型：必须 `application/json`（跨域发 JSON 会触发预检，而我们不响应预检）。
+#
+# 再加**业务闸门**：`confirm=true` 才真发（否则只返回 dry-run 预览）；
+# 而真正的发送仍然要过 `place_order()` 的三重闸门（环境 / 开关 / 密钥）。
+_REPAIR_TOKEN = secrets.token_urlsafe(24)
+
+
+def _trade_env():
+    try:
+        import common.bitget_private as bp
+        return bp.env_name()
+    except Exception:                                      # noqa: BLE001
+        return "live"
+
+
+def repair_status():
+    """GET /api/repair/token —— 页面用它拿令牌，同时看到当前环境与开关状态。"""
+    try:
+        import common.bitget_private as bp
+        ok, missing = bp.available()
+        return {"ok": True, "token": _REPAIR_TOKEN, "env": bp.env_name(),
+                "paptrading": bp.paptrading_enabled(),
+                "trade_enabled": bp.trade_enabled(),
+                "keys_ready": ok, "keys_missing": missing,
+                "allow_live": bool(getattr(bp, "ALLOW_LIVE_TRADING", False))}
+    except Exception as exc:                               # noqa: BLE001
+        return {"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}
+
+
+def build_repair_api(base, mode="repair", size_usd=None):
+    """GET /api/repair?base=TSLA&mode=repair|close —— **只出计划，不发单**。"""
+    try:
+        import common.repair as repair
+    except Exception as exc:                               # noqa: BLE001
+        return {"ok": False, "error": "补腿模块不可用：%s: %s" % (type(exc).__name__, exc)}
+    if not base:
+        return {"ok": False, "error": "缺少 base"}
+    try:
+        if mode == "close":
+            plan, err = repair.build_close_plan(base)
+            text = repair.format_close_plan(plan) if plan else None
+        else:
+            plan, err = repair.build_plan(base, size_usd=size_usd)
+            text = repair.format_plan(plan) if plan else None
+    except Exception as exc:                               # noqa: BLE001
+        return {"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}
+    if err:
+        return {"ok": False, "error": err, "base": base, "mode": mode}
+    return {"ok": True, "base": base, "mode": mode, "plan": plan, "text": text,
+            "env": _trade_env()}
+
+
+def run_repair_api(payload):
+    """POST /api/repair —— 执行。body: `{base, mode, confirm, size_usd}`。
+
+    `confirm` 不为真就**只返回 dry-run 预览**（绝不因为"点了按钮"就真发）。
+    """
+    try:
+        import common.repair as repair
+        import common.bitget_private as bp
+    except Exception as exc:                               # noqa: BLE001
+        return {"ok": False, "error": "%s: %s" % (type(exc).__name__, exc)}
+    base = payload.get("base")
+    mode = payload.get("mode") or "repair"
+    confirm = bool(payload.get("confirm"))
+    if not base:
+        return {"ok": False, "error": "缺少 base"}
+
+    if mode == "close":
+        plan, err = repair.build_close_plan(base)
+        if err or not plan:
+            return {"ok": False, "error": err or "无法生成平仓计划"}
+        if not plan["ok"]:
+            return {"ok": False, "error": "被护栏拦下：%s" % "；".join(plan["blocked_by"]),
+                    "plan": plan}
+        if not confirm:
+            res = repair.execute_close(plan, confirm=False)
+            return {"ok": True, "dry_run": True, "plan": plan, "result": res,
+                    "text": repair.format_close_plan(plan)}
+        return {"ok": True, "dry_run": False, "plan": plan,
+                "result": repair.execute_close(plan, confirm=True)}
+
+    plan, err = repair.build_plan(base,
+                                  size_usd=payload.get("size_usd"))
+    if err or not plan:
+        return {"ok": False, "error": err or "无法生成补腿计划"}
+    if not plan["ok"]:
+        return {"ok": False, "error": "被护栏拦下：%s" % "；".join(plan["blocked_by"]),
+                "plan": plan}
+    if not confirm:
+        res = repair.execute(plan, confirm=False)
+        return {"ok": True, "dry_run": True, "plan": plan, "result": res,
+                "text": repair.format_plan(plan)}
+    return {"ok": True, "dry_run": False, "plan": plan,
+            "result": repair.execute(plan, confirm=True)}
+
+
 ROUTES = {
     "/api/health": _health,
     "/api/overview": build_overview,
@@ -2074,6 +2181,7 @@ ROUTES = {
     "/api/signals": build_signals,
     "/api/alerts": build_alerts,
     "/api/account": build_account,
+    "/api/repair/token": repair_status,
     "/api/meta": lambda: {
         "pairs": [{"base": s[1:].replace("USDT", ""), "spot": s, "perp": p} for s, p in PAIRS],
         "session_labels": SESSION_LABEL,
@@ -2126,9 +2234,73 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, code, obj):
         self._send(code, json.dumps(obj, ensure_ascii=False, default=str))
 
+    def do_POST(self):                              # noqa: N802
+        """**唯一的写接口**：`POST /api/repair`。三道防线缺一不可（见文件里注释）。"""
+        raw_path, _, _ = self.path.partition("?")
+        path = raw_path.rstrip("/") or "/"
+        if path != "/api/repair":
+            self._json(404, {"error": "只支持 POST /api/repair", "path": path})
+            return
+
+        # ---- 防线①：同源（防 CSRF：浏览器里任意网页都能向 127.0.0.1 发请求） ----
+        origin = self.headers.get("Origin")
+        sfs = self.headers.get("Sec-Fetch-Site")
+        try:
+            port = self.server.server_address[1]
+        except Exception:                                   # noqa: BLE001
+            port = 8787
+        same = ("http://127.0.0.1:%d" % port, "http://localhost:%d" % port)
+        if origin and origin.rstrip("/") not in same:
+            self._json(403, {"error": "跨源请求被拒绝", "origin": origin})
+            return
+        if sfs and sfs not in ("same-origin", "none"):
+            self._json(403, {"error": "Sec-Fetch-Site 表明不是同源页面", "sfs": sfs})
+            return
+
+        # ---- 防线②：内容类型（跨域发 JSON 会触发预检，而本服务不响应预检） ----
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            self._json(415, {"error": "Content-Type 必须是 application/json"})
+            return
+
+        # ---- 防线③：令牌（跨域读不到响应，所以外部网页拿不到这个值） ----
+        if self.headers.get("X-Repair-Token") != _REPAIR_TOKEN:
+            self._json(403, {"error": "缺少或错误的 X-Repair-Token（写接口的 CSRF 防线）"})
+            return
+
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            payload = json.loads(self.rfile.read(n).decode("utf-8") or "{}")
+            if not isinstance(payload, dict):
+                raise ValueError("body 必须是 JSON 对象")
+        except Exception as exc:                            # noqa: BLE001
+            self._json(400, {"error": "body 解析失败：%s" % exc})
+            return
+
+        try:
+            self._json(200, run_repair_api(payload))
+        except Exception as exc:                            # noqa: BLE001
+            self._json(500, {"error": str(exc)[:300]})
+
     def do_GET(self):                               # noqa: N802
         raw_path, _, raw_query = self.path.partition("?")
         path = raw_path.rstrip("/") or "/"
+
+        # 补腿/平仓的**只读**计划（带 base / mode 参数，所以不走 ROUTES 的零参分发）
+        if path == "/api/repair":
+            q = {}
+            for kv in (raw_query or "").split("&"):
+                if "=" in kv:
+                    k, _, v = kv.partition("=")
+                    q[unquote(k.strip())] = unquote(v.strip())
+            try:
+                usd, _note = parse_size_usd(q.get("size_usd"))
+                self._json(200, build_repair_api(q.get("base"),
+                                                 q.get("mode") or "repair",
+                                                 size_usd=usd))
+            except Exception as exc:                # noqa: BLE001
+                self._json(500, {"error": str(exc)[:300]})
+            return
 
         if path in ROUTES:
             try:

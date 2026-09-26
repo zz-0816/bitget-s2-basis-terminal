@@ -3,9 +3,12 @@
 """补腿 CLI：把缺掉的那条腿补上（**默认只出计划，不发单**）
 ================================================================================
 
-    python tools/repair_leg.py --base TSLA          # 只出计划（7 道护栏逐条给你看）
+    python tools/repair_leg.py --base TSLA          # 只出补腿计划（7 道护栏逐条给你看）
     python tools/repair_leg.py --all                # 把当前所有"单腿"标的都列出计划
     python tools/repair_leg.py --base TSLA --confirm  # 确认后真发（**仅模拟盘**）
+
+    python tools/repair_leg.py --base TSLA --close           # 平仓计划（两腿都在时）
+    python tools/repair_leg.py --base TSLA --close --confirm # 真平（**先平永续再卖现货**）
 
 安全约定（与 docs/54 / docs/56 一致）：
 
@@ -34,8 +37,11 @@ import common.bitget_private as bp                         # noqa: E402
 import common.repair as repair                             # noqa: E402
 
 
-def _single_leg_bases():
-    """当前处于「只成交一条腿」状态的所有标的（复用它自己的判定，不另算一份）。"""
+def _single_leg_bases(only_naked=True):
+    """当前处于「只成交一条腿」状态的所有标的（复用它自己的判定，不另算一份）。
+
+    `only_naked=False` 时返回「两条腿都在」的标的（用于 --close --all）。
+    """
     from server.app import PAIRS
     spot, e1 = bp.read_spot_assets()
     pos, e2 = bp.read_positions()
@@ -45,7 +51,8 @@ def _single_leg_bases():
     # 状态名复用 bitget_private 的常量（真实值是 spot_only / perp_only）——
     # 各处自己写一份就一定会漂（本轮已踩到）
     naked = tuple(getattr(bp, "NAKED_STATES", ("spot_only", "perp_only")))
-    return [r["base"] for r in rows if r.get("state") in naked], None
+    want = naked if only_naked else ("both",)
+    return [r["base"] for r in rows if r.get("state") in want], None
 
 
 def main(argv=None):
@@ -54,6 +61,8 @@ def main(argv=None):
     ap.add_argument("--all", action="store_true", help="处理当前所有单腿标的")
     ap.add_argument("--size-usd", type=float, default=None,
                     help="只用来**收紧**数量（不超过这么多钱）；不会放大数量")
+    ap.add_argument("--close", action="store_true",
+                    help="改成**平仓**（只在两条腿都在时有效；先平永续再卖现货）")
     ap.add_argument("--confirm", action="store_true",
                     help="真的发送（不加这个参数永远是 dry-run）")
     args = ap.parse_args(argv)
@@ -68,7 +77,7 @@ def main(argv=None):
 
     bases = [args.base] if args.base else []
     if args.all:
-        got, err = _single_leg_bases()
+        got, err = _single_leg_bases(only_naked=not args.close)
         if err:
             print("  [!! ] %s" % err)
             return 2
@@ -80,6 +89,27 @@ def main(argv=None):
 
     rc = 0
     for b in bases:
+        if args.close:
+            plan, err = repair.build_close_plan(b)
+            if err:
+                print("\n  [!! ] %s：%s" % (b, err))
+                rc = 1
+                continue
+            print()
+            print(repair.format_close_plan(plan))
+            if not plan["ok"]:
+                rc = 1
+                continue
+            res = repair.execute_close(plan, confirm=args.confirm)
+            print("-" * 80)
+            for i, st in enumerate(res.get("steps") or [], 1):
+                print("  步骤 %d %s：sent=%s dry_run=%s state=%s %s"
+                      % (i, st.get("desc"), st.get("sent"), st.get("dry_run"),
+                         st.get("state"), str(st.get("reason"))[:70]))
+            print("  结果：%s" % res.get("reason"))
+            if args.confirm and not res.get("ok"):
+                rc = 1
+            continue
         plan, err = repair.build_plan(b, size_usd=args.size_usd)
         print()
         if err:

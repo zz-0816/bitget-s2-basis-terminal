@@ -396,7 +396,8 @@
      aria-labelledby="tab-account" hidden>
 
   <section class="panel acc">
-    <h2>我的账户 <span class="hint" id="acc-hint">—</span></h2>
+    <h2>我的账户 <span class="hint" id="acc-hint">—</span>
+      <span class="sess-label" id="op-env">操作不可用</span></h2>
 
     <!-- 待处理：只成交一条腿的持仓（最危险的一类） -->
     <div id="acc-naked" class="acc-naked" hidden></div>
@@ -417,13 +418,17 @@
             <th class="sep">现货市值 (USD)</th>
             <th class="sep">永续名义 (USD)</th>
             <th class="sep">建议</th>
+            <th class="sep" title="补腿 / 平仓。默认只出计划（dry-run），要再点一次「确认发送」才真发；而且只能发到模拟盘">操作</th>
           </tr>
         </thead>
         <tbody id="acc-rows">
-          <tr><td colspan="7"><span class="sk sk-row"></span></td></tr>
+          <tr><td colspan="8"><span class="sk sk-row"></span></td></tr>
         </tbody>
       </table>
     </div>
+
+    <!-- 操作计划面板：默认只出计划（dry-run），要再点一次「确认发送」才真发 -->
+    <div class="acc-op" id="acc-op" hidden></div>
 
     <details class="fold" data-fold="acc-why">
       <summary>说明：这个页签是什么、密钥怎么配、安全边界在哪</summary>

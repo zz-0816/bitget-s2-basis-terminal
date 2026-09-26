@@ -87,6 +87,7 @@ ENDPOINTS = {
     "orders_spot_pending": "/api/v2/spot/trade/unfilled-orders",
     # 订单详情 / 撤单
     "order_detail": "/api/v2/mix/order/detail",
+    "order_spot_detail": "/api/v2/spot/trade/orderInfo",
     "cancel_mix_order": "/api/v2/mix/order/cancel-order",
     "cancel_spot_order": "/api/v2/spot/trade/cancel-order",
     # 下单（POST + JSON body）。⚠️ **只允许在模拟盘发送** —— 见 place_order()
@@ -485,6 +486,71 @@ def pos_mode(symbol=None):
     if err or not acc:
         return None
     return acc.get("posMode")
+
+
+def read_order_detail(symbol, order_id, kind="mix"):
+    """查一笔订单的**当前状态**（下单后的回报闭环）。返回 (dict, err)。
+
+    ⚠️ 现货与合约的查询端点不同，和撤单一样必须分开（`cancel_order` 踩过同一个坑）。
+    """
+    if kind == "spot":
+        path = ENDPOINTS["order_spot_detail"]
+        params = {"symbol": symbol, "orderId": str(order_id)}
+    else:
+        path = ENDPOINTS["order_detail"]
+        params = {"symbol": symbol, "productType": "usdt-futures",
+                  "orderId": str(order_id)}
+    p, err = _http("GET", path, params)
+    if err:
+        return None, err
+    if not _ok(p):
+        return None, err_msg(p)
+    d = p.get("data")
+    if isinstance(d, list):
+        d = d[0] if d else {}
+    return (d or {}), None
+
+
+def order_state(symbol, order_id, kind="mix"):
+    """把订单状态归一成四种：`live` / `filled` / `partial` / `dead`（+ `unknown`）。
+
+    取不到时返回 `("unknown", None)` —— **不猜**。调用方据此决定"要不要处置"。
+    """
+    d, err = read_order_detail(symbol, order_id, kind)
+    if err or not d:
+        return "unknown", None
+    st = str(d.get("status") or d.get("state") or "").lower()
+    try:
+        filled = float(d.get("baseVolume") or d.get("filledQty") or 0)
+    except (TypeError, ValueError):
+        filled = 0.0
+    if st in ("filled", "full_fill"):
+        return "filled", d
+    if st in ("partially_filled", "partial_fill", "partial"):
+        return "partial", d
+    if st in ("live", "new", "init", "not_triggered"):
+        return ("filled" if filled > 0 else "live"), d
+    if st in ("canceled", "cancelled", "failed", "dead"):
+        return ("partial" if filled > 0 else "dead"), d
+    return "unknown", d
+
+
+def wait_order(symbol, order_id, kind="mix", timeout=8.0, interval=0.8):
+    """下单后**等一会儿再判状态**，返回 `(state, detail, waited_seconds)`。
+
+    为什么必须等：交易所受理 ≠ 成交（`code=00000` 只代表"收到请求并分配了订单号"）。
+    紧接着就查，往往还是 `live`。这里轮询到"成交 / 死掉"或超时为止。
+    超时**不算失败** —— 返回 `live` + 明细，由调用方决定怎么处置（不替它下结论）。
+    """
+    t0 = time.time()
+    last = None
+    while True:
+        st, last = order_state(symbol, order_id, kind)
+        if st in ("filled", "partial", "dead"):
+            return st, last, time.time() - t0
+        if time.time() - t0 >= timeout:
+            return st, last, time.time() - t0
+        time.sleep(interval)
 
 
 def contract_spec(symbol):

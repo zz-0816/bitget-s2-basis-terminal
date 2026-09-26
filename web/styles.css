@@ -33,6 +33,29 @@ body {
   position: sticky; top: 0; z-index: 20;
   background: var(--panel); border-bottom: 1px solid var(--line);
 }
+/* 操作：补腿 / 平仓按钮与计划面板。
+   默认只出计划（dry-run），要再点「确认发送」才真发 —— 所以普通按钮不显眼，
+   只有确认按钮用强调色（--warn），避免"手滑"。 */
+.op-btn {
+  padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); font-size: 12px; font-family: inherit;
+}
+.op-btn:hover:not(:disabled) { border-color: var(--accent); }
+.op-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.op-btn.op-send { border-color: var(--warn); color: var(--warn); font-weight: 600; }
+.acc-op {
+  margin: 14px 0 0; padding: 12px 14px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+}
+.op-plan {
+  margin: 0 0 10px; padding: 0; white-space: pre-wrap; word-break: break-word;
+  font: 12px/1.6 ui-monospace, Consolas, "Courier New", monospace;
+  color: var(--text); max-height: 340px; overflow: auto;
+}
+.op-acts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.op-hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
+
 /* 模拟盘横幅：常驻且不可关闭 —— 虚拟资金与真实账户必须有一直存在的视觉差异。
    用 --warn 色系（同"黄档提醒"），不抢主信息但足够显眼。 */
 .envbar {
