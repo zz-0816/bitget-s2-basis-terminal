@@ -1990,6 +1990,33 @@ def build_account():
             _m += (" 可用 USDT 只有 **%s** —— 不足以开出任何一仓；"
                    "要实测「补腿 / 两腿配对」这套流程，得先入金。" % ("%g" % usdt))
         notes.append(_m)
+
+    # ⚠️ **配对之外的持仓必须说出来**（2026-09-27 实测踩到）：
+    #    用户接了真实账户，页面显示"这 10 个标的一条腿都没有"，读起来像"账户是空的"；
+    #    而账户里其实躺着一条 UBUSDT 空头（浮亏 180 USDT）—— 它不在那 10 个配对里，
+    #    于是**页面对它只字不提**。这正是本项目最忌讳的"页面在骗人"：
+    #    没说错，但会让人得出错误结论。所以这里点名报出来（只报数量与明细，不做判断）。
+    _perp_syms = set(PERP_SYMBOLS)
+    unpaired = []
+    for _p in (pos or []):        # 注意：本函数里持仓变量叫 pos（不是 positions）
+        if not isinstance(_p, dict):
+            continue
+        _sym = str(_p.get("symbol") or "")
+        if _sym and _sym not in _perp_syms:
+            unpaired.append({"symbol": _sym, "side": _p.get("holdSide"),
+                             "size": _p.get("total"),
+                             "open_price": _p.get("openPriceAvg"),
+                             "unrealized_pl": _p.get("unrealizedPL")})
+    out["unpaired"] = unpaired
+    if unpaired:
+        _u = "；".join("%s %s %s 张（浮盈亏 %s）"
+                       % (x["symbol"], x["side"] or "?", x["size"] or "?",
+                          x["unrealized_pl"] if x["unrealized_pl"] is not None else "?")
+                       for x in unpaired[:4])
+        notes.append("⚠️ 除上面这些配对，账户里还有 **%d 条不在配对里**的持仓：%s —— "
+                     "**本页只跟踪那 %d 个 rToken 配对，不管它们**；"
+                     "所以别把本页的「空仓」读成「账户是空的」。"
+                     % (len(unpaired), _u, len(rows)))
     if not out["verified"]:
         notes.append("⚠️ 这些接口路径**还没用真 key 验证过**（Bitget 文档站是 JS 渲染的，"
                      "本机抓不到正文）。跑 `python common/bitget_private.py --probe` "

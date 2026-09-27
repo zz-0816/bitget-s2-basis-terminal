@@ -76,6 +76,14 @@ body {
 .envbar span { color: var(--muted); }
 .envbar b { color: var(--warn); font-weight: 600; }
 .envbar[hidden] { display: none; }
+/* 真实账户：用 --neg 色（比模拟盘的橙色更醒目）——
+   看真钱账户时不该有任何"看起来跟平时一样"的错觉。 */
+.envbar.live {
+  background: rgba(239, 83, 80, 0.12);
+  border-bottom-color: var(--neg);
+  color: var(--neg);
+}
+.envbar.live b { color: var(--neg); }
 .top {
   display: flex; align-items: center; justify-content: space-between;
   gap: 16px; padding: 10px 22px;
