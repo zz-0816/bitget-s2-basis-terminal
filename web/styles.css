@@ -55,6 +55,13 @@ body {
 }
 .op-acts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .op-hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.op-legend {
+  margin: 14px 0 0; padding: 10px 14px; color: var(--muted); font-size: 12px;
+  line-height: 1.75; background: var(--panel); border-left: 2px solid var(--line);
+  border-radius: 0 8px 8px 0;
+}
+.op-legend b { color: var(--text); font-weight: 600; }
+.op-btn + .op-btn { margin-left: 4px; }
 
 /* 模拟盘横幅：常驻且不可关闭 —— 虚拟资金与真实账户必须有一直存在的视觉差异。
    用 --warn 色系（同"黄档提醒"），不抢主信息但足够显眼。 */

@@ -494,6 +494,249 @@ def format_close_plan(plan):
     return "\n".join(L)
 
 
+def build_open_plan(base, size_usd=None):
+    """开仓：**买入 rToken 现货 + 卖空美股永续**（两条腿一起建）。
+
+    机械门槛 —— **不新设任何阈值**，全部读已有判定（这是本项目一以贯之的规矩）：
+
+      · `build_signals()["buy"]` 的四条判据必须**全过**（窗口 / 两腿盘口 /
+        基差门槛 / 扣掉成本后还有空间）；
+      · 该标的必须在 `build_opportunities()` 里 `tradable` 且未被拦；
+      · 当前必须是 `flat` —— 已经有仓位就别重复开（护栏 #1 的同款思路）。
+
+    规模：用 `recommended_usd`（= min(用户填的金额, ≤5bp 可吃 × DEPTH_TAKE_RATIO)），
+    与页面同一个来源，不另算一份。
+
+    **顺序：先开现货腿、再开永续腿** —— 先开永续会留下**裸空**
+    （损失无上限），先开现货只留下**裸多**（上限 = 那笔现货的价值）。
+    与平仓的顺序**正好相反**，但道理是同一条：**宁可留有限风险，不留无限风险**。
+    """
+    from server.app import PAIRS, build_signals, build_opportunities
+    import common.strategy_params as sp
+
+    spot_sym, perp_sym = _plan_pair(base, PAIRS)
+    if not spot_sym:
+        return None, "不在 10 个配对里：%s" % base
+
+    checks = []
+
+    def chk(cid, label, ok, detail):
+        checks.append({"id": cid, "label": label, "ok": bool(ok), "detail": detail})
+        return bool(ok)
+
+    requested = float(size_usd or 0) or getattr(sp, "DEFAULT_SIZE_USD", 5000.0)
+
+    # ---- 门槛①：四道判据全过（读信号层的机械判定） ----
+    try:
+        sig = build_signals(requested)
+        buy_checks = (sig.get("buy") or {}).get("checks") or []
+        bad = [c for c in buy_checks if not c.get("ok")]
+        ok_sig = len(buy_checks) >= 4 and not bad
+        chk("sig", "四道判据全过（%d/%d）" % (len(buy_checks) - len(bad), len(buy_checks)),
+            ok_sig,
+            "卡在：" + "；".join(str(c.get("label")) for c in bad) if bad
+            else "窗口 / 两腿盘口 / 基差门槛 / 净空间 —— 四条都过")
+    except Exception as exc:                               # noqa: BLE001
+        return None, "读信号层失败：%s: %s" % (type(exc).__name__, exc)
+
+    # ---- 门槛②：该标的本身可做（机会名单的判定） ----
+    item = None
+    try:
+        opp = build_opportunities(requested)
+        for it in (opp.get("items") or []):
+            if str(it.get("base")) == base:
+                item = it
+                break
+    except Exception:                                      # noqa: BLE001
+        item = None
+    ok_item = bool(item) and bool(item.get("tradable")) and not item.get("blocked")
+    chk("tradable", "该标的可交易（%s）" % base, ok_item,
+        ("基差 %.2f bp / 净 %.2f bp / 可吃 $%s" %
+         (item.get("basis_bp") or 0, item.get("net_bp") or 0,
+          item.get("depth_within_5bp_usd")))
+        if ok_item else ("在机会名单里被拦：%s" % (item or {}).get("blocked_code")
+                         if item else "机会名单里没有这个标的（可能取不到盘口）"))
+
+    # ---- 读真实持仓：必须 flat（已经有仓位就不重复开） ----
+    spot_assets, e1 = bp.read_spot_assets()
+    positions, e2 = bp.read_positions()
+    if e1 or e2:
+        return None, "读交易所状态失败：%s %s" % (e1 or "", e2 or "")
+    rows = bp.pair_legs(PAIRS, spot_assets, positions)
+    row = next((r for r in rows if r.get("base") == base), None)
+    state = (row or {}).get("state")
+    chk(4, "当前是空仓（state=%s）" % state, state == "flat",
+        "已经有仓位了 —— 缺腿请用补腿、两条腿都在请用平仓，不要重复开"
+        if state != "flat" else "空仓，可以开")
+
+    q_spot = bp.public_quote(spot_sym, "spot")
+    q_perp = bp.public_quote(perp_sym, "mix")
+    if not (q_spot and q_perp):
+        return None, "取不到盘口（现货 %s / 永续 %s），不猜价格" % (spot_sym, perp_sym)
+
+    # ---- 规模：recommended_usd（与页面同源） ----
+    usd = float((item or {}).get("recommended_usd") or 0)
+    ok_size = usd > 0
+    chk(3, "规模来自 recommended_usd（$%s）" % round(usd, 2), ok_size,
+        "= min(请求金额 $%s, ≤5bp 可吃 × 比例)；数量 = 金额 ÷ 现货价"
+        % round(requested, 2) if ok_size
+        else "盘口吃不下任何量（recommended = 0）—— 不硬做")
+
+    if not (ok_sig and ok_item and ok_size and state == "flat"):
+        return _finish_open(base, state, None, checks, row, requested), None
+
+    raw_size = usd / q_spot["mid"] if q_spot["mid"] else 0
+
+    # ---- 两笔单：**现货在前、永续在后** ----
+    orders = []
+    ok3 = True
+    for leg_kind, sym, side, tside, desc, q in (
+            ("spot", spot_sym, "buy", None, "开现货腿（买入 rToken）", q_spot),
+            ("mix", perp_sym, "sell", "open", "开永续腿（卖空）", q_perp)):
+        size, _spec = bp.round_size(sym, raw_size, leg_kind)
+        opp = q["ask"] if side == "buy" else q["bid"]      # 对手价
+        limit = bp.round_price(sym, opp, leg_kind)
+        slip = abs(limit / q["mid"] - 1.0) * 10000.0 if (limit and q["mid"]) else 999.0
+        good = bool(size) and size > 0 and limit is not None and slip <= MAX_SLIP_BP
+        ok3 = ok3 and good
+        orders.append({"kind": leg_kind, "symbol": sym, "side": side,
+                       "trade_side": tside, "desc": desc, "size": size,
+                       "price": limit, "slip_bp": round(slip, 3),
+                       "notional_usd": round((size or 0) * (limit or 0), 2),
+                       "source_qty": raw_size, "ok": good})
+    chk(6, "只发限价 + 滑点 ≤ %.1f bp" % MAX_SLIP_BP, ok3,
+        "；".join("%s %s @ %s（滑点 %.2f bp）"
+                  % (o["desc"], o["size"], o["price"], o["slip_bp"]) for o in orders))
+
+    # ---- 护栏 #5：**两条腿的钱在两个钱包**，各自查一次 ----
+    need_spot = (orders[0]["notional_usd"] or 0) * FEE_BUFFER
+    avail_spot = _usdt_available(spot_assets)
+    ok5a = need_spot <= avail_spot
+    acc, e3 = bp.read_mix_account(perp_sym)
+    ok5b, avail_margin, need_margin = False, 0.0, 0.0
+    if not e3 and acc:
+        try:
+            avail_margin = float(acc.get("crossedMaxAvailable") or acc.get("available") or 0)
+            lev = float(acc.get("crossedMarginLeverage") or 1) or 1.0
+            need_margin = (orders[1]["notional_usd"] or 0) / lev * FEE_BUFFER
+            ok5b = need_margin <= avail_margin
+        except (TypeError, ValueError):
+            ok5b = False
+    chk(5, "两个钱包的钱都够（现货 USDT + 合约保证金）", ok5a and ok5b,
+        "现货需 %.2f ≤ %.2f；保证金需 %.2f ≤ %.2f"
+        % (need_spot, avail_spot, need_margin, avail_margin)
+        + ("" if (ok5a and ok5b) else " —— **任一边不足就拒绝，不硬发**（只有一边有钱 = 裸露敞口）"))
+
+    now = time.time()
+    chk(1, "幂等键已生成", True, "两笔各自一个（open-%s-spot / open-%s-perp）" % (base, base))
+    chk(7, "密钥只在 .env", bp.available()[0], "已配置")
+
+    plan = _finish_open(base, state, orders, checks, row, requested)
+    plan.update({
+        "at": now, "orders": orders, "size": raw_size,
+        "size_usd": round(usd, 2), "requested_usd": round(requested, 2),
+        "basis_bp": round(float((item or {}).get("basis_bp") or 0), 3),
+        "net_bp": round(float((item or {}).get("net_bp") or 0), 3),
+        "client_oid_spot": "open-%s-spot-%d" % (base, int(now)),
+        "client_oid_perp": "open-%s-perp-%d" % (base, int(now)),
+    })
+    return plan, None
+
+
+def _finish_open(base, state, orders, checks, row, requested):
+    bad = [c for c in checks if not c["ok"]]
+    return {
+        "kind": "open", "at": time.time(), "base": base, "state": state,
+        "orders": orders, "checks": checks, "ok": not bad,
+        "blocked_by": ["#%s %s" % (c["id"], c["label"]) for c in bad],
+        "holdings": {"spot_qty": (row or {}).get("spot_qty"),
+                     "perp_size": (row or {}).get("perp_size"), "state": state},
+        "notes": [], "triggers": [], "size": None, "price": None,
+        "size_usd": None, "requested_usd": round(requested, 2),
+    }
+
+
+def execute_open(plan, confirm=False):
+    """执行开仓：**先开现货腿、再开永续腿**（理由见 `build_open_plan`）。
+
+    每步等状态，前一笔没成交就不发第二笔 —— 否则就是"一条腿建好了、另一条没建"，
+    而那正是**裸露敞口**（`docs/53` §5 铁律 2 要防的事）。
+    """
+    if not plan or plan.get("kind") != "open":
+        return {"ok": False, "reason": "不是开仓计划", "steps": []}
+    if not plan.get("ok"):
+        return {"ok": False, "steps": [],
+                "reason": "计划被护栏拦下：%s" % "；".join(plan["blocked_by"])}
+    age = time.time() - float(plan.get("at") or 0)
+    if age > PLAN_TTL_SEC:
+        return {"ok": False, "steps": [],
+                "reason": "计划已过期 %.0f 秒（上限 %.0f）—— 请重新生成" % (age, PLAN_TTL_SEC)}
+
+    from server.app import PAIRS
+    spot, _ = bp.read_spot_assets()
+    pos, _ = bp.read_positions()
+    rows = bp.pair_legs(PAIRS, spot, pos)
+    row = next((r for r in rows if r.get("base") == plan["base"]), None)
+    if (row or {}).get("state") != "flat":
+        return {"ok": False, "steps": [],
+                "reason": "状态已变：计划时是 flat，现在是 %s —— 拒绝执行"
+                          % (row or {}).get("state")}
+
+    steps = []
+    for i, o in enumerate(plan["orders"]):
+        cid = plan["client_oid_spot"] if o["kind"] == "spot" else plan["client_oid_perp"]
+        res = bp.place_order(o["symbol"], o["side"], o["size"], price=str(o["price"]),
+                             kind=o["kind"], client_oid=cid,
+                             trade_side=o.get("trade_side"), dry_run=not confirm)
+        step = {"desc": o["desc"], "symbol": o["symbol"], "sent": bool(res.get("sent")),
+                "dry_run": bool(res.get("dry_run")), "reason": res.get("reason"),
+                "order_id": (((res.get("response") or {}).get("data") or {})
+                             .get("orderId")),
+                "state": None, "waited_sec": None}
+        if confirm and step["sent"] and step["order_id"]:
+            st, _d, waited = bp.wait_order(o["symbol"], step["order_id"],
+                                           kind=o["kind"], timeout=10.0)
+            step["state"] = st
+            step["waited_sec"] = round(waited, 1)
+        steps.append(step)
+        if confirm and not step["sent"]:
+            return {"ok": False, "steps": steps,
+                    "reason": "第 %d 步未发出（%s）—— 已停止，不再发下一笔"
+                              % (i + 1, step["reason"])}
+        if confirm and step["state"] in ("live", "unknown"):
+            return {"ok": False, "steps": steps,
+                    "reason": "第 %d 步（%s）等待后仍是 %s —— 已停止。"
+                              "⚠️ 此时可能只有一条腿，请立刻按告警处置（补腿或撤单）"
+                              % (i + 1, o["desc"], step["state"])}
+    return {"ok": True, "steps": steps,
+            "reason": "两条腿都建好了" if confirm else "dry-run（未发送）"}
+
+
+def format_open_plan(plan):
+    """把开仓计划渲染成人读文字。"""
+    if not plan:
+        return "（没有计划）"
+    L = ["开仓计划 · %s    状态：%s" % (plan["base"], plan["state"]), "-" * 76]
+    for c in plan["checks"]:
+        L.append("  [%s] 门槛 #%s %s" % ("OK" if c["ok"] else "!!", c["id"], c["label"]))
+        if c.get("detail"):
+            L.append("          %s" % c["detail"])
+    L.append("-" * 76)
+    if plan.get("ok"):
+        L.append("  执行顺序（**先开现货，避免留下裸空**）：")
+        for i, o in enumerate(plan["orders"], 1):
+            L.append("    %d. %s  %s  数量 %s  限价 %s（滑点 %.2f bp）  ≈ $%s"
+                     % (i, o["desc"], o["symbol"], o["size"], o["price"],
+                        o["slip_bp"], o["notional_usd"]))
+        L.append("  规模 $%s（请求 $%s；上限 = 盘口 5bp 内吃得下的量）"
+                 % (plan.get("size_usd"), plan.get("requested_usd")))
+    else:
+        L.append("  **拒绝开仓** —— 卡在：%s" % "；".join(plan["blocked_by"]))
+    for n in plan.get("notes") or []:
+        L.append("  注：%s" % n)
+    return "\n".join(L)
+
+
 def format_plan(plan):
     """把计划渲染成人读的一段文字（CLI 与页面共用同一份措辞）。"""
     if not plan:

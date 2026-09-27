@@ -2103,7 +2103,7 @@ def repair_status():
 
 
 def build_repair_api(base, mode="repair", size_usd=None):
-    """GET /api/repair?base=TSLA&mode=repair|close —— **只出计划，不发单**。"""
+    """GET /api/repair?base=TSLA&mode=open|repair|close —— **只出计划，不发单**。"""
     try:
         import common.repair as repair
     except Exception as exc:                               # noqa: BLE001
@@ -2111,7 +2111,10 @@ def build_repair_api(base, mode="repair", size_usd=None):
     if not base:
         return {"ok": False, "error": "缺少 base"}
     try:
-        if mode == "close":
+        if mode == "open":
+            plan, err = repair.build_open_plan(base, size_usd=size_usd)
+            text = repair.format_open_plan(plan) if plan else None
+        elif mode == "close":
             plan, err = repair.build_close_plan(base)
             text = repair.format_close_plan(plan) if plan else None
         else:
@@ -2140,6 +2143,20 @@ def run_repair_api(payload):
     confirm = bool(payload.get("confirm"))
     if not base:
         return {"ok": False, "error": "缺少 base"}
+
+    if mode == "open":
+        plan, err = repair.build_open_plan(base, size_usd=payload.get("size_usd"))
+        if err or not plan:
+            return {"ok": False, "error": err or "无法生成开仓计划"}
+        if not plan["ok"]:
+            return {"ok": False, "error": "被门槛拦下：%s" % "；".join(plan["blocked_by"]),
+                    "plan": plan}
+        if not confirm:
+            return {"ok": True, "dry_run": True, "plan": plan,
+                    "result": repair.execute_open(plan, confirm=False),
+                    "text": repair.format_open_plan(plan)}
+        return {"ok": True, "dry_run": False, "plan": plan,
+                "result": repair.execute_open(plan, confirm=True)}
 
     if mode == "close":
         plan, err = repair.build_close_plan(base)

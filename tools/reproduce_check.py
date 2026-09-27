@@ -881,6 +881,17 @@ def check_features():
              "下单后等状态（受理 ≠ 成交，必须再确认）"),
             ("web/index.html", 'id="acc-op"',
              "前端操作计划面板容器"),
+            # ---- 开仓（三类操作的第三类）----
+            ("common/repair.py", "def build_open_plan(",
+             "开仓计划（四道判据全过 + 先开现货避免裸空）"),
+            ("common/repair.py", "def execute_open(",
+             "开仓执行（前一笔没成交就不发第二笔）"),
+            ("web/app.js", "function opBtn(",
+             "前端操作按钮常驻可见（不能点的给灰+说明原因，别藏起来）"),
+            ("web/app.js", "let st = null;",
+             "loadOpToken 的作用域（实测：写成 const 在 try 里会让整页挂掉）"),
+            ("web/index.html", 'id="op-why"',
+             "前端·操作不可用时明确说清差哪一步"),
     ]:
         p = os.path.join(BASE, rel)
         if not os.path.exists(p):

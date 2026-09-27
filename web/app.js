@@ -1398,8 +1398,15 @@ const ACC_STATE = {
 const OP = { token: null, base: null, mode: null, env: 'live', on: false };
 
 async function loadOpToken() {
+  // ⚠️ `st` 必须声明在 try **外面**：2026-09-27 实测踩到 ——
+  //    写成 `const st = await …` 在 try 块里，块外再用 `st.xxx` 会抛
+  //    ReferenceError，整个 loadOpToken 每次都炸，`boot()` 随即中断，
+  //    **整页（KPI / 三张卡 / 账户）全都停在骨架屏**，最后被兜底文案盖成
+  //    "暂时取不到数据 —— 请确认本地服务在运行"（而服务明明是好的）。
+  //    这类"作用域写错导致整页挂掉"极难从截图看出来，只能靠真浏览器探针。
+  let st = null;
   try {
-    const st = await api('/api/repair/token');
+    st = await api('/api/repair/token');
     OP.token = st.token;
     OP.env = st.env;
     OP.on = !!(st.paptrading && st.trade_enabled && st.keys_ready);
@@ -1409,20 +1416,66 @@ async function loadOpToken() {
     tag.textContent = OP.on ? '操作可用（模拟盘）' : '操作不可用';
     tag.className = 'sess-label ' + (OP.on ? 'open' : 'closed');
   }
+  // 不可操作时**说清差哪一步** —— 让人对着灰按钮猜是设计缺陷
+  const why = $('op-why');
+  if (why) {
+    if (OP.on) {
+      why.hidden = true;
+    } else {
+      const miss = [];
+      if (st) {
+        if (!st.paptrading) miss.push('没有切到模拟盘（.env 里 <code>BITGET_PAPTRADING=on</code>）');
+        if (!st.keys_ready) miss.push('模拟盘密钥不齐（缺 ' +
+          (st.keys_missing || []).join('、') + '）');
+        if (!st.trade_enabled) miss.push('下单开关没开（.env 里 <code>BITGET_TRADE_ENABLED=on</code>）');
+      }
+      why.hidden = false;
+      why.innerHTML = '<b>操作当前不可用</b>' +
+        (miss.length ? '，还差：① ' + miss.join('；② ') + '。' +
+          '<br>改完 .env 要<b>重启服务</b>才生效。' : '（读不到操作接口状态）。') +
+        '在此之前，下面这些按钮都是灰的 —— 这是有意的：' +
+        '让"不能下单"成为默认状态，而不是默认能力。';
+    }
+  }
+}
+
+/* 三类操作按钮**常驻可见**（哪怕当前不该点）——
+   为什么：只在"有事可做"时才出现的按钮，会让用户以为这个功能不存在。
+   不能点的给灰 + 悬浮说明原因，比"藏起来"诚实，也比"点了才报错"友好。
+
+   三条各自的适用形态：
+     开仓  空仓时      —— 两条腿一起建（先现货后永续，避免裸空）
+     补腿  单腿时      —— 补上缺的那条腿
+     平仓  两条腿都在时 —— 按平仓规则平掉（先永续后现货，避免裸空） */
+function opBtn(label, mode, base, enabled, why) {
+  return '<button class="op-btn' + (enabled ? ' op-go' : '') + '"' +
+         (enabled ? ' data-base="' + esc(base) + '" data-mode="' + mode + '"' : ' disabled') +
+         ' title="' + esc(why) + '">' + label + '</button>';
 }
 
 function accOpCell(r) {
-  if (!OP.on) {
-    return '<button class="op-btn" disabled title="需要：模拟盘 + 下单开关开启 + 密钥齐备">' +
-           (r.state === 'both' ? '平仓' : '补腿') + '</button>';
+  const gate = OP.on ? '' : '（需：模拟盘 + 下单开关开启 + 密钥齐备）';
+  const st = r.state;
+  if (st === 'flat') {
+    return opBtn('开仓', 'open', r.base, OP.on,
+                 (OP.on ? '空仓 → 可以开：' : gate + ' 空仓 → 可以开：') +
+                 '买入 rToken 现货 + 卖空美股永续（先开现货，避免留下裸空）') +
+           opBtn('补腿', 'repair', r.base, false, '空仓：两边都没有腿，没有可补的') +
+           opBtn('平仓', 'close', r.base, false, '空仓：没有仓位可平');
   }
-  if (r.state === 'spot_only' || r.state === 'perp_only') {
-    return '<button class="op-btn op-go" data-base="' + esc(r.base) +
-           '" data-mode="repair">补腿</button>';
+  if (st === 'spot_only' || st === 'perp_only') {
+    return opBtn('补腿', 'repair', r.base, OP.on,
+                 (OP.on ? '' : gate + ' ') + '只有一条腿 → 补上缺的那条（危险状态，优先处置）') +
+           opBtn('平仓', 'close', r.base, false,
+                 '单腿状态谈不上"平仓"——先补腿；要人工处置请去交易所') +
+           opBtn('开仓', 'open', r.base, false, '已有单腿仓位：不要重复开');
   }
-  if (r.state === 'both') {
-    return '<button class="op-btn op-go" data-base="' + esc(r.base) +
-           '" data-mode="close">平仓</button>';
+  if (st === 'both') {
+    return opBtn('平仓', 'close', r.base, OP.on,
+                 (OP.on ? '' : gate + ' ') +
+                 '两条腿都在 → 按平仓规则平掉（基差回落到门槛 / 持有到期 / 风控告警）') +
+           opBtn('补腿', 'repair', r.base, false, '两条腿都在，不需要补') +
+           opBtn('开仓', 'open', r.base, false, '已经有仓位了，不要重复开');
   }
   return '<span class="hint">—</span>';
 }

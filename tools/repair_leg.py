@@ -7,6 +7,8 @@
     python tools/repair_leg.py --all                # 把当前所有"单腿"标的都列出计划
     python tools/repair_leg.py --base TSLA --confirm  # 确认后真发（**仅模拟盘**）
 
+    python tools/repair_leg.py --base TSLA --open            # 开仓计划（空仓时；两条腿一起建）
+    python tools/repair_leg.py --base TSLA --open --confirm  # 真开（**先开现货再开永续**）
     python tools/repair_leg.py --base TSLA --close           # 平仓计划（两腿都在时）
     python tools/repair_leg.py --base TSLA --close --confirm # 真平（**先平永续再卖现货**）
 
@@ -61,6 +63,8 @@ def main(argv=None):
     ap.add_argument("--all", action="store_true", help="处理当前所有单腿标的")
     ap.add_argument("--size-usd", type=float, default=None,
                     help="只用来**收紧**数量（不超过这么多钱）；不会放大数量")
+    ap.add_argument("--open", action="store_true", dest="do_open",
+                    help="改成**开仓**（只在空仓时有效；先开现货再开永续）")
     ap.add_argument("--close", action="store_true",
                     help="改成**平仓**（只在两条腿都在时有效；先平永续再卖现货）")
     ap.add_argument("--confirm", action="store_true",
@@ -74,10 +78,12 @@ def main(argv=None):
 
     if not args.base and not args.all:
         ap.error("请给 --base TSLA 或 --all")
+    if args.do_open and args.all:
+        ap.error("--open 请配 --base（开仓要挑标的：机会名单里好几个都可做，替你挑是越权）")
 
     bases = [args.base] if args.base else []
     if args.all:
-        got, err = _single_leg_bases(only_naked=not args.close)
+        got, err = _single_leg_bases(only_naked=not (args.close or args.do_open))
         if err:
             print("  [!! ] %s" % err)
             return 2
@@ -89,6 +95,27 @@ def main(argv=None):
 
     rc = 0
     for b in bases:
+        if args.do_open:
+            plan, err = repair.build_open_plan(b, size_usd=args.size_usd)
+            if err:
+                print("\n  [!! ] %s：%s" % (b, err))
+                rc = 1
+                continue
+            print()
+            print(repair.format_open_plan(plan))
+            if not plan["ok"]:
+                rc = 1
+                continue
+            res = repair.execute_open(plan, confirm=args.confirm)
+            print("-" * 80)
+            for i, st in enumerate(res.get("steps") or [], 1):
+                print("  步骤 %d %s：sent=%s dry_run=%s state=%s %s"
+                      % (i, st.get("desc"), st.get("sent"), st.get("dry_run"),
+                         st.get("state"), str(st.get("reason"))[:70]))
+            print("  结果：%s" % res.get("reason"))
+            if args.confirm and not res.get("ok"):
+                rc = 1
+            continue
         if args.close:
             plan, err = repair.build_close_plan(b)
             if err:

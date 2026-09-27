@@ -402,6 +402,9 @@
     <!-- 待处理：只成交一条腿的持仓（最危险的一类） -->
     <div id="acc-naked" class="acc-naked" hidden></div>
 
+    <!-- 操作不可用时，**明确说清缺哪一步**（别让人对着灰按钮猜） -->
+    <div class="op-hint" id="op-why" hidden></div>
+
     <div id="acc-body">
       <div class="stat-row"><span class="stat-k">账户状态</span>
         <span class="stat-v"><span class="sk sk-txt"></span></span></div>
@@ -429,6 +432,22 @@
 
     <!-- 操作计划面板：默认只出计划（dry-run），要再点一次「确认发送」才真发 -->
     <div class="acc-op" id="acc-op" hidden></div>
+
+    <p class="op-legend">
+      <b>三类操作</b>：<b>开仓</b>（空仓时，两条腿一起建）·
+      <b>补腿</b>（只成交一条腿时，把缺的那条补上）·
+      <b>平仓</b>（两条腿都在时，按平仓规则平掉）。
+      点按钮<b>只出计划</b>，要再点「确认发送」才真发；而且只能发到模拟盘。
+      <br>
+      <b>为什么没有「价格止盈 / 止损单」</b>：这套策略赚的是<b>基差收敛</b>，不是价格方向。
+      给单条腿挂价格止盈/止损会<b>把对冲拆掉</b>（一侧被平掉、另一侧还留着），
+      那正是最危险的操作。所以平仓的触发条件写死在策略里：
+      基差回落到门槛 · 持有满 48 小时 · 出现风控告警。
+      <br>
+      <b>顺序也是设计过的</b>：开仓<b>先开现货</b>、平仓<b>先平永续</b> ——
+      这样万一只成了一条腿，剩下的永远是"赤裸的多头"（损失有上限），
+      而不是"赤裸的空头"（理论损失无上限）。
+    </p>
 
     <details class="fold" data-fold="acc-why">
       <summary>说明：这个页签是什么、密钥怎么配、安全边界在哪</summary>
