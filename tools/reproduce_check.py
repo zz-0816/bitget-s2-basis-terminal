@@ -892,6 +892,11 @@ def check_features():
              "loadOpToken 的作用域（实测：写成 const 在 try 里会让整页挂掉）"),
             ("web/index.html", 'id="op-why"',
              "前端·操作不可用时明确说清差哪一步"),
+            # ---- 密钥安全：安全的环境报告（2026-09-27 泄漏事故后的防线）----
+            ("tools/env_report.py", "def _mask_line(",
+             "安全报告·**注释行里的密钥也打码**（泄漏就是这么发生的）"),
+            ("tools/env_report.py", "被注释掉的配置项",
+             "安全报告·报出被注释掉的配置项（「改了不生效」的头号原因）"),
     ]:
         p = os.path.join(BASE, rel)
         if not os.path.exists(p):
