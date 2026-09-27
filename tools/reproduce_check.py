@@ -828,6 +828,43 @@ def check_features():
     except Exception as exc:  # noqa: BLE001
         bad("dry-run 默认行为检查无法运行", repr(exc))
 
+    # ---- 批处理脚本必须**纯 ASCII** + 必须存在一个 .bat 入口 ----
+    # 为什么单独一项：这条规矩**只写在 docs/DATA_DICT.md §11 里，此前没有任何检查**
+    # （2026-09-27 用户问"为什么没有一键启动 .bat"时才发现：规矩有、验证没有）。
+    #   · 纯 ASCII：cmd.exe 按 OEM 代码页解析 .cmd/.bat，里面写 UTF-8 中文会报错乱码；
+    #   · .bat 入口：Windows 批处理有 .bat 与 .cmd 两个等价后缀，
+    #     项目里全是 .cmd，而按习惯找 .bat 的人会以为"根本没有一键启动"。
+    try:
+        import glob as _glob
+        bats = sorted(_glob.glob(os.path.join(BASE, "*.bat")))
+        cmds = sorted(_glob.glob(os.path.join(BASE, "*.cmd")))
+        dirty = []
+        for f in bats + cmds:
+            raw = open(f, "rb").read()
+            if any(b > 127 for b in raw):
+                dirty.append(os.path.basename(f))
+        if not cmds:
+            bad("根目录没有 .cmd 脚本（启动入口丢了？）")
+        elif dirty:
+            bad("以下批处理脚本含非 ASCII 字符（cmd.exe 会乱码/报错）：%s"
+                % "、".join(dirty))
+        else:
+            ok("%d 个 .cmd + %d 个 .bat 全部纯 ASCII（cmd.exe 解析安全）"
+               % (len(cmds), len(bats)))
+        if not bats:
+            bad("没有 .bat 入口 —— 按习惯找 .bat 的人会以为没有一键启动",
+                "加一个极薄的转发 .bat（只调用 .cmd，不复制逻辑）")
+        else:
+            fwd = open(bats[0], encoding="utf-8").read()
+            if 'for %%F in ("%~dp00-*.cmd") do' in fwd:
+                ok("%s 是**转发**脚本（只调用 0-*.cmd，没有复制启动逻辑）"
+                   % os.path.basename(bats[0]))
+            else:
+                bad("%s 不是薄转发（可能自己复制了一份启动逻辑 -> 会漂）"
+                    % os.path.basename(bats[0]))
+    except Exception as exc:  # noqa: BLE001
+        bad("批处理脚本检查无法运行", repr(exc))
+
     # ---- 模拟盘横幅：后端必须给出环境标记（页面据此标注，不然会拿虚拟资金冒充真钱） ----
     for rel, needle, desc in [
             ("common/bitget_private.py", "paptrading_enabled()",

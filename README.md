@@ -84,6 +84,10 @@ python tools\reproduce_check.py
 :: ② 方式 A：一键启动（采样守护 + 看门狗 + 窗口监测 + 前端，幂等、无窗口）
 0-一键启动全部(双击运行).cmd
 
+::    等价的短名字（.bat 与 .cmd 是**同一种东西**，只是后缀不同；
+::    有人按习惯找 .bat，所以放了这个薄转发入口，省得去找中文名）
+start.bat
+
 :: ② 方式 B：只起监控台
 python server\app.py --port 8787
 
