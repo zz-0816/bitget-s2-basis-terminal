@@ -786,3 +786,8 @@ tr.opp-row { box-shadow: inset 2px 0 0 var(--accent); }
   .sk { animation: none; background: var(--panel-2); }
   .a-chev, .fold > summary::before { transition: none; }
 }
+
+/* 数据停流时把 KPI 标红 —— 断流是"看不见的事故"，必须刺眼。
+   （2026-09-30：断流 42 小时而 KPI 显示"25 分钟"，这个类就是为此加的。） */
+.kpi-bad { color: var(--neg) !important; }
+.kpi-bad::after { content: " ⚠"; }

@@ -350,13 +350,33 @@ function updateKPI(ov) {
   setNum($('m-perp'), fmt(med(perpVals)));
 }
 
+/* 数据新鲜度：**必须看产出文件的时间，不能看心跳时间戳**。
+   ⚠️ 2026-09-30 实测踩到：采样器断流 42 小时（rows=0 / errors=49800），
+   而 `_heartbeat.json` 的 last_utc 每 30 轮照样刷新 —— 原来的实现读的正是它，
+   于是 KPI 显示"25 分钟"，**页面在骗人**：看起来一切正常，其实一行数据都没在写。
+   心跳活着 != 数据在流。*/
 function updateFreshness(st) {
-  const s = st && st.sampler;
-  if (!s || !s.last_utc) { setNum($('m-fresh'), '无心跳'); return; }
-  const min = Math.round((Date.now() - new Date(s.last_utc).getTime()) / 60000);
-  if (min <= 5) setNum($('m-fresh'), min + ' 分钟');
-  else if (min < 1440) setNum($('m-fresh'), Math.round(min / 60) + ' 小时');
-  else setNum($('m-fresh'), Math.round(min / 1440) + ' 天');
+  const el = $('m-fresh');
+  if (!el) return;
+  const min = st && (st.data_fresh_min !== null && st.data_fresh_min !== undefined)
+    ? Number(st.data_fresh_min) : null;
+  const stalled = !!(st && st.data_stalled);
+  const smp = (st && st.sampler) || {};
+  const failing = Number(smp.rows || 0) === 0 && Number(smp.errors || 0) > 0;
+
+  if (min === null) {
+    el.classList.toggle('kpi-bad', stalled || failing);
+    setNum(el, (stalled || failing) ? '无产出' : '—');
+    return;
+  }
+  let txt;
+  if (min <= 5) txt = Math.round(min) + ' 分钟';
+  else if (min < 1440) txt = Math.round(min / 60) + ' 小时';
+  else txt = Math.round(min / 1440) + ' 天';
+  // 超过 10 分钟没有任何产出 = 停流；直接把它写成红色，并说清是"停了多久"
+  el.classList.toggle('kpi-bad', stalled || failing);
+  if (stalled || failing) txt += '（**停了**）'.replace(/\*\*/g, '');
+  setNum(el, txt);
 }
 
 /* ---------------- 配对表 ---------------- */

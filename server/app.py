@@ -961,8 +961,71 @@ def _build_data_status_uncached(now):
             status["raw"][gran] = info
             status["raw_files_total"][gran] = total
     status["cached"] = True
+    # ---- 「数据还在不在流」= **产出文件**的写入时间，不是心跳时间戳 ----
+    # ⚠️ 2026-09-30 实测踩到：`_heartbeat.json` 的 `last_utc` 每 30 轮就刷新一次
+    #    （**不管这一轮成没成功**），所以断流 42 小时期间它一直在更新 ——
+    #    而页面 KPI 恰好读的是它，于是显示"25 分钟"，看起来一切正常。
+    #    **心跳活着 ≠ 数据在流。** 这里补上真正的判据。
+    _age = sampler_data_age()
+    status["data_families"] = (_age or {}).get("families")
+    # 对外只报**最旧**（worst case）：只要有一类停了，就等于"数据在丢"
+    status["data_fresh_min"] = (_age or {}).get("oldest_min")
+    status["data_newest_min"] = (_age or {}).get("newest_min")
+    status["data_stalled"] = bool((_age or {}).get("stalled"))
     status["built_at"] = now
     return status
+
+
+#: 四类产出（前缀 -> 显示名）。盘口是 `YYYY-MM-DD.csv`，用 "20" 前缀匹配。
+_DATA_FAMILIES = (
+    ("盘口", "20"),
+    ("5档", "orderbook-"),
+    ("逐笔", "trades-"),
+    ("全池", "universe-"),
+)
+
+#: 超过这么久没有任何一类产出 -> 判定"停流"。（采样间隔最长 60s，给足余量。）
+DATA_STALL_MIN = 10.0
+
+
+def sampler_data_age():
+    """四类产出各自的最后写入时间（分钟）。返回 dict 或 None。
+
+    `newest_min` = 四类里**最新**的那个（用来回答"到底还有没有在采"）；
+    `oldest_min` = 四类里**最旧**的那个（用来发现"只有一路停了"）；
+    `stalled`   = 连最新的那类都超过 `DATA_STALL_MIN` -> 全部停了。
+    """
+    if not os.path.isdir(SPREAD_DIR):
+        return None
+    now = time.time()
+    fam = {}
+    try:
+        names = os.listdir(SPREAD_DIR)
+    except OSError:
+        return None
+    for label, prefix in _DATA_FAMILIES:
+        newest = None
+        for n in names:
+            if not n.endswith(".csv") or not n.startswith(prefix):
+                continue
+            if prefix == "20" and not n[:4].isdigit():
+                continue
+            try:
+                m = os.path.getmtime(os.path.join(SPREAD_DIR, n))
+            except OSError:
+                continue
+            if newest is None or m > newest:
+                newest = m
+        fam[label] = None if newest is None else round((now - newest) / 60.0, 1)
+    vals = [v for v in fam.values() if v is not None]
+    if not vals:
+        return None
+    # ⚠️ `stalled` 与对外那个"新鲜度"都要看**最旧**的那一类：
+    #    2026-09-30 实测踩到 —— 四类里"全池"停得晚（20 小时），
+    #    若取最新值，KPI 会显示"20 小时"，把"盘口/5档/逐笔 已停 42 小时"**掩盖**掉。
+    #    那是本项目的老坑（看门狗那句"最新产出"同样取过最大值）。
+    return {"families": fam, "newest_min": min(vals), "oldest_min": max(vals),
+            "stalled": max(vals) > DATA_STALL_MIN}
 
 
 def _bg_data_status():
