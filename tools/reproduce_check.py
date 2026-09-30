@@ -865,6 +865,56 @@ def check_features():
     except Exception as exc:  # noqa: BLE001
         bad("批处理脚本检查无法运行", repr(exc))
 
+    # ---- 周中降频（2026-09-30）-----------------------------------------------
+    # 为什么用**行为断言**而不是源码扫描：这次踩到的 bug 是
+    # `route_of(None)` 抛 TypeError -> 采样循环里的 sleep 被异常跳过 ->
+    # 降频完全没生效，而**源码里那行看起来完全正确**、日志上也看不出异常。
+    # 所以必须真跑一遍函数。
+    try:
+        import datetime as _dt2
+        import common.market_calendar as _mc2
+        _inside = int(_dt2.datetime(2026, 10, 3, 4, 0,
+                                    tzinfo=_dt2.timezone.utc).timestamp() * 1000)   # 周六 12:00 北京
+        _outside = int(_dt2.datetime(2026, 9, 30, 4, 0,
+                                     tzinfo=_dt2.timezone.utc).timestamp() * 1000)  # 周三 12:00 北京
+        if _mc2.effective_interval(60, _inside) != 60:
+            bad("窗口内不该降频（effective_interval(60, 周六) != 60）")
+        else:
+            ok("周中降频·窗口内保持全精度（60s）")
+        _o = _mc2.effective_interval(60, _outside)
+        if not (_o > 60):
+            bad("窗口外没有降频（effective_interval(60, 周三) = %s）" % _o)
+        elif _o > _mc2.OFF_WINDOW_MAX_SEC:
+            bad("窗口外间隔超过上限（%s > %s）" % (_o, _mc2.OFF_WINDOW_MAX_SEC))
+        else:
+            ok("周中降频·窗口外降频到 %.0fs（省 %.0f%% 数据量）"
+               % (_o, (1 - 60.0 / _o) * 100))
+        # 不传时间戳也不能抛异常（**这就是上面那个 bug 的形状**）
+        try:
+            _n = _mc2.effective_interval(60)
+            ok("effective_interval() 不传时间戳不抛异常（= %s，None 视为现在）" % _n)
+        except Exception as _e:  # noqa: BLE001
+            bad("effective_interval() 不传时间戳会抛异常（采样循环会静默跳过 sleep）",
+                "%s: %s" % (type(_e).__name__, _e))
+    except Exception as _exc:  # noqa: BLE001
+        bad("周中降频检查无法运行", repr(_exc))
+
+    # 四个采样器都得真的接上降频（源码接线）
+    for _fn in ("spread_sampler.py", "orderbook_sampler.py",
+                "trades_sampler.py", "sampler_universe.py"):
+        _p = os.path.join(BASE, _fn)
+        try:
+            _t = open(_p, encoding="utf-8").read()
+        except OSError as _e:
+            bad("%s 读不到：%s" % (_fn, _e))
+            continue
+        if "effective_interval(" not in _t:
+            bad("%s 没接上窗口外降频（找 effective_interval）" % _fn)
+        elif "import common.market_calendar" not in _t:
+            bad("%s 用了 effective_interval 但没 import market_calendar" % _fn)
+        else:
+            ok("%s 已接窗口外降频" % _fn)
+
     # ---- 模拟盘横幅：后端必须给出环境标记（页面据此标注，不然会拿虚拟资金冒充真钱） ----
     for rel, needle, desc in [
             ("common/bitget_private.py", "paptrading_enabled()",

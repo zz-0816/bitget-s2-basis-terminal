@@ -35,6 +35,13 @@ import ssl
 import sys
 import threading
 import time
+
+# 采样节流：不在 `in_house` 窗口（周中）时**降频**而不是停采 ——
+# 盘口 / 5 档 / 全池**不可回补**（docs/49），停了就是永久缺口；而窗口外的数据
+# 又是窗口内结论的**对照组**（docs/04 / docs/11）。降频能同时保住这两件事，
+# 代价只是分辨率。倍率可用 SAMPLER_OFF_WINDOW_SCALE 覆盖（0 = 窗口外不采）。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import common.market_calendar as _mcal                     # noqa: E402
 import urllib.request
 
 # ---------------------------------------------------------------- 配置
@@ -330,7 +337,7 @@ def run(interval, duration=None, once=False):
             break
 
         # 固定节奏；扣掉本轮耗时，避免漂移
-        sleep_for = interval - (time.time() - cycle_start)
+        sleep_for = _mcal.effective_interval(interval) - (time.time() - cycle_start)
         if sleep_for > 0:
             _STOP.wait(sleep_for)
 

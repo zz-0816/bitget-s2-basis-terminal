@@ -33,6 +33,8 @@
 """
 
 import datetime as dt
+import os
+import time
 
 try:
     from zoneinfo import ZoneInfo
@@ -65,13 +67,26 @@ US_MARKET_HOLIDAYS = {
 }
 
 
+def _ms(ts_ms):
+    """把 `None` 规范成"现在"。
+
+    ⚠️ 2026-09-30 踩到：`_cn(None)` 会抛
+    `TypeError: unsupported operand type(s) for /: 'NoneType' and 'int'`。
+    而采样器的循环是"写数据 -> 算睡眠间隔"，那个异常被外层 try 吞掉、
+    只记进 errors —— 于是 **sleep 被整段跳过**，采样节奏退化成"一轮的耗时"，
+    我刚加的"窗口外降频"完全没生效，而**日志上看不出任何异常**。
+    ⇒ 凡是"传 None 表示现在"的约定，就要在这一层兜住，别让调用方踩。
+    """
+    return int(time.time() * 1000) if ts_ms is None else ts_ms
+
+
 def _et(ts_ms):
     tz = ZoneInfo("America/New_York") if ZoneInfo else ET_FALLBACK
-    return dt.datetime.fromtimestamp(ts_ms / 1000, dt.UTC).astimezone(tz)
+    return dt.datetime.fromtimestamp(_ms(ts_ms) / 1000, dt.UTC).astimezone(tz)
 
 
 def _cn(ts_ms):
-    return dt.datetime.fromtimestamp(ts_ms / 1000, dt.UTC).astimezone(CN_TZ)
+    return dt.datetime.fromtimestamp(_ms(ts_ms) / 1000, dt.UTC).astimezone(CN_TZ)
 
 
 def session_of(ts_ms):
@@ -152,6 +167,64 @@ def describe(ts_ms):
         "is_holiday": is_us_holiday(ts_ms),
         "maker_benefit": (r == "in_house"),
     }
+
+
+# ---------------------------------------------------------------- 采样节流
+#
+# 为什么需要它（2026-09-30）：
+#   采样器原本是**7x24 一个频率**跑的，四路合计约 **130 MB/天**（≈4 GB/月）。
+#   而策略只在 `in_house` 窗口内成立（周六 08:00 -> 周一 08:00，北京），
+#   于是"周中要不要开采样器"就成了一个真问题。
+#
+# 但**不能直接停**，因为三件事会一起丢：
+#   ① 盘口 / 5 档 / 全池**不可回补**（`docs/49`）—— 停了就是永久缺口；
+#   ② 窗口外的数据是窗口内结论的**对照组**（`docs/04` 记作"窄点差基准值"，
+#      `docs/11` 用 stockroute vs in_house 的相关系数对照来论证）；
+#   ③ 周中的异常样本（现货冻结、盘口消失）也会变成盲区。
+#
+# ⇒ 所以这里做的是**降频**而不是停采：窗口内保持全精度，窗口外拉长间隔。
+#   代价只是分辨率，骨架 / 对照 / 异常发现三件事都还在。
+#   （要彻底停采，把 `SAMPLER_OFF_WINDOW_SCALE` 设成 0 —— 那时采样器会睡
+#    `OFF_WINDOW_IDLE_SEC` 再查一次，窗口一开就自动恢复全频。）
+
+#: 窗口外的间隔倍率。1 = 不降频；0 = 窗口外不采（只睡 IDLE 再查）。
+#: 可用环境变量覆盖，方便不改代码就调。
+OFF_WINDOW_SCALE = float(os.environ.get("SAMPLER_OFF_WINDOW_SCALE") or 5.0)
+
+#: 窗口外间隔的**上限**（秒）。防止某个采样器基础间隔很大时被乘成几小时 ——
+#: 降频可以，但"其实还在采"这件事必须成立。
+OFF_WINDOW_MAX_SEC = float(os.environ.get("SAMPLER_OFF_WINDOW_MAX_SEC") or 300.0)
+
+#: `SCALE=0`（窗口外不采）时，睡多久再回来看一眼窗口开没开。
+OFF_WINDOW_IDLE_SEC = 1800.0
+
+
+def effective_interval(base_sec, ts_ms=None, scale=None, cap=None):
+    """按"现在在不在 `in_house` 窗口"给出**实际采样间隔**（秒）。
+
+    · 窗口内 -> 原样返回（全精度）；
+    · 窗口外 -> `min(base * SCALE, CAP)`；
+    · `SCALE = 0` -> 返回 `OFF_WINDOW_IDLE_SEC`（等于窗口外不采，但仍会定时查看）。
+    """
+    base = float(base_sec)
+    if is_in_house(ts_ms):
+        return base
+    s = OFF_WINDOW_SCALE if scale is None else float(scale)
+    if s <= 0:
+        return OFF_WINDOW_IDLE_SEC
+    return min(base * s, float(OFF_WINDOW_MAX_SEC if cap is None else cap))
+
+
+def interval_note(base_sec, ts_ms=None):
+    """给人看的一句：现在用的是哪个间隔、为什么。"""
+    eff = effective_interval(base_sec, ts_ms)
+    inside = is_in_house(ts_ms)
+    if inside:
+        return "窗口内 %ss 全精度" % ("%g" % base_sec)
+    if abs(eff - base_sec) < 1e-9:
+        return "窗口外 %ss（未降频）" % ("%g" % base_sec)
+    return "窗口外 %ss -> **降频到 %ss**（省约 %.0f%% 数据量）" % (
+        "%g" % base_sec, "%g" % eff, (1 - base_sec / eff) * 100 if eff else 0)
 
 
 SESSION_LABEL = {"closed": "休市", "premarket": "盘前",

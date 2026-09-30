@@ -41,6 +41,13 @@ import ssl
 import sys
 import threading
 import time
+
+# 采样节流：不在 `in_house` 窗口（周中）时**降频**而不是停采 ——
+# 盘口 / 5 档 / 全池**不可回补**（docs/49），停了就是永久缺口；而窗口外的数据
+# 又是窗口内结论的**对照组**（docs/04 / docs/11）。降频能同时保住这两件事，
+# 代价只是分辨率。倍率可用 SAMPLER_OFF_WINDOW_SCALE 覆盖（0 = 窗口外不采）。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import common.market_calendar as _mcal                     # noqa: E402
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -330,7 +337,7 @@ def main(argv=None):
                  "  错误 %d" % errs if errs else ""))
         if args.duration is not None and (time.time() - started) >= args.duration:
             break
-        wait = args.interval - (time.time() - t0)
+        wait = _mcal.effective_interval(args.interval) - (time.time() - t0)
         if wait > 0:
             _STOP.wait(wait)
 
